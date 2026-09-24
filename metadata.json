@@ -1,0 +1,6 @@
+{
+  "name": "KinD POS - ระบบจัดการร้านอาหารและจุดขาย",
+  "description": "ระบบจุดขายและบริหารจัดการร้านอาหารครบวงจร รองรับการสั่งอาหาร จอครัว คิดเงิน สต็อก รายงาน และการซิงค์ข้ามแท็บแบบเรียลไทม์",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
