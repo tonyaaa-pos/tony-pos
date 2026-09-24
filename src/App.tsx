@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { POSProvider, usePOS } from './context/POSContext';
+import { LanguageProvider } from './context/LanguageContext';
 import { LoginScreen } from './components/auth/LoginScreen';
 import { Header } from './components/layout/Header';
 import { Sidebar } from './components/layout/Sidebar';
@@ -65,8 +66,10 @@ const MainLayout: React.FC = () => {
 
 export default function App() {
   return (
-    <POSProvider>
-      <MainLayout />
-    </POSProvider>
+    <LanguageProvider>
+      <POSProvider>
+        <MainLayout />
+      </POSProvider>
+    </LanguageProvider>
   );
 }

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { usePOS } from '../../context/POSContext';
+import { useLanguage } from '../../context/LanguageContext';
 import { Receipt, Plus, X, Tag } from 'lucide-react';
 import { formatBaht } from '../../utils/formatters';
 import { Modal } from '../common/Modal';
@@ -20,8 +21,11 @@ export const BottomBar: React.FC = () => {
     currentUser,
   } = usePOS();
 
+  const { t, getName } = useLanguage();
+
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [newCatName, setNewCatName] = useState('');
+  const [newCatNameEn, setNewCatNameEn] = useState('');
   const [newCatIcon, setNewCatIcon] = useState('🍛');
   const [newCatColor, setNewCatColor] = useState('#f59e0b');
 
@@ -49,8 +53,9 @@ export const BottomBar: React.FC = () => {
   const handleAddCategorySubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCatName.trim()) return;
-    addCategory(newCatName.trim(), newCatIcon, newCatColor);
+    addCategory(newCatName.trim(), newCatIcon, newCatColor, newCatNameEn.trim());
     setNewCatName('');
+    setNewCatNameEn('');
     setIsAddModalOpen(false);
   };
 
@@ -83,20 +88,25 @@ export const BottomBar: React.FC = () => {
             }`}
             title="ไปที่ผังโต๊ะและจัดการบิล"
           >
-            <div className={`p-1.5 rounded-xl ${isBillCardActive ? 'bg-slate-950/15' : 'bg-white/10'}`}>
+            <div
+              className={`p-1.5 rounded-xl ${
+                isBillCardActive ? 'bg-slate-950/15' : 'bg-white/10'
+              }`}
+            >
               <Receipt className="w-5 h-5" />
             </div>
             <div className="min-w-0">
               <div className="text-[11px] uppercase tracking-wider font-semibold opacity-80 leading-none">
-                บิล (Bills)
+                {t('bottom_bill')}
               </div>
               <div className="text-xs font-bold leading-tight truncate">
                 {activeBill ? (
                   <span>
-                    โต๊ะ {activeBill.tableName || 'กลับบ้าน'}: {formatBaht(currentTotal)}
+                    {activeBill.tableName ? `โต๊ะ ${activeBill.tableName}` : 'ออเดอร์'}:{' '}
+                    {formatBaht(currentTotal)}
                   </span>
                 ) : (
-                  <span>{openBillsCount} บิลเปิดอยู่</span>
+                  <span>{t('bottom_open_bills', { count: openBillsCount })}</span>
                 )}
               </div>
             </div>
@@ -119,7 +129,7 @@ export const BottomBar: React.FC = () => {
                   }`}
                 >
                   <span className="text-base leading-none">{cat.icon || '🍽️'}</span>
-                  <span>{cat.name}</span>
+                  <span>{getName(cat)}</span>
                 </button>
 
                 {/* Delete button shown when in edit mode */}
@@ -155,7 +165,7 @@ export const BottomBar: React.FC = () => {
             }`}
           >
             <span>✨</span>
-            <span>ดูทั้งหมด</span>
+            <span>{t('bottom_all_categories')}</span>
           </button>
 
           {/* Manage / Delete Mode Toggle Button */}
@@ -168,9 +178,9 @@ export const BottomBar: React.FC = () => {
                   ? 'bg-rose-50 dark:bg-rose-950/40 text-rose-600 border-rose-300 dark:border-rose-800'
                   : 'text-slate-400 hover:text-slate-600 dark:text-slate-500 border-dashed border-slate-300 dark:border-slate-700'
               }`}
-              title={isEditMode ? 'เสร็จสิ้นการแก้ไข' : 'จัดการลบหมวดหมู่'}
+              title={isEditMode ? t('bottom_manage_done') : t('bottom_manage_categories')}
             >
-              {isEditMode ? 'เสร็จสิ้น' : 'จัดการ'}
+              {isEditMode ? t('bottom_manage_done') : t('bottom_manage_categories')}
             </button>
           )}
 
@@ -179,10 +189,10 @@ export const BottomBar: React.FC = () => {
             type="button"
             onClick={() => setIsAddModalOpen(true)}
             className="shrink-0 flex items-center gap-1.5 px-3.5 py-2.5 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800/50 text-slate-600 dark:text-slate-400 hover:border-amber-500 hover:text-amber-600 dark:hover:text-amber-400 text-xs font-bold transition cursor-pointer shadow-2xs"
-            title="เพิ่มหมวดหมู่ใหม่"
+            title={t('bottom_add_category')}
           >
             <Plus className="w-4 h-4" />
-            <span>เพิ่มหมวด</span>
+            <span>{t('bottom_add_category')}</span>
           </button>
         </div>
       </div>
@@ -192,13 +202,13 @@ export const BottomBar: React.FC = () => {
         <Modal
           isOpen={true}
           onClose={() => setIsAddModalOpen(false)}
-          title="เพิ่มหมวดหมู่อาหารใหม่"
+          title={t('bottom_add_category_modal_title')}
           maxWidth="max-w-sm"
         >
           <form onSubmit={handleAddCategorySubmit} className="space-y-4">
             <div>
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                ชื่อหมวดหมู่
+                {t('bottom_category_name_label')} <span className="text-rose-500">*</span>
               </label>
               <input
                 type="text"
@@ -208,6 +218,19 @@ export const BottomBar: React.FC = () => {
                 onChange={(e) => setNewCatName(e.target.value)}
                 className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-semibold"
                 autoFocus
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                {t('bottom_category_name_en_label')}
+              </label>
+              <input
+                type="text"
+                placeholder="e.g. Noodles, Grill, Wine"
+                value={newCatNameEn}
+                onChange={(e) => setNewCatNameEn(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-semibold"
               />
             </div>
 
@@ -244,7 +267,9 @@ export const BottomBar: React.FC = () => {
                     type="button"
                     onClick={() => setNewCatColor(col)}
                     className={`w-7 h-7 rounded-full border-2 transition cursor-pointer ${
-                      newCatColor === col ? 'border-slate-900 dark:border-white scale-110' : 'border-transparent'
+                      newCatColor === col
+                        ? 'border-slate-900 dark:border-white scale-110'
+                        : 'border-transparent'
                     }`}
                     style={{ backgroundColor: col }}
                   />
@@ -258,13 +283,13 @@ export const BottomBar: React.FC = () => {
                 onClick={() => setIsAddModalOpen(false)}
                 className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
               >
-                ยกเลิก
+                {t('cancel')}
               </button>
               <button
                 type="submit"
                 className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs shadow-xs cursor-pointer"
               >
-                เพิ่มหมวดหมู่
+                {t('add')}
               </button>
             </div>
           </form>
@@ -281,7 +306,9 @@ export const BottomBar: React.FC = () => {
             setCategoryToDelete(null);
           }}
           title="ยืนยันการลบหมวดหมู่"
-          message={`ต้องการลบหมวดหมู่ "${categoryToDelete.name}" ใช่หรือไม่? หากมีรายการอาหารในหมวดนี้ เมนูจะถูกย้ายไปยัง "ไม่ระบุหมวดหมู่" โดยอัตโนมัติ (ไม่สูญหาย)`}
+          message={`ต้องการลบหมวดหมู่ "${getName(
+            categoryToDelete
+          )}" ใช่หรือไม่? หากมีรายการอาหารในหมวดนี้ เมนูจะถูกย้ายไปยัง "ไม่ระบุหมวดหมู่" โดยอัตโนมัติ (ไม่สูญหาย)`}
         />
       )}
     </>

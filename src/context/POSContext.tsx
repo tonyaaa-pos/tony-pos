@@ -77,8 +77,8 @@ interface POSContextType {
   updateMenuItem: (id: string, updates: Partial<MenuItem>) => void;
   deleteMenuItem: (id: string) => void;
   toggleSoldOut: (id: string) => void;
-  addCategory: (name: string, icon?: string, color?: string) => void;
-  updateCategory: (id: string, name: string, icon?: string, color?: string) => void;
+  addCategory: (name: string, icon?: string, color?: string, nameEn?: string) => void;
+  updateCategory: (id: string, name: string, icon?: string, color?: string, nameEn?: string) => void;
   deleteCategory: (id: string) => void;
 
   // Order & Bills
@@ -214,7 +214,15 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Users (filter out obsolete 'kitchen' role)
   const [users, setUsers] = useState<User[]>(() => {
     const loaded = loadState<User[]>(STORAGE_KEYS.USERS, INITIAL_USERS);
-    return loaded.filter((u: any) => u.role !== 'kitchen');
+    return loaded
+      .filter((u: any) => u.role !== 'kitchen')
+      .map((u: any) => {
+        const initialMatch = INITIAL_USERS.find((init) => init.id === u.id);
+        return {
+          ...u,
+          nameEn: u.nameEn || initialMatch?.nameEn || '',
+        };
+      });
   });
 
   const [currentUser, setCurrentUser] = useState<User | null>(() => {
@@ -222,7 +230,11 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!loaded || (loaded as any).role === 'kitchen') {
       return INITIAL_USERS[0];
     }
-    return loaded;
+    const initialMatch = INITIAL_USERS.find((init) => init.id === (loaded as any).id);
+    return {
+      ...loaded,
+      nameEn: (loaded as any).nameEn || initialMatch?.nameEn || '',
+    };
   });
 
   // Settings
@@ -237,16 +249,43 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   });
 
   // Categories
-  const [categories, setCategories] = useState<MenuCategory[]>(() =>
-    loadState(STORAGE_KEYS.CATEGORIES, INITIAL_CATEGORIES)
-  );
+  const [categories, setCategories] = useState<MenuCategory[]>(() => {
+    const loaded = loadState<MenuCategory[]>(STORAGE_KEYS.CATEGORIES, INITIAL_CATEGORIES);
+    return loaded.map((cat: any) => {
+      const initialMatch = INITIAL_CATEGORIES.find((c) => c.id === cat.id);
+      return {
+        ...cat,
+        nameEn: cat.nameEn || initialMatch?.nameEn || '',
+      };
+    });
+  });
 
-  // Menu Items (clean up obsolete recipeIngredients)
+  // Menu Items (clean up obsolete recipeIngredients and migrate variants)
   const [menuItems, setMenuItems] = useState<MenuItem[]>(() => {
     const loaded = loadState<MenuItem[]>(STORAGE_KEYS.MENU, INITIAL_MENU_ITEMS);
     return loaded.map((item: any) => {
       const { recipeIngredients, ...rest } = item;
-      return rest;
+      const initialMatch = INITIAL_MENU_ITEMS.find((m) => m.id === rest.id);
+      const variants =
+        Array.isArray(rest.variants) && rest.variants.length > 0
+          ? rest.variants
+          : initialMatch?.variants || [
+              {
+                id: `v_std_${rest.id}`,
+                name: 'ปกติ',
+                nameEn: 'Standard',
+                price: rest.price || 0,
+                cost: rest.cost || 0,
+                isAvailable: rest.isAvailable !== false,
+                isSoldOut: rest.isSoldOut || false,
+              },
+            ];
+      return {
+        ...rest,
+        nameEn: rest.nameEn || initialMatch?.nameEn || '',
+        descriptionEn: rest.descriptionEn || initialMatch?.descriptionEn || '',
+        variants,
+      };
     });
   });
 
@@ -983,10 +1022,11 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     syncService.broadcast('DATA_RELOAD');
   }, []);
 
-  const addCategory = useCallback((name: string, icon?: string, color?: string) => {
+  const addCategory = useCallback((name: string, icon?: string, color?: string, nameEn?: string) => {
     const newCat: MenuCategory = {
       id: 'cat_' + Date.now(),
       name: name.trim(),
+      nameEn: nameEn?.trim() || '',
       icon: icon || '🍽️',
       color: color || '#f59e0b',
       sortOrder: categories.length + 1,
@@ -995,9 +1035,19 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     syncService.broadcast('DATA_RELOAD');
   }, [categories.length]);
 
-  const updateCategory = useCallback((id: string, name: string, icon?: string, color?: string) => {
+  const updateCategory = useCallback((id: string, name: string, icon?: string, color?: string, nameEn?: string) => {
     setCategories((prev) =>
-      prev.map((c) => (c.id === id ? { ...c, name: name.trim(), ...(icon ? { icon } : {}), ...(color ? { color } : {}) } : c))
+      prev.map((c) =>
+        c.id === id
+          ? {
+              ...c,
+              name: name.trim(),
+              ...(nameEn !== undefined ? { nameEn: nameEn.trim() } : {}),
+              ...(icon ? { icon } : {}),
+              ...(color ? { color } : {}),
+            }
+          : c
+      )
     );
     syncService.broadcast('DATA_RELOAD');
   }, []);

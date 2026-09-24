@@ -3,6 +3,7 @@ export type UserRole = 'owner' | 'cashier' | 'waiter';
 export interface User {
   id: string;
   name: string;
+  nameEn?: string;
   role: UserRole;
   pin: string;
   avatar?: string;
@@ -46,25 +47,39 @@ export interface Table {
 export interface OptionChoice {
   id: string;
   name: string;
+  nameEn?: string;
   priceDelta: number;
 }
 
 export interface OptionGroup {
   id: string;
   name: string;
+  nameEn?: string;
   type: 'single' | 'multiple';
   required: boolean;
   choices: OptionChoice[];
 }
 
+export interface ItemVariantOption {
+  id: string;
+  name: string;
+  nameEn?: string;
+  price: number;
+  cost: number;
+  isAvailable: boolean;
+  isSoldOut?: boolean;
+}
+
 export interface MenuItem {
   id: string;
   name: string;
+  nameEn?: string;
   categoryId: string;
   price: number;
   cost: number;
   image: string;
   description: string;
+  descriptionEn?: string;
   isAvailable: boolean;
   isSoldOut: boolean;
   isRecommended?: boolean;
@@ -72,11 +87,13 @@ export interface MenuItem {
   promoPrice?: number;
   promoActive?: boolean;
   optionGroups?: OptionGroup[];
+  variants?: ItemVariantOption[];
 }
 
 export interface MenuCategory {
   id: string;
   name: string;
+  nameEn?: string;
   icon?: string;
   color?: string;
   sortOrder: number;
@@ -85,15 +102,21 @@ export interface MenuCategory {
 export interface SelectedOption {
   groupId: string;
   groupName: string;
+  groupNameEn?: string;
   choiceId: string;
   choiceName: string;
+  choiceNameEn?: string;
   priceDelta: number;
 }
 
 export interface OrderItem {
   id: string;
   menuItemId: string;
+  variantId?: string;
+  variantName?: string;
+  variantNameEn?: string;
   name: string;
+  nameEn?: string;
   price: number; // calculated unit price including options
   cost: number;
   quantity: number;
