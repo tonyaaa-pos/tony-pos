@@ -31,6 +31,7 @@ import {
 } from '../data/seedData';
 import { syncService, SyncMessage } from '../services/syncService';
 import { soundService } from '../utils/audio';
+import { canPay, CanPayResult } from '../utils/orderRules';
 
 interface POSContextType {
   // Auth
@@ -94,6 +95,7 @@ interface POSContextType {
   voidOrderItem: (billId: string, itemId: string, reason: string) => void;
   applyBillDiscount: (billId: string, type: 'percentage' | 'fixed', value: number) => void;
   applyMembershipDiscount: (billId: string, memberPhone: string, pointsToRedeem: number) => boolean;
+  canPay: (target: Bill | Table | null | undefined) => CanPayResult;
   completeBillPayment: (billId: string, payments: PaymentRecord[]) => { success: boolean; bill: Bill };
   voidBill: (billId: string, reason: string) => void;
   lastCompletedBill: Bill | null;
@@ -632,9 +634,12 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // "Confirm order" saves new unsent items to bill without kitchen status flow
   const confirmOrder = useCallback((billId: string) => {
+    let affectedTableId: string | undefined;
+
     setBills((prev) =>
       prev.map((b) => {
         if (b.id !== billId) return b;
+        affectedTableId = b.tableId;
         const updatedItems = b.items.map((item) => {
           if (item.isNewUnsent) {
             return {
@@ -648,6 +653,20 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return { ...b, items: updatedItems };
       })
     );
+
+    if (affectedTableId) {
+      setTables((prev) =>
+        prev.map((t) =>
+          t.id === affectedTableId
+            ? {
+                ...t,
+                status: t.status === 'payment_pending' ? 'payment_pending' : 'occupied',
+                currentBillId: billId,
+              }
+            : t
+        )
+      );
+    }
 
     soundService.playSuccessTap();
     syncService.broadcast('DATA_RELOAD');
@@ -727,11 +746,24 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     [members, recalculateBill, settings]
   );
 
+  const checkCanPay = useCallback(
+    (target: Bill | Table | null | undefined): CanPayResult => {
+      return canPay(target, bills);
+    },
+    [bills]
+  );
+
   const completeBillPayment = useCallback(
     (billId: string, payments: PaymentRecord[]): { success: boolean; bill: Bill } => {
       const targetBill = bills.find((b) => b.id === billId);
       if (!targetBill) {
         throw new Error('ไม่พบบิล');
+      }
+
+      // Re-check rule inside the final "confirm payment" action
+      const payCheck = canPay(targetBill, bills);
+      if (!payCheck.allowed) {
+        return { success: false, bill: targetBill };
       }
 
       const closedAt = new Date().toISOString();
@@ -1298,6 +1330,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     voidOrderItem,
     applyBillDiscount,
     applyMembershipDiscount,
+    canPay: checkCanPay,
     completeBillPayment,
     voidBill,
     lastCompletedBill,

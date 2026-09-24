@@ -18,6 +18,7 @@ const translations: Record<Language, Record<string, string>> = {
     app_name: 'KinD Restaurant POS',
     kind_pos: 'KinD POS',
     restaurant_system: 'ระบบจัดการร้านอาหาร',
+    drawer_brand_sub: 'ระบบจัดการร้านอาหาร',
     menu: 'เมนู',
     close: 'ปิด',
     cancel: 'ยกเลิก',
@@ -80,6 +81,24 @@ const translations: Record<Language, Record<string, string>> = {
     nav_header_settings_sub: 'ข้อมูลร้าน ภาษี เครื่องพิมพ์ QR ชำระเงิน และผังโต๊ะ',
 
     // Header & Simulations
+    header_title_tables: 'ผังโต๊ะอาหาร',
+    header_sub_tables: 'จัดวางโต๊ะ สถานะออเดอร์ ย้ายโต๊ะ และการจอง',
+    header_title_pos: 'จุดขายและสั่งอาหาร',
+    header_sub_pos: 'เลือกเมนู รับออเดอร์ และยืนยันบิล',
+    header_title_bills: 'บิลและประวัติการขาย',
+    header_sub_bills: 'ค้นหา ตรวจสอบ พิมพ์ซ้ำ และยกเลิกบิล',
+    header_title_menu: 'จัดการเมนูอาหาร',
+    header_sub_menu: 'เพิ่ม ลบ แก้ไขราคา ท็อปปิ้ง และสถานะขายหมด',
+    header_title_dashboard: 'แดชบอร์ดภาพรวม',
+    header_sub_dashboard: 'สรุปภาพรวมยอดขายและสถานะร้านวันนี้',
+    header_title_reports: 'รายงานยอดขายและกะ',
+    header_sub_reports: 'กราฟวิเคราะห์ยอดขาย กำไร และกะการทำงาน',
+    header_title_settings: 'ตั้งค่าระบบ',
+    header_sub_settings: 'ข้อมูลร้าน ภาษี เครื่องพิมพ์ QR ชำระเงิน และผังโต๊ะ',
+    header_menu_btn: 'เมนู',
+    header_shift_open: 'กะเปิดอยู่ (เงินทอน: {cash})',
+    header_sim_waiter: 'จำลองเรียกพนักงาน',
+    header_sim_bill: 'จำลองขอเช็คบิล',
     sim_call_waiter: 'จำลองเรียกพนักงาน',
     sim_call_waiter_title: 'จำลองกดเรียกพนักงานบริการ',
     sim_request_bill: 'จำลองขอเช็คบิล',
@@ -93,9 +112,13 @@ const translations: Record<Language, Record<string, string>> = {
 
     // Login Screen
     login_prompt: 'กรุณากดรหัส PIN 4 หลักเพื่อเข้าสู่ระบบ',
+    login_subtitle: 'กรุณากดรหัส PIN 4 หลักเพื่อเข้าสู่ระบบ',
+    login_pin_error: 'รหัส PIN ไม่ถูกต้อง',
     invalid_pin: 'รหัส PIN ไม่ถูกต้อง',
     keypad_clear: 'ล้าง',
+    login_clear: 'ล้าง',
     quick_select_user: 'แตะเลือกผู้ใช้เพื่อดูหรือทดสอบ PIN เริ่มต้น:',
+    login_fast_title: 'แตะเลือกผู้ใช้เพื่อดูหรือทดสอบ PIN เริ่มต้น:',
     demo_pin_hint: 'PIN เริ่มต้น: {pin}',
 
     // Bottom Bar
@@ -103,10 +126,13 @@ const translations: Record<Language, Record<string, string>> = {
     bottom_open_bills: '{count} บิลเปิดอยู่',
     bottom_table_bill: 'โต๊ะ {table}: {total}',
     bottom_view_all: 'ดูทั้งหมด',
+    bottom_all_categories: 'ดูทั้งหมด',
     bottom_add_category: 'เพิ่มหมวด',
     bottom_manage_categories: 'จัดการ',
     bottom_finish_manage: 'เสร็จสิ้น',
+    bottom_manage_done: 'เสร็จสิ้น',
     bottom_new_category_title: 'เพิ่มหมวดหมู่อาหารใหม่',
+    bottom_add_category_modal_title: 'เพิ่มหมวดหมู่อาหารใหม่',
     bottom_category_name_label: 'ชื่อหมวดหมู่อาหาร',
     bottom_category_name_en_label: 'ชื่อภาษาอังกฤษ (Optional)',
     bottom_category_icon_label: 'เลือกอิโมจิไอคอน',
@@ -116,6 +142,7 @@ const translations: Record<Language, Record<string, string>> = {
 
     // Tables & Floor Plan
     all_zones: 'ทุกโซน',
+    zone_all: 'ทุกโซน',
     zone_indoor: 'ในห้องแอร์',
     zone_outdoor: 'ลานรับลม',
     zone_vip: 'ห้อง VIP',
@@ -180,6 +207,18 @@ const translations: Record<Language, Record<string, string>> = {
     sold_out_overlay: 'ขายหมดแล้ว',
     recommended_badge: 'แนะนำ',
     promo_badge: 'โปรโมชั่น',
+
+    // Payment Blocked Rules
+    pay_blocked_unsaved_title: 'ยังไม่ได้บันทึกออเดอร์ลงโต๊ะ',
+    pay_blocked_unsaved_msg: 'คุณมีรายการที่ยังไม่ได้บันทึกลงโต๊ะ กรุณากดบันทึกออเดอร์ลงโต๊ะก่อนชำระเงิน',
+    pay_blocked_empty_title: 'ไม่มีรายการอาหาร',
+    pay_blocked_empty_msg: 'บิลนี้ยังไม่มีรายการอาหาร',
+    pay_blocked_no_table_title: 'ยังไม่ได้ระบุโต๊ะ',
+    pay_blocked_no_table_msg: 'กรุณาเลือกโต๊ะสำหรับออเดอร์ทานที่ร้าน ก่อนบันทึกรายการ',
+    btn_save_and_go_floor_plan: 'บันทึกออเดอร์และไปที่ผังโต๊ะ',
+    btn_select_table: 'เลือกโต๊ะ',
+    select_table_modal_title: 'เลือกโต๊ะสำหรับออเดอร์นี้',
+    select_table_modal_desc: 'กรุณาแตะเลือกโต๊ะเพื่อบันทึกรายการอาหารลงโต๊ะ',
 
     // Food Type Detail & Options Modal
     food_detail_options_title: 'ตัวเลือกและขนาด (Options & Variants)',
@@ -317,6 +356,7 @@ const translations: Record<Language, Record<string, string>> = {
     app_name: 'KinD Restaurant POS',
     kind_pos: 'KinD POS',
     restaurant_system: 'Restaurant Management System',
+    drawer_brand_sub: 'Restaurant Management System',
     menu: 'Menu',
     close: 'Close',
     cancel: 'Cancel',
@@ -379,6 +419,24 @@ const translations: Record<Language, Record<string, string>> = {
     nav_header_settings_sub: 'Shop info, VAT, printers, payment QRs, and table zones',
 
     // Header & Simulations
+    header_title_tables: 'Tables Floor Plan',
+    header_sub_tables: 'Layout, order status, table moves & reservations',
+    header_title_pos: 'Point of Sale (POS)',
+    header_sub_pos: 'Select menu, take orders & confirm bills',
+    header_title_bills: 'Bills & Sales History',
+    header_sub_bills: 'Search, review, reprint receipts & void bills',
+    header_title_menu: 'Menu Management',
+    header_sub_menu: 'Add, edit prices, options & sold-out items',
+    header_title_dashboard: 'Overview Dashboard',
+    header_sub_dashboard: 'Daily summary & store live status',
+    header_title_reports: 'Sales & Shift Reports',
+    header_sub_reports: 'Sales analytics, profit charts & shift history',
+    header_title_settings: 'System Settings',
+    header_sub_settings: 'Store info, taxes, printers, QR payments & tables',
+    header_menu_btn: 'Menu',
+    header_shift_open: 'Shift Open (Change: {cash})',
+    header_sim_waiter: 'Simulate Call Server',
+    header_sim_bill: 'Simulate Request Bill',
     sim_call_waiter: 'Simulate Call Server',
     sim_call_waiter_title: 'Simulate Customer Calling Server',
     sim_request_bill: 'Simulate Request Bill',
@@ -392,9 +450,13 @@ const translations: Record<Language, Record<string, string>> = {
 
     // Login Screen
     login_prompt: 'Please enter your 4-digit PIN to sign in',
+    login_subtitle: 'Please enter your 4-digit PIN to sign in',
+    login_pin_error: 'Invalid PIN code',
     invalid_pin: 'Invalid PIN code',
     keypad_clear: 'Clear',
+    login_clear: 'Clear',
     quick_select_user: 'Tap a user to view or test default demo PINs:',
+    login_fast_title: 'Tap a user to view or test default demo PINs:',
     demo_pin_hint: 'Default PIN: {pin}',
 
     // Bottom Bar
@@ -402,10 +464,13 @@ const translations: Record<Language, Record<string, string>> = {
     bottom_open_bills: '{count} Open Bills',
     bottom_table_bill: 'T{table}: {total}',
     bottom_view_all: 'View All',
+    bottom_all_categories: 'View all',
     bottom_add_category: 'Add Cat',
     bottom_manage_categories: 'Manage',
     bottom_finish_manage: 'Done',
+    bottom_manage_done: 'Done',
     bottom_new_category_title: 'Add New Food Category',
+    bottom_add_category_modal_title: 'Add New Food Category',
     bottom_category_name_label: 'Category Name (Thai)',
     bottom_category_name_en_label: 'Category Name (English)',
     bottom_category_icon_label: 'Select Emoji Icon',
@@ -414,7 +479,8 @@ const translations: Record<Language, Record<string, string>> = {
     bottom_delete_category_msg: 'Are you sure you want to delete "{name}"? Items will be moved to "General".',
 
     // Tables & Floor Plan
-    all_zones: 'All Zones',
+    all_zones: 'All zones',
+    zone_all: 'All zones',
     zone_indoor: 'Indoor (A/C)',
     zone_outdoor: 'Outdoor',
     zone_vip: 'VIP Room',
@@ -448,16 +514,16 @@ const translations: Record<Language, Record<string, string>> = {
     order_type_dine_in: 'Dine-In',
     order_type_takeaway: 'Takeaway',
     order_type_delivery: 'Delivery',
-    delivery_form_title: 'Delivery Customer Information',
+    delivery_form_title: 'Delivery Order Info',
     delivery_customer_name: 'Customer Name',
     delivery_phone: 'Phone Number',
     delivery_address: 'Delivery Address',
-    switch_table: 'Switch Table...',
-    table_has_order: '(Active)',
-    table_empty: '(Free)',
-    cart_empty_title: 'Order cart is currently empty',
-    cart_empty_desc: 'Tap any dish card on the left to add items',
-    cart_unconfirmed_badge: 'Unsent',
+    switch_table: 'Switch table...',
+    table_has_order: '(Has order)',
+    table_empty: '(Available)',
+    cart_empty_title: 'Cart is empty',
+    cart_empty_desc: 'Tap food items on the left to add to cart',
+    cart_unconfirmed_badge: 'Draft',
     cart_confirmed_badge: 'Confirmed',
     cart_subtotal: 'Subtotal',
     cart_discount: 'Discount',
@@ -466,83 +532,95 @@ const translations: Record<Language, Record<string, string>> = {
     cart_grand_total: 'Grand Total',
     cart_confirm_order: 'Confirm Order',
     cart_confirm_order_count: 'Confirm Order ({count})',
-    cart_pay_now: 'Pay / Checkout',
+    cart_pay_now: 'Pay / Settle Bill',
     cart_table_label: 'Table {table}',
     cart_bill_no: 'Bill #{no}',
     cart_guests_count: 'Guests: {count}',
     cart_delivery_to: 'Deliver to: {name} ({phone})',
     void_item_btn: 'Void Item',
-    void_item_title: 'Void Item: {name}',
-    void_item_reason_label: 'Reason for voiding',
-    void_item_reason_placeholder: 'e.g. Customer cancelled, out of ingredients',
+    void_item_title: 'Void Order Item: {name}',
+    void_item_reason_label: 'Void Reason',
+    void_item_reason_placeholder: 'e.g. Customer cancelled, out of stock, typed by mistake',
     void_item_confirm: 'Confirm Void',
     sold_out_overlay: 'Sold Out',
-    recommended_badge: 'Popular',
+    recommended_badge: 'Chef Choice',
     promo_badge: 'Promo',
 
+    // Payment Blocked Rules
+    pay_blocked_unsaved_title: 'Order Not Saved',
+    pay_blocked_unsaved_msg: 'You have items that are not saved yet. Please save the order to the table first.',
+    pay_blocked_empty_title: 'No Items in Bill',
+    pay_blocked_empty_msg: 'This bill has no items.',
+    pay_blocked_no_table_title: 'No Table Selected',
+    pay_blocked_no_table_msg: 'Please select a table for this dine-in order before saving.',
+    btn_save_and_go_floor_plan: 'Save order and go to floor plan',
+    btn_select_table: 'Select table',
+    select_table_modal_title: 'Select Table for This Order',
+    select_table_modal_desc: 'Please choose a table to save order items to.',
+
     // Food Type Detail & Options Modal
-    food_detail_options_title: 'Options & Sizes',
-    food_detail_add_button: 'Add',
+    food_detail_options_title: 'Options & Variants',
+    food_detail_add_button: 'Add to Order',
     food_detail_added_toast: 'Added!',
-    food_detail_single_choice_hint: '(Choose 1 item)',
-    food_detail_multi_choice_hint: '(Choose multiple items)',
-    food_detail_kitchen_note: 'Special Instructions (e.g. no cilantro, less sweet, extra spicy)',
-    food_detail_kitchen_note_placeholder: 'Type special instructions for the kitchen...',
+    food_detail_single_choice_hint: '(Select 1 option)',
+    food_detail_multi_choice_hint: '(Multiple options allowed)',
+    food_detail_kitchen_note: 'Special note to kitchen (e.g. no cilantro, less sweet, extra spicy)',
+    food_detail_kitchen_note_placeholder: 'Type instructions for the kitchen...',
     food_detail_close: 'Close',
     option_standard: 'Standard',
     option_sold_out: 'Sold Out',
 
     // Menu Management
     menu_mgmt_title: 'Menu & Category Management',
-    menu_mgmt_sub: 'Add, remove, edit prices, options, photos, and mark sold-out items',
-    menu_mgmt_add_btn: '+ Add New Dish',
+    menu_mgmt_sub: 'Add, edit dishes, toppings, images, and mark sold-out items',
+    menu_mgmt_add_btn: '+ New Menu Item',
     menu_mgmt_cat_btn: 'Manage Categories',
     menu_mgmt_search: 'Search dish name...',
-    menu_form_new_title: 'Add New Food / Drink Item',
-    menu_form_edit_title: 'Edit Item: {name}',
+    menu_form_new_title: 'Create New Dish',
+    menu_form_edit_title: 'Edit Dish: {name}',
     menu_form_name_th: 'Dish Name (Thai)',
     menu_form_name_en: 'Dish Name (English)',
     menu_form_cat: 'Category',
     menu_form_desc_th: 'Description (Thai)',
     menu_form_desc_en: 'Description (English)',
-    menu_form_photo_label: 'Dish Photo',
+    menu_form_photo_label: 'Food Photo',
     menu_form_photo_upload_btn: 'Upload from Device',
     menu_form_photo_camera_btn: 'Take Photo',
     menu_form_photo_remove: 'Remove Photo',
-    menu_form_photo_url_label: 'Or provide Image URL',
-    menu_form_options_header: 'Options & Variants List',
-    menu_form_add_option_btn: '+ Add Option',
-    menu_form_option_name_th: 'Option Name (Thai, e.g. หมูสับ)',
-    menu_form_option_name_en: 'Option Name (English, e.g. Minced Pork)',
-    menu_form_option_price: 'Price (฿)',
-    menu_form_option_cost: 'Cost (฿)',
+    menu_form_photo_url_label: 'Or paste image URL',
+    menu_form_options_header: 'Options & Pricing Variants',
+    menu_form_add_option_btn: '+ Add Option Variant',
+    menu_form_option_name_th: 'Variant Name (TH, e.g. Pork)',
+    menu_form_option_name_en: 'Variant Name (EN, e.g. Pork)',
+    menu_form_option_price: 'Selling Price (฿)',
+    menu_form_option_cost: 'Cost Price (฿)',
     menu_form_option_sold_out: 'Sold Out',
-    menu_form_promo_active: 'Enable Promotional Price',
+    menu_form_promo_active: 'Enable Promo Price',
     menu_form_promo_price: 'Promo Price (฿)',
-    menu_form_recommended: 'Chef Recommended',
+    menu_form_recommended: 'Chef Recommendation',
     menu_form_sold_out: 'Mark Entire Dish Sold Out',
-    menu_form_save_btn: 'Save Item',
-    menu_storage_full_err: 'Browser storage full. Please use a smaller image file or an image URL.',
-    menu_delete_confirm_title: 'Delete Dish Confirmation',
+    menu_form_save_btn: 'Save Dish',
+    menu_storage_full_err: 'Browser storage is full. Please use smaller images or paste a URL.',
+    menu_delete_confirm_title: 'Delete Menu Confirmation',
     menu_delete_confirm_msg: 'Are you sure you want to delete "{name}"? This action cannot be undone.',
 
     // Billing & Payments
-    payment_modal_title: 'Payment - {table}',
+    payment_modal_title: 'Checkout - {table}',
     payment_method_cash: 'Cash',
-    payment_method_qr: 'PromptPay / QR',
+    payment_method_qr: 'PromptPay QR',
     payment_method_card: 'Credit / Debit Card',
     payment_method_transfer: 'Bank Transfer',
     payment_method_ewallet: 'E-Wallet',
-    cash_amount_received: 'Amount Received',
-    cash_change: 'Change',
-    cash_quick_bills: 'Quick Banknote:',
+    cash_amount_received: 'Cash Received',
+    cash_change: 'Change Due',
+    cash_quick_bills: 'Quick Cash Buttons:',
     qr_payment_title: 'Scan QR to Pay',
-    qr_exact_amount: 'Exact Amount to Pay:',
-    qr_select_label: 'Receiving Account:',
+    qr_exact_amount: 'Amount to Pay:',
+    qr_select_label: 'Select Payment Account:',
     qr_confirm_received: 'Confirm Payment Received',
-    card_slip_label: 'Slip Reference / Last 4 Digits (Optional)',
+    card_slip_label: 'Slip Ref / Last 4 Digits (Optional)',
     transfer_ref_label: 'Transfer Reference (Optional)',
-    ewallet_ref_label: 'App Name / Ref Code',
+    ewallet_ref_label: 'App Name / Transaction Ref',
     btn_complete_payment: 'Complete Payment ({amount})',
     payment_success_title: 'Payment Successful!',
     btn_print_receipt: 'Print Receipt',
@@ -553,61 +631,61 @@ const translations: Record<Language, Record<string, string>> = {
     receipt_date: 'Date',
     receipt_time: 'Time',
     receipt_cashier: 'Cashier',
-    receipt_bill_no: 'Bill No.',
+    receipt_bill_no: 'Bill No',
     receipt_order_type: 'Order Type',
     receipt_subtotal: 'Subtotal',
     receipt_discount: 'Discount',
     receipt_service_charge: 'Service Charge',
     receipt_vat: 'VAT (7%)',
-    receipt_grand_total: 'Total Amount',
-    receipt_paid_by: 'Paid by',
+    receipt_grand_total: 'Grand Total',
+    receipt_paid_by: 'Paid By',
     receipt_change_amount: 'Change',
-    receipt_member_points: 'Member Points',
+    receipt_member_points: 'Points Balance',
     receipt_tax_id: 'Tax ID',
 
     // Bills History
-    bills_history_title: 'Bills & Sales History',
-    bills_history_sub: 'Review sales orders, reprint receipts, and void bills',
-    bills_search: 'Search bill number, table...',
+    bills_history_title: 'Bills & Order History',
+    bills_history_sub: 'Review orders, reprint receipts, and void mistakes',
+    bills_search: 'Search bill #, table name...',
     bills_filter_all: 'All Statuses',
     bills_filter_open: 'Open Bills',
-    bills_filter_paid: 'Paid',
-    bills_filter_voided: 'Voided',
+    bills_filter_paid: 'Paid Bills',
+    bills_filter_voided: 'Voided Bills',
     bills_reprint_btn: 'Reprint',
     bills_void_btn: 'Void Bill',
 
     // Dashboard & Reports
-    dash_title: 'Restaurant Overview Dashboard',
-    dash_sub: 'Real-time sales performance and operational stats',
+    dash_title: 'Restaurant Executive Dashboard',
+    dash_sub: 'Live overview of sales, performance, and current dining status',
     dash_today_sales: "Today's Sales",
     dash_total_bills: 'Closed Bills',
-    dash_avg_bill: 'Average per Bill',
-    dash_open_tables: 'Active Seated Tables',
-    dash_top_selling: 'Top 5 Selling Items',
+    dash_avg_bill: 'Average Ticket',
+    dash_open_tables: 'Active Tables',
+    dash_top_selling: 'Top 5 Best Sellers',
     report_title: 'Financial & Shift Reports',
-    report_sub: 'Analyze revenue, margins, payment channels, and manage shifts',
+    report_sub: 'Sales breakdown, gross profit, payment distribution, and shifts',
     report_filter_today: 'Today',
     report_filter_7days: 'Last 7 Days',
     report_filter_30days: 'Last 30 Days',
-    report_filter_custom: 'Custom',
+    report_filter_custom: 'Custom Date',
     report_export_csv: 'Export CSV',
-    report_shift_title: 'Current Shift Status',
+    report_shift_title: 'Current Shift Session',
     report_open_shift: 'Open New Shift',
     report_close_shift: 'Close Shift & Count Cash',
     report_starting_cash: 'Starting Float',
-    report_counted_cash: 'Counted Drawer Cash',
-    report_cash_diff: 'Cash Discrepancy',
-    report_sales_by_hour: 'Hourly Sales Breakdown',
+    report_counted_cash: 'Actual Cash Counted',
+    report_cash_diff: 'Cash Variance',
+    report_sales_by_hour: 'Hourly Sales Trend',
     report_sales_by_cat: 'Sales by Category',
-    report_sales_by_method: 'Payment Methods Share',
+    report_sales_by_method: 'Payment Methods',
     report_gross_profit: 'Gross Profit',
 
     // Settings
     settings_title: 'KinD POS Settings',
-    settings_sub: 'Manage store profile, tax rules, payment QR codes, and staff',
-    settings_tab_shop: 'Shop Info',
+    settings_sub: 'Store profile, tax rates, printers, QR codes, and staff PINs',
+    settings_tab_shop: 'Store Profile',
     settings_tab_tax: 'Taxes & Service',
-    settings_tab_qr: 'Payment QR Codes',
+    settings_tab_qr: 'Payment QRs',
     settings_tab_staff: 'Staff & PINs',
     settings_tab_backup: 'Backup & Reset',
   },
@@ -617,23 +695,14 @@ const LanguageContext = createContext<LanguageContextType | undefined>(undefined
 
 export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [language, setLanguageState] = useState<Language>(() => {
-    try {
-      const saved = localStorage.getItem('kind_pos_lang_v2');
-      if (saved === 'en' || saved === 'th') return saved;
-      return 'th';
-    } catch {
-      return 'th';
-    }
+    const saved = localStorage.getItem('kind_pos_lang');
+    if (saved === 'en' || saved === 'th') return saved;
+    return 'th';
   });
 
   const setLanguage = useCallback((lang: Language) => {
     setLanguageState(lang);
-    try {
-      localStorage.setItem('kind_pos_lang_v2', lang);
-      document.documentElement.lang = lang;
-    } catch (e) {
-      console.warn('Failed to save language to localStorage', e);
-    }
+    localStorage.setItem('kind_pos_lang', lang);
   }, []);
 
   const toggleLanguage = useCallback(() => {
@@ -647,9 +716,10 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const t = useCallback(
     (key: string, params?: Record<string, string | number>): string => {
       const dict = translations[language] || translations.th;
-      let text = dict[key] || translations.th[key] || key;
+      // Fallback: If not found in current dict, fall back to Thai text, and never display raw key
+      let text = dict[key] || translations.th[key] || '';
 
-      if (params) {
+      if (params && text) {
         Object.entries(params).forEach(([k, v]) => {
           text = text.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v));
         });

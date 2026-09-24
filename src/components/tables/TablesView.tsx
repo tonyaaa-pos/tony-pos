@@ -24,6 +24,9 @@ import { TableDetailModal } from './TableDetailModal';
 import { PaymentModal } from '../pos/PaymentModal';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import { ZoneBar } from '../common/ZoneBar';
+import { isTableWithCustomers, canPay, PayBlockReason } from '../../utils/orderRules';
+import { UnsavedItemsPaymentDialog } from '../pos/UnsavedItemsPaymentDialog';
+import { useLanguage } from '../../context/LanguageContext';
 
 export const getDefaultTableDimensions = (shape: TableShape = 'square') => {
   switch (shape) {
@@ -57,7 +60,9 @@ export const TablesView: React.FC = () => {
     deleteTable,
     selectedZone,
     setSelectedZone,
+    confirmOrder,
   } = usePOS();
+  const { t } = useLanguage();
 
   const [isEditLayout, setIsEditLayout] = useState<boolean>(false);
   const [activeTableId, setActiveTableId] = useState<string | null>(null);
@@ -68,6 +73,11 @@ export const TablesView: React.FC = () => {
   const [showReserveModal, setShowReserveModal] = useState<Table | null>(null);
   const [showDetailModal, setShowDetailModal] = useState<Table | null>(null);
   const [showPaymentModal, setShowPaymentModal] = useState<Table | null>(null);
+
+  // Payment blocked dialog
+  const [showBlockedPayDialog, setShowBlockedPayDialog] = useState<boolean>(false);
+  const [payBlockReason, setPayBlockReason] = useState<PayBlockReason>('unsaved_items');
+  const [tableForBlockedPay, setTableForBlockedPay] = useState<Table | null>(null);
 
   // Table add/edit modal
   const [isTableModalOpen, setIsTableModalOpen] = useState<boolean>(false);
