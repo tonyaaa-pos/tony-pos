@@ -10,23 +10,44 @@ import {
   CheckCircle2,
   AlertTriangle,
   Download,
+  CreditCard,
 } from 'lucide-react';
 import { formatBaht, formatThaiDateTime } from '../../utils/formatters';
 import { Modal } from '../common/Modal';
 import { ReceiptPrint } from '../pos/ReceiptPrint';
 import { ConfirmDialog } from '../common/ConfirmDialog';
+import { canPay, PayBlockReason } from '../../utils/orderRules';
+import { UnsavedItemsPaymentDialog } from '../pos/UnsavedItemsPaymentDialog';
+import { PaymentModal } from '../pos/PaymentModal';
 
 export const BillsView: React.FC = () => {
-  const { bills, settings, voidBill } = usePOS();
+  const { bills, settings, voidBill, confirmOrder, setActiveNav } = usePOS();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'open' | 'paid' | 'voided'>('all');
   const [selectedBill, setSelectedBill] = useState<Bill | null>(null);
   const [showPrintModal, setShowPrintModal] = useState<Bill | null>(null);
 
+  // Payment states
+  const [payingBill, setPayingBill] = useState<Bill | null>(null);
+  const [showBlockedDialog, setShowBlockedDialog] = useState(false);
+  const [payBlockReason, setPayBlockReason] = useState<PayBlockReason>('unsaved_items');
+  const [billForBlockedPay, setBillForBlockedPay] = useState<Bill | null>(null);
+
   // Void confirmation
   const [billToVoid, setBillToVoid] = useState<Bill | null>(null);
   const [voidReason, setVoidReason] = useState('');
+
+  const handleStartPayment = (bill: Bill) => {
+    const check = canPay(bill);
+    if (!check.allowed) {
+      setPayBlockReason(check.reason || 'unsaved_items');
+      setBillForBlockedPay(bill);
+      setShowBlockedDialog(true);
+      return;
+    }
+    setPayingBill(bill);
+  };
 
   // Filter bills
   const filteredBills = bills.filter((bill) => {
@@ -226,14 +247,24 @@ export const BillsView: React.FC = () => {
                             <Printer className="w-4 h-4" />
                           </button>
                           {bill.status === 'open' && (
-                            <button
-                              type="button"
-                              onClick={() => setBillToVoid(bill)}
-                              className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition"
-                              title="ยกเลิกบิลนี้ (Void)"
-                            >
-                              <Ban className="w-4 h-4" />
-                            </button>
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => handleStartPayment(bill)}
+                                className="p-1.5 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 rounded-lg transition"
+                                title="ชำระเงิน"
+                              >
+                                <CreditCard className="w-4 h-4" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setBillToVoid(bill)}
+                                className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition"
+                                title="ยกเลิกบิลนี้ (Void)"
+                              >
+                                <Ban className="w-4 h-4" />
+                              </button>
+                            </>
                           )}
                         </div>
                       </td>
@@ -345,14 +376,59 @@ export const BillsView: React.FC = () => {
                 onClick={() => {
                   setShowPrintModal(selectedBill);
                 }}
-                className="px-4 py-2 rounded-xl bg-slate-900 text-white dark:bg-white dark:text-slate-900 text-xs font-bold flex items-center gap-1.5"
+                className="px-4 py-2 rounded-xl bg-slate-900 text-white dark:bg-white dark:text-slate-900 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
               >
                 <Printer className="w-3.5 h-3.5" />
                 <span>พิมพ์ใบเสร็จ</span>
               </button>
+
+              {selectedBill.status === 'open' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const bill = selectedBill;
+                    setSelectedBill(null);
+                    handleStartPayment(bill);
+                  }}
+                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+                >
+                  <CreditCard className="w-3.5 h-3.5" />
+                  <span>ชำระเงิน</span>
+                </button>
+              )}
             </div>
           </div>
         </Modal>
+      )}
+
+      {/* Blocked payment modal */}
+      {showBlockedDialog && billForBlockedPay && (
+        <UnsavedItemsPaymentDialog
+          isOpen={true}
+          onClose={() => {
+            setShowBlockedDialog(false);
+            setBillForBlockedPay(null);
+          }}
+          reason={payBlockReason}
+          isDineInWithoutTable={Boolean(billForBlockedPay.orderType === 'dine_in' && !billForBlockedPay.tableId)}
+          onSaveAndGoToFloorPlan={() => {
+            confirmOrder(billForBlockedPay.id);
+            setShowBlockedDialog(false);
+            if (billForBlockedPay.orderType === 'dine_in') {
+              setActiveNav('tables');
+            }
+            setBillForBlockedPay(null);
+          }}
+        />
+      )}
+
+      {/* Payment Modal */}
+      {payingBill && (
+        <PaymentModal
+          isOpen={true}
+          bill={payingBill}
+          onClose={() => setPayingBill(null)}
+        />
       )}
 
       {/* Print Receipt Modal */}

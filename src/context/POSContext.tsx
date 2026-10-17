@@ -87,6 +87,7 @@ interface POSContextType {
   activeBill: Bill | null;
   setActiveBillId: (billId: string | null) => void;
   createBillForOrder: (orderType: OrderType, tableId?: string, guestCount?: number, deliveryInfo?: DeliveryInfo) => Bill;
+  assignTableToBill: (billId: string, tableId: string) => void;
   addItemsToBill: (billId: string, items: OrderItem[]) => void;
   updateBillItemQuantity: (billId: string, itemId: string, newQty: number) => void;
   removeUnsentItemFromBill: (billId: string, itemId: string) => void;
@@ -250,24 +251,64 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return autoPositionTables(loaded);
   });
 
-  // Categories
+  // Categories: Ensure standard categories always exist with canonical IDs
   const [categories, setCategories] = useState<MenuCategory[]>(() => {
     const loaded = loadState<MenuCategory[]>(STORAGE_KEYS.CATEGORIES, INITIAL_CATEGORIES);
-    return loaded.map((cat: any) => {
-      const initialMatch = INITIAL_CATEGORIES.find((c) => c.id === cat.id);
+    const loadedArray = Array.isArray(loaded) ? loaded : [];
+
+    // Ensure all 5 standard categories exist with their canonical IDs
+    const standardMerged: MenuCategory[] = INITIAL_CATEGORIES.map((initCat) => {
+      const match = loadedArray.find(
+        (c: any) => c.id === initCat.id || c.name === initCat.name
+      );
       return {
-        ...cat,
-        nameEn: cat.nameEn || initialMatch?.nameEn || '',
+        ...initCat,
+        name: match?.name || initCat.name,
+        nameEn: match?.nameEn || initCat.nameEn || '',
+        icon: match?.icon || initCat.icon,
+        color: match?.color || initCat.color,
+        sortOrder: match?.sortOrder || initCat.sortOrder,
       };
     });
+
+    // Keep any custom user-added categories
+    const customCats: MenuCategory[] = loadedArray.filter(
+      (c: any) =>
+        c &&
+        c.id &&
+        !INITIAL_CATEGORIES.some((init) => init.id === c.id || init.name === c.name)
+    );
+
+    return [...standardMerged, ...customCats];
   });
 
-  // Menu Items (clean up obsolete recipeIngredients and migrate variants)
+  // Menu Items: Clean up, normalize categoryId, and guarantee all categories have food items
   const [menuItems, setMenuItems] = useState<MenuItem[]>(() => {
-    const loaded = loadState<MenuItem[]>(STORAGE_KEYS.MENU, INITIAL_MENU_ITEMS);
-    return loaded.map((item: any) => {
+    let loaded = loadState<MenuItem[]>(STORAGE_KEYS.MENU, INITIAL_MENU_ITEMS);
+    if (!Array.isArray(loaded) || loaded.length === 0) {
+      loaded = INITIAL_MENU_ITEMS;
+    }
+
+    const validCatIds = new Set(INITIAL_CATEGORIES.map((c) => c.id));
+
+    // Normalize existing loaded items
+    const normalizedItems: MenuItem[] = loaded.map((item: any) => {
       const { recipeIngredients, ...rest } = item;
-      const initialMatch = INITIAL_MENU_ITEMS.find((m) => m.id === rest.id);
+      const initialMatch = INITIAL_MENU_ITEMS.find((m) => m.id === rest.id || m.name === rest.name);
+
+      // Determine valid categoryId
+      let validCategoryId = rest.categoryId;
+      if (!validCatIds.has(validCategoryId)) {
+        if (initialMatch && validCatIds.has(initialMatch.categoryId)) {
+          validCategoryId = initialMatch.categoryId;
+        } else {
+          const matchedCat = INITIAL_CATEGORIES.find(
+            (c) => c.name === rest.category || c.name === rest.categoryName
+          );
+          validCategoryId = matchedCat ? matchedCat.id : 'cat_1';
+        }
+      }
+
       const variants =
         Array.isArray(rest.variants) && rest.variants.length > 0
           ? rest.variants
@@ -282,13 +323,37 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 isSoldOut: rest.isSoldOut || false,
               },
             ];
+
       return {
         ...rest,
+        id: rest.id || initialMatch?.id || `dish_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        categoryId: validCategoryId,
+        isAvailable: rest.isAvailable !== false,
+        name: rest.name || initialMatch?.name || 'เมนูอาหาร',
         nameEn: rest.nameEn || initialMatch?.nameEn || '',
         descriptionEn: rest.descriptionEn || initialMatch?.descriptionEn || '',
+        image: rest.image || initialMatch?.image || '',
         variants,
       };
     });
+
+    // CRITICAL: Guarantee every initial category has its dishes populated
+    const finalItems = [...normalizedItems];
+    INITIAL_CATEGORIES.forEach((cat) => {
+      const countForCat = finalItems.filter(
+        (i) => i.categoryId === cat.id && i.isAvailable !== false
+      ).length;
+      if (countForCat === 0) {
+        const defaultDishes = INITIAL_MENU_ITEMS.filter((m) => m.categoryId === cat.id);
+        defaultDishes.forEach((dish) => {
+          if (!finalItems.some((ex) => ex.id === dish.id)) {
+            finalItems.push({ ...dish, isAvailable: true });
+          }
+        });
+      }
+    });
+
+    return finalItems;
   });
 
   // Bills
@@ -595,6 +660,41 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return newBill.id;
     },
     [tables, createBillForOrder]
+  );
+
+  const assignTableToBill = useCallback(
+    (billId: string, tableId: string) => {
+      const now = new Date();
+      const assignedTable = tables.find((t) => t.id === tableId);
+      setBills((prev) =>
+        prev.map((b) =>
+          b.id === billId
+            ? {
+                ...b,
+                tableId,
+                tableName: assignedTable?.number,
+                guestCount: b.guestCount || assignedTable?.capacity || 2,
+              }
+            : b
+        )
+      );
+      setTables((prev) =>
+        prev.map((t) =>
+          t.id === tableId
+            ? {
+                ...t,
+                status: 'occupied',
+                currentBillId: billId,
+                seatedAt: t.seatedAt || now.toISOString(),
+                guestCount: t.guestCount || assignedTable?.capacity || 2,
+              }
+            : t
+        )
+      );
+      syncService.broadcast('TABLE_UPDATED');
+      syncService.broadcast('DATA_RELOAD');
+    },
+    [tables]
   );
 
   const addItemsToBill = useCallback((billId: string, newItems: OrderItem[]) => {
@@ -1322,6 +1422,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     activeBill,
     setActiveBillId,
     createBillForOrder,
+    assignTableToBill,
     addItemsToBill,
     updateBillItemQuantity,
     removeUnsentItemFromBill,

@@ -35,7 +35,10 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
     applyMembershipDiscount,
     members,
     findMemberByPhone,
+    canPay,
   } = usePOS();
+
+  const [finalizeError, setFinalizeError] = useState<string>('');
 
   // Discount controls
   const [discountType, setDiscountType] = useState<'none' | 'percentage' | 'fixed'>(
@@ -146,6 +149,16 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
 
   // Complete entire bill
   const handleFinalize = () => {
+    const check = canPay(bill);
+    if (!check.allowed) {
+      setFinalizeError(
+        check.reason === 'empty'
+          ? 'บิลนี้ยังไม่มีรายการอาหาร'
+          : 'คุณมีรายการที่ยังไม่ได้บันทึกลงโต๊ะ กรุณากดบันทึกออเดอร์ลงโต๊ะก่อนชำระเงิน'
+      );
+      return;
+    }
+    setFinalizeError('');
     soundService.playReadyChime();
     const finalPayments = payments.length > 0 ? payments : [
       {
@@ -586,6 +599,12 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+
+          {finalizeError && (
+            <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300 text-xs font-semibold">
+              {finalizeError}
             </div>
           )}
 

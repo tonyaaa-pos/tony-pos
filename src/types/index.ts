@@ -12,7 +12,8 @@ export interface User {
 export type TableZone = 'indoor' | 'outdoor' | 'vip' | string;
 export type TableStatus = 'available' | 'occupied' | 'payment_pending' | 'reserved';
 export type TableShape = 'square' | 'round' | 'rectangle' | 'counter' | 'standalone_chair';
-export type ChairStyle = 'standard' | 'stool' | 'sofa';
+export type ChairStyle = 'standard' | 'stool' | 'sofa' | 'bar_stool' | 'wood';
+export type ChairSizePreset = 'small' | 'medium' | 'large';
 
 export interface ReservationInfo {
   customerName: string;

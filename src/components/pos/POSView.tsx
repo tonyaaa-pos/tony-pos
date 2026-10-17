@@ -16,6 +16,7 @@ import {
   User,
   ShoppingBag,
   Truck,
+  Search,
 } from 'lucide-react';
 import { formatBaht } from '../../utils/formatters';
 import { ItemCustomizerModal } from './ItemCustomizerModal';
@@ -23,6 +24,9 @@ import { PaymentModal } from './PaymentModal';
 import { VoidItemModal } from './VoidItemModal';
 import { soundService } from '../../utils/audio';
 import { ZoneBar } from '../common/ZoneBar';
+import { canPay, PayBlockReason } from '../../utils/orderRules';
+import { UnsavedItemsPaymentDialog } from './UnsavedItemsPaymentDialog';
+import { Modal } from '../common/Modal';
 
 export const POSView: React.FC = () => {
   const {
@@ -32,7 +36,9 @@ export const POSView: React.FC = () => {
     bills,
     activeBill,
     setActiveBillId,
+    setActiveNav,
     createBillForOrder,
+    assignTableToBill,
     addItemsToBill,
     updateBillItemQuantity,
     removeUnsentItemFromBill,
@@ -40,6 +46,7 @@ export const POSView: React.FC = () => {
     voidOrderItem,
     settings,
     activeCategory,
+    setActiveCategory,
     selectedZone,
   } = usePOS();
 
@@ -50,22 +57,43 @@ export const POSView: React.FC = () => {
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [voidingItem, setVoidingItem] = useState<OrderItem | null>(null);
 
+  // Blocked payment and table selection modals
+  const [showBlockedDialog, setShowBlockedDialog] = useState(false);
+  const [payBlockReason, setPayBlockReason] = useState<PayBlockReason>('unsaved_items');
+  const [showTableSelectModal, setShowTableSelectModal] = useState(false);
+
   // Delivery info edit mode
   const [showDeliveryForm, setShowDeliveryForm] = useState(false);
   const [deliveryName, setDeliveryName] = useState('');
   const [deliveryPhone, setDeliveryPhone] = useState('');
   const [deliveryAddress, setDeliveryAddress] = useState('');
 
-  // Zone bar visibility: hidden when a food category is selected from bottom bar
-  const isZoneBarVisible = activeCategory === null;
+  const [searchDishQuery, setSearchDishQuery] = useState('');
 
-  // Filtered menu items based on active food category selected in bottom bar
+  // Filtered menu items based on active food category and optional search query
   const filteredMenuItems = useMemo(() => {
     return menuItems.filter((item) => {
-      const matchCat = !activeCategory || activeCategory === 'all' || item.categoryId === activeCategory;
-      return matchCat && item.isAvailable;
+      let matchCat = !activeCategory || activeCategory === 'all';
+      if (!matchCat && activeCategory) {
+        if (item.categoryId === activeCategory) {
+          matchCat = true;
+        } else {
+          const targetCategory = categories.find((c) => c.id === activeCategory);
+          const itemCategory = categories.find((c) => c.id === item.categoryId);
+          if (targetCategory && itemCategory && targetCategory.name === itemCategory.name) {
+            matchCat = true;
+          }
+        }
+      }
+
+      const matchSearch =
+        !searchDishQuery.trim() ||
+        item.name.toLowerCase().includes(searchDishQuery.toLowerCase()) ||
+        (item.nameEn && item.nameEn.toLowerCase().includes(searchDishQuery.toLowerCase()));
+
+      return matchCat && matchSearch && item.isAvailable !== false;
     });
-  }, [menuItems, activeCategory]);
+  }, [menuItems, activeCategory, searchDishQuery, categories]);
 
   // Filtered tables for the switcher dropdown based on active zone
   const filteredTables = useMemo(() => {
@@ -114,27 +142,113 @@ export const POSView: React.FC = () => {
   // Unsent items in cart
   const unsentCount = activeBill?.items.filter((i) => i.isNewUnsent).length || 0;
 
+  // Active category item count helper
+  const totalAvailableDishes = menuItems.filter((m) => m.isAvailable !== false).length;
+
   return (
     <div className="h-[calc(100vh-4rem)] flex flex-col lg:flex-row overflow-hidden">
-      {/* LEFT: Menu Browse (Food type cards showing ONLY photo and name) */}
+      {/* LEFT: Menu Browse (Food categories + items grid) */}
       <div className="flex-1 flex flex-col bg-slate-50 dark:bg-slate-950 overflow-hidden border-r border-slate-200 dark:border-slate-800">
-        {/* Table Zone Bar with smooth slide/fade transition */}
-        <div
-          className={`transition-all duration-200 ease-in-out shrink-0 overflow-hidden ${
-            isZoneBarVisible
-              ? 'max-h-16 opacity-100 p-3 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800'
-              : 'max-h-0 opacity-0 p-0 border-b-0 m-0 pointer-events-none'
-          }`}
-        >
-          <ZoneBar />
+        {/* Dedicated Food Category Bar & Search */}
+        <div className="shrink-0 p-3 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 shadow-2xs">
+          {/* Scrollable Categories Chips */}
+          <div className="flex-1 flex items-center gap-1.5 overflow-x-auto no-scrollbar scroll-smooth py-0.5">
+            {/* 'All' Category Button */}
+            <button
+              type="button"
+              onClick={() => setActiveCategory('all')}
+              className={`shrink-0 flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer select-none ${
+                !activeCategory || activeCategory === 'all'
+                  ? 'bg-amber-500 text-slate-950 shadow-xs ring-2 ring-amber-400/50'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+              }`}
+            >
+              <span>✨</span>
+              <span>{t('bottom_all_categories')}</span>
+              <span
+                className={`text-[10px] px-1.5 py-0.2 rounded-md ${
+                  !activeCategory || activeCategory === 'all'
+                    ? 'bg-slate-950/20 text-slate-950'
+                    : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-400'
+                }`}
+              >
+                {totalAvailableDishes}
+              </span>
+            </button>
+
+            {/* Individual Category Buttons */}
+            {categories.map((cat) => {
+              const isSelected = activeCategory === cat.id;
+              const catCount = menuItems.filter((m) => {
+                if (m.isAvailable === false) return false;
+                if (m.categoryId === cat.id) return true;
+                const itemCat = categories.find((c) => c.id === m.categoryId);
+                return itemCat && itemCat.name === cat.name;
+              }).length;
+
+              return (
+                <button
+                  key={cat.id}
+                  type="button"
+                  onClick={() => setActiveCategory(cat.id)}
+                  className={`shrink-0 flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer select-none ${
+                    isSelected
+                      ? 'bg-amber-500 text-slate-950 shadow-xs ring-2 ring-amber-400/50'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+                  }`}
+                >
+                  <span className="text-base leading-none">{cat.icon || '🍽️'}</span>
+                  <span>{getName(cat)}</span>
+                  <span
+                    className={`text-[10px] px-1.5 py-0.2 rounded-md ${
+                      isSelected
+                        ? 'bg-slate-950/20 text-slate-950'
+                        : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-400'
+                    }`}
+                  >
+                    {catCount}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Quick Search Input */}
+          <div className="relative w-full sm:w-56 shrink-0">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+            <input
+              type="text"
+              value={searchDishQuery}
+              onChange={(e) => setSearchDishQuery(e.target.value)}
+              placeholder="ค้นหาชื่ออาหาร..."
+              className="w-full pl-9 pr-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-amber-500 text-slate-900 dark:text-white"
+            />
+          </div>
         </div>
 
         {/* Menu Items Grid */}
         <div className="flex-1 overflow-y-auto p-3 sm:p-4">
           {filteredMenuItems.length === 0 ? (
-            <div className="h-64 flex flex-col items-center justify-center text-slate-400 gap-2">
-              <UtensilsCrossed className="w-10 h-10 opacity-40" />
-              <p className="text-sm font-medium">{t('no')}</p>
+            <div className="h-64 flex flex-col items-center justify-center text-slate-400 gap-3">
+              <UtensilsCrossed className="w-12 h-12 opacity-35" />
+              <div className="text-center">
+                <p className="text-sm font-bold text-slate-700 dark:text-slate-300">
+                  ไม่มีรายการอาหารในหมวดหมู่นี้
+                </p>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  กดปุ่มด้านล่างเพื่อดูเมนูทั้งหมด
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveCategory('all');
+                  setSearchDishQuery('');
+                }}
+                className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs shadow-xs transition cursor-pointer"
+              >
+                ✨ แสดงอาหารทั้งหมด ({totalAvailableDishes} รายการ)
+              </button>
             </div>
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3.5">
@@ -430,8 +544,15 @@ export const POSView: React.FC = () => {
               disabled={!activeBill || unsentCount === 0}
               onClick={() => {
                 if (activeBill) {
+                  if (activeBill.orderType === 'dine_in' && !activeBill.tableId) {
+                    setShowTableSelectModal(true);
+                    return;
+                  }
                   soundService.playSuccessTap();
                   confirmOrder(activeBill.id);
+                  if (activeBill.orderType === 'dine_in' && activeBill.tableId) {
+                    setActiveNav('tables');
+                  }
                 }
               }}
               className={`py-3 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition ${
@@ -451,7 +572,16 @@ export const POSView: React.FC = () => {
             <button
               type="button"
               disabled={!activeBill || activeBill.items.length === 0}
-              onClick={() => setShowPaymentModal(true)}
+              onClick={() => {
+                if (!activeBill) return;
+                const check = canPay(activeBill);
+                if (!check.allowed) {
+                  setPayBlockReason(check.reason || 'unsaved_items');
+                  setShowBlockedDialog(true);
+                  return;
+                }
+                setShowPaymentModal(true);
+              }}
               className={`py-3 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm transition ${
                 activeBill && activeBill.items.length > 0
                   ? 'bg-amber-500 hover:bg-amber-600 active:scale-98 text-slate-950 cursor-pointer'
@@ -473,6 +603,75 @@ export const POSView: React.FC = () => {
           menuItem={customizingItem}
           onAddToCart={handleAddToCart}
         />
+      )}
+
+      {/* Blocked Payment Dialog */}
+      {showBlockedDialog && activeBill && (
+        <UnsavedItemsPaymentDialog
+          isOpen={true}
+          onClose={() => setShowBlockedDialog(false)}
+          reason={payBlockReason}
+          isDineInWithoutTable={Boolean(activeBill.orderType === 'dine_in' && !activeBill.tableId)}
+          onSelectTable={() => {
+            setShowBlockedDialog(false);
+            setShowTableSelectModal(true);
+          }}
+          onSaveAndGoToFloorPlan={() => {
+            if (activeBill.orderType === 'dine_in' && !activeBill.tableId) {
+              setShowBlockedDialog(false);
+              setShowTableSelectModal(true);
+              return;
+            }
+            confirmOrder(activeBill.id);
+            setShowBlockedDialog(false);
+            if (activeBill.orderType === 'dine_in') {
+              setActiveNav('tables');
+            }
+          }}
+        />
+      )}
+
+      {/* Dine-in Table Selection Modal when no table is assigned */}
+      {showTableSelectModal && activeBill && (
+        <Modal
+          isOpen={true}
+          onClose={() => setShowTableSelectModal(false)}
+          title={t('select_table')}
+          maxWidth="max-w-md"
+        >
+          <div className="space-y-4">
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              {t('pay_blocked_no_table_msg')}
+            </p>
+            <div className="grid grid-cols-3 gap-2.5 max-h-64 overflow-y-auto p-1">
+              {tables.map((tItem) => (
+                <button
+                  key={tItem.id}
+                  type="button"
+                  onClick={() => {
+                    assignTableToBill(activeBill.id, tItem.id);
+                    confirmOrder(activeBill.id);
+                    setShowTableSelectModal(false);
+                    setActiveNav('tables');
+                  }}
+                  className="p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:bg-amber-500 hover:text-slate-950 hover:border-amber-600 transition flex flex-col items-center justify-center gap-1 cursor-pointer"
+                >
+                  <span className="font-bold text-sm">{tItem.number}</span>
+                  <span className="text-[10px] opacity-75">{tItem.capacity} ที่นั่ง</span>
+                </button>
+              ))}
+            </div>
+            <div className="flex justify-end pt-2 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setShowTableSelectModal(false)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              >
+                {t('cancel')}
+              </button>
+            </div>
+          </div>
+        </Modal>
       )}
 
       {/* Payment Modal */}

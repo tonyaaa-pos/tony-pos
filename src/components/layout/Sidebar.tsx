@@ -157,6 +157,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
                   setActiveNav(item.id);
                   if (item.id !== 'pos') {
                     setActiveCategory(null);
+                  } else {
+                    setActiveCategory('all');
                   }
                   onClose();
                 }}
