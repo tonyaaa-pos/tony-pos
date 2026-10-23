@@ -24,6 +24,7 @@ import { formatBaht } from '../../utils/formatters';
 import { Modal } from '../common/Modal';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import { compressImageFile } from '../../utils/imageCompressor';
+import { isDishInCategory } from '../pos/POSView';
 
 export const MenuManagementView: React.FC = () => {
   const {
@@ -36,11 +37,13 @@ export const MenuManagementView: React.FC = () => {
     addCategory,
     updateCategory,
     deleteCategory,
+    activeCategory,
+    setActiveCategory,
   } = usePOS();
 
   const { t, getName, getDescription } = useLanguage();
 
-  const [selectedCatId, setSelectedCatId] = useState<string>('all');
+  const currentCategory = activeCategory || 'all';
   const [searchQuery, setSearchQuery] = useState('');
 
   // Modals
@@ -61,7 +64,7 @@ export const MenuManagementView: React.FC = () => {
   const [categoryNameEnInput, setCategoryNameEnInput] = useState('');
 
   const filteredItems = menuItems.filter((item) => {
-    const matchCat = selectedCatId === 'all' || item.categoryId === selectedCatId;
+    const matchCat = isDishInCategory(item, currentCategory, categories);
     const matchSearch =
       item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       (item.nameEn && item.nameEn.toLowerCase().includes(searchQuery.toLowerCase()));
@@ -71,6 +74,11 @@ export const MenuManagementView: React.FC = () => {
   const handleOpenAdd = () => {
     setIsNewItem(true);
     setStorageError(null);
+    const defaultCatId =
+      currentCategory !== 'all' && categories.some((c) => c.id === currentCategory)
+        ? currentCategory
+        : categories[0]?.id || 'cat_1';
+
     setEditingItem({
       name: '',
       nameEn: '',
@@ -78,7 +86,7 @@ export const MenuManagementView: React.FC = () => {
       descriptionEn: '',
       price: 80,
       cost: 40,
-      categoryId: categories[0]?.id || 'cat_1',
+      categoryId: defaultCatId,
       image:
         'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=600&q=80',
       isAvailable: true,
@@ -296,32 +304,45 @@ export const MenuManagementView: React.FC = () => {
         </div>
 
         {/* Categories Pills */}
-        <div className="flex items-center gap-1 overflow-x-auto pb-1">
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
           <button
             type="button"
-            onClick={() => setSelectedCatId('all')}
+            onClick={() => setActiveCategory('all')}
             className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer ${
-              selectedCatId === 'all'
-                ? 'bg-amber-500 text-slate-950'
-                : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
+              currentCategory === 'all'
+                ? 'bg-amber-500 text-slate-950 shadow-2xs font-extrabold'
+                : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
             }`}
           >
             {t('all')} ({menuItems.length})
           </button>
-          {categories.map((c) => (
-            <button
-              key={c.id}
-              type="button"
-              onClick={() => setSelectedCatId(c.id)}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer ${
-                selectedCatId === c.id
-                  ? 'bg-amber-500 text-slate-950'
-                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
-              }`}
-            >
-              {c.icon} {getName(c)}
-            </button>
-          ))}
+          {categories.map((c) => {
+            const count = menuItems.filter((m) => isDishInCategory(m, c.id, categories)).length;
+            return (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => setActiveCategory(c.id)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer flex items-center gap-1.5 ${
+                  currentCategory === c.id
+                    ? 'bg-amber-500 text-slate-950 shadow-2xs font-extrabold'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+                }`}
+              >
+                <span>{c.icon}</span>
+                <span>{getName(c)}</span>
+                <span
+                  className={`text-[10px] px-1.5 py-0.2 rounded-md ${
+                    currentCategory === c.id
+                      ? 'bg-slate-950/20 text-slate-950 font-black'
+                      : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-400'
+                  }`}
+                >
+                  {count}
+                </span>
+              </button>
+            );
+          })}
         </div>
       </div>
 

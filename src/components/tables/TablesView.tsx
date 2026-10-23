@@ -16,8 +16,10 @@ import {
   Plus,
   Minus,
   Maximize2,
+  ArrowRightLeft,
 } from 'lucide-react';
 import { formatBaht, formatElapsedTime } from '../../utils/formatters';
+import { soundService } from '../../utils/audio';
 import { Modal } from '../common/Modal';
 import { ReservationModal } from './ReservationModal';
 import { TableDetailModal } from './TableDetailModal';
@@ -65,6 +67,7 @@ export const TablesView: React.FC = () => {
     tables,
     bills,
     openTable,
+    moveTable,
     reserveTable,
     setActiveNav,
     setActiveBillId,
@@ -81,6 +84,10 @@ export const TablesView: React.FC = () => {
 
   const [isEditLayout, setIsEditLayout] = useState<boolean>(false);
   const [activeTableId, setActiveTableId] = useState<string | null>(null);
+
+  // Interactive Table Move mode directly on Floor Plan
+  const [movingSourceTable, setMovingSourceTable] = useState<Table | null>(null);
+  const [moveFeedback, setMoveFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Modals
   const [showOpenModal, setShowOpenModal] = useState<Table | null>(null);
@@ -234,6 +241,44 @@ export const TablesView: React.FC = () => {
   const handleTableClick = (table: Table) => {
     if (isEditLayout) {
       setActiveTableId(table.id);
+      return;
+    }
+
+    // Floor plan interactive table move mode
+    if (movingSourceTable) {
+      if (table.id === movingSourceTable.id) {
+        return;
+      }
+
+      if (table.status !== 'available') {
+        soundService.playTap();
+        setMoveFeedback({
+          type: 'error',
+          message: `โต๊ะ ${table.number} ไม่ว่าง (สามารถย้ายไปเฉพาะโต๊ะที่ว่างได้เท่านั้น)`,
+        });
+        setTimeout(() => setMoveFeedback(null), 3000);
+        return;
+      }
+
+      const fromNumber = movingSourceTable.number;
+      const toNumber = table.number;
+      const success = moveTable(movingSourceTable.id, table.id);
+
+      if (success) {
+        soundService.playSuccessTap();
+        setMovingSourceTable(null);
+        setMoveFeedback({
+          type: 'success',
+          message: `ย้ายข้อมูลและบิลทั้งหมดจากโต๊ะ ${fromNumber} ไปยังโต๊ะ ${toNumber} สำเร็จเรียบร้อยแล้ว`,
+        });
+        setTimeout(() => setMoveFeedback(null), 4000);
+      } else {
+        setMoveFeedback({
+          type: 'error',
+          message: 'ไม่สามารถย้ายโต๊ะได้ กรุณาลองใหม่อีกครั้ง',
+        });
+        setTimeout(() => setMoveFeedback(null), 3500);
+      }
       return;
     }
 
@@ -441,6 +486,55 @@ export const TablesView: React.FC = () => {
         </div>
       </div>
 
+      {/* Interactive Table Move Banner on Floor Plan */}
+      {movingSourceTable && (
+        <div className="p-4 bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 text-slate-950 rounded-2xl shadow-lg border-2 border-amber-300 flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in slide-in-from-top-2 duration-200">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-slate-950 text-amber-400 shadow-sm">
+              <ArrowRightLeft className="w-5 h-5 animate-pulse" />
+            </div>
+            <div>
+              <div className="text-[11px] font-black uppercase tracking-wider text-slate-900/80">
+                โหมดย้ายโต๊ะ (แตะเลือกโต๊ะว่างปลายทางบนผังด้านล่าง)
+              </div>
+              <div className="text-sm font-black">
+                กำลังย้ายจาก: <span className="underline decoration-2 underline-offset-2">โต๊ะ {movingSourceTable.number}</span> → แตะเลือกโต๊ะว่าง (กรอบเขียว) ที่ต้องการย้ายไป
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setMovingSourceTable(null)}
+            className="px-4 py-2 rounded-xl bg-slate-950 text-white hover:bg-slate-900 text-xs font-bold shadow-xs transition cursor-pointer self-start sm:self-auto shrink-0"
+          >
+            ยกเลิกการย้ายโต๊ะ
+          </button>
+        </div>
+      )}
+
+      {/* Move Feedback Notification */}
+      {moveFeedback && (
+        <div
+          className={`p-3 rounded-2xl shadow-md flex items-center justify-between gap-3 animate-in fade-in duration-200 ${
+            moveFeedback.type === 'success'
+              ? 'bg-emerald-600 text-white'
+              : 'bg-rose-600 text-white'
+          }`}
+        >
+          <div className="flex items-center gap-2 text-xs font-bold">
+            <Check className="w-4 h-4" />
+            <span>{moveFeedback.message}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setMoveFeedback(null)}
+            className="text-white/80 hover:text-white text-xs font-semibold cursor-pointer"
+          >
+            ปิด
+          </button>
+        </div>
+      )}
+
       {/* Edit Mode Toolbar */}
       {isEditLayout && (
         <div className="p-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 rounded-2xl flex flex-wrap items-center justify-between gap-3 text-xs text-amber-900 dark:text-amber-200 animate-in fade-in duration-200">
@@ -564,6 +658,10 @@ export const TablesView: React.FC = () => {
             // - Reserved tables keep blue look
             const withCustomers = isTableWithCustomers(table, bills);
 
+            const isMoveSource = movingSourceTable?.id === table.id;
+            const isMoveTarget = Boolean(movingSourceTable && table.status === 'available');
+            const isMoveBlocked = Boolean(movingSourceTable && !isMoveSource && table.status !== 'available');
+
             let statusClass = 'border-[3px] border-[#047857] dark:border-[#10b981] bg-emerald-500/10 text-emerald-950 dark:text-emerald-200';
             if (table.status === 'reserved') {
               statusClass = 'border-[3px] border-sky-500 bg-sky-500 text-white shadow-md shadow-sky-500/20';
@@ -573,6 +671,14 @@ export const TablesView: React.FC = () => {
               } else {
                 statusClass = 'border-[3px] border-[#dc2626] dark:border-[#ef4444] bg-amber-500 text-white shadow-md shadow-amber-500/20';
               }
+            }
+
+            if (isMoveSource) {
+              statusClass = 'border-[3px] border-amber-500 bg-amber-500 text-slate-950 ring-4 ring-amber-400 ring-offset-2 animate-pulse shadow-xl shadow-amber-500/30';
+            } else if (isMoveTarget) {
+              statusClass = 'border-[3px] border-emerald-500 bg-emerald-500/25 text-emerald-950 dark:text-emerald-100 ring-4 ring-emerald-400 ring-offset-2 shadow-xl shadow-emerald-500/40 animate-pulse';
+            } else if (isMoveBlocked) {
+              statusClass = 'opacity-35 grayscale border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-400 cursor-not-allowed';
             }
 
             return (
@@ -587,7 +693,13 @@ export const TablesView: React.FC = () => {
                   touchAction: 'none',
                 }}
                 className={`absolute z-10 transition-shadow ${
-                  isEditLayout ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer hover:scale-105 active:scale-95'
+                  isEditLayout
+                    ? 'cursor-grab active:cursor-grabbing'
+                    : isMoveTarget
+                    ? 'cursor-pointer hover:scale-110 active:scale-95 z-20'
+                    : isMoveBlocked
+                    ? 'cursor-not-allowed'
+                    : 'cursor-pointer hover:scale-105 active:scale-95'
                 }`}
               >
                 {/* Visual Chairs positioned around the table perimeter (tables have no surrounding chairs) */}
@@ -675,6 +787,14 @@ export const TablesView: React.FC = () => {
                       ) : table.status === 'reserved' && table.reservation ? (
                         <div className="text-[10px] truncate max-w-[90%] font-medium">
                           {table.reservation.customerName} ({table.reservation.reservedTime})
+                        </div>
+                      ) : isMoveSource ? (
+                        <div className="text-[10px] font-black text-slate-950 bg-amber-300 px-1.5 py-0.5 rounded shadow-xs">
+                          โต๊ะต้นทาง
+                        </div>
+                      ) : isMoveTarget ? (
+                        <div className="text-[10px] font-black text-emerald-950 dark:text-emerald-100 bg-emerald-300 dark:bg-emerald-800 px-1.5 py-0.5 rounded shadow-xs">
+                          แตะเลือกย้ายมาที่นี่
                         </div>
                       ) : (
                         <div className="text-[10px] font-medium opacity-75">
@@ -879,12 +999,20 @@ export const TablesView: React.FC = () => {
           table={showDetailModal}
           bill={getTableBill(showDetailModal)}
           onClose={() => setShowDetailModal(null)}
+          onStartMoveTable={(tbl) => {
+            setMovingSourceTable(tbl);
+          }}
           onOpenPOS={() => {
-            if (showDetailModal.currentBillId) {
-              setActiveBillId(showDetailModal.currentBillId);
-              setActiveCategory('all');
-              setActiveNav('pos');
+            let billId = showDetailModal.currentBillId;
+            if (!billId) {
+              billId = openTable(
+                showDetailModal.id,
+                showDetailModal.guestCount || showDetailModal.capacity || 2
+              );
             }
+            setActiveBillId(billId);
+            setActiveCategory('all');
+            setActiveNav('pos');
           }}
           onOpenPayment={() => {
             const tableToPay = showDetailModal;

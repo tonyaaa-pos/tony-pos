@@ -81,6 +81,8 @@ interface POSContextType {
   addCategory: (name: string, icon?: string, color?: string, nameEn?: string) => void;
   updateCategory: (id: string, name: string, icon?: string, color?: string, nameEn?: string) => void;
   deleteCategory: (id: string) => void;
+  reorderCategories: (startIndex: number, endIndex: number) => void;
+  restoreDefaultMenu: () => void;
 
   // Order & Bills
   bills: Bill[];
@@ -184,6 +186,85 @@ function autoPositionTables(rawTables: Table[]): Table[] {
   });
 }
 
+// Clean up, normalize categoryId, and guarantee all categories have active food items
+export function normalizeAndSeedMenuItems(loaded: any[] | null | undefined): MenuItem[] {
+  const source = Array.isArray(loaded) && loaded.length > 0 ? loaded : INITIAL_MENU_ITEMS;
+  const validCatIds = new Set(INITIAL_CATEGORIES.map((c) => c.id));
+
+  const nameToCatId: Record<string, string> = {
+    'อาหารจานเดียว': 'cat_1',
+    'ต้มและแกง': 'cat_2',
+    'ส้มตำและยำ': 'cat_3',
+    'ของทานเล่น': 'cat_4',
+    'เครื่องดื่มและขนมหวาน': 'cat_5',
+  };
+
+  const normalized = source.map((item: any) => {
+    const { recipeIngredients, ...rest } = item;
+    const initialMatch = INITIAL_MENU_ITEMS.find((m) => m.id === rest.id || m.name === rest.name);
+
+    let validCatId = rest.categoryId;
+    if (!validCatIds.has(validCatId)) {
+      if (initialMatch && validCatIds.has(initialMatch.categoryId)) {
+        validCatId = initialMatch.categoryId;
+      } else if (rest.category && nameToCatId[rest.category]) {
+        validCatId = nameToCatId[rest.category];
+      } else if (rest.categoryName && nameToCatId[rest.categoryName]) {
+        validCatId = nameToCatId[rest.categoryName];
+      } else {
+        validCatId = 'cat_1';
+      }
+    }
+
+    const variants =
+      Array.isArray(rest.variants) && rest.variants.length > 0
+        ? rest.variants
+        : initialMatch?.variants || [
+            {
+              id: `v_std_${rest.id || 'item'}`,
+              name: 'ปกติ',
+              nameEn: 'Standard',
+              price: rest.price || 0,
+              cost: rest.cost || 0,
+              isAvailable: true,
+              isSoldOut: rest.isSoldOut || false,
+            },
+          ];
+
+    return {
+      ...rest,
+      id: rest.id || initialMatch?.id || `dish_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      categoryId: validCatId,
+      isAvailable: true, // Always guarantee availability
+      isSoldOut: rest.isSoldOut || false,
+      name: rest.name || initialMatch?.name || 'เมนูอาหาร',
+      nameEn: rest.nameEn || initialMatch?.nameEn || '',
+      description: rest.description || initialMatch?.description || '',
+      descriptionEn: rest.descriptionEn || initialMatch?.descriptionEn || '',
+      image: rest.image || initialMatch?.image || '',
+      price: rest.price || initialMatch?.price || 50,
+      cost: rest.cost || initialMatch?.cost || 20,
+      variants,
+    };
+  });
+
+  // Guarantee all 5 standard categories have dishes populated from INITIAL_MENU_ITEMS
+  INITIAL_MENU_ITEMS.forEach((initDish) => {
+    const existingIndex = normalized.findIndex((d) => d.id === initDish.id || d.name === initDish.name);
+    if (existingIndex === -1) {
+      normalized.push({ ...initDish, isAvailable: true });
+    } else {
+      // Ensure the standard dish keeps its canonical categoryId and is available
+      if (!normalized[existingIndex].categoryId || !validCatIds.has(normalized[existingIndex].categoryId)) {
+        normalized[existingIndex].categoryId = initDish.categoryId;
+      }
+      normalized[existingIndex].isAvailable = true;
+    }
+  });
+
+  return normalized;
+}
+
 export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // Theme
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
@@ -284,77 +365,27 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Menu Items: Clean up, normalize categoryId, and guarantee all categories have food items
   const [menuItems, setMenuItems] = useState<MenuItem[]>(() => {
-    let loaded = loadState<MenuItem[]>(STORAGE_KEYS.MENU, INITIAL_MENU_ITEMS);
-    if (!Array.isArray(loaded) || loaded.length === 0) {
-      loaded = INITIAL_MENU_ITEMS;
-    }
-
-    const validCatIds = new Set(INITIAL_CATEGORIES.map((c) => c.id));
-
-    // Normalize existing loaded items
-    const normalizedItems: MenuItem[] = loaded.map((item: any) => {
-      const { recipeIngredients, ...rest } = item;
-      const initialMatch = INITIAL_MENU_ITEMS.find((m) => m.id === rest.id || m.name === rest.name);
-
-      // Determine valid categoryId
-      let validCategoryId = rest.categoryId;
-      if (!validCatIds.has(validCategoryId)) {
-        if (initialMatch && validCatIds.has(initialMatch.categoryId)) {
-          validCategoryId = initialMatch.categoryId;
-        } else {
-          const matchedCat = INITIAL_CATEGORIES.find(
-            (c) => c.name === rest.category || c.name === rest.categoryName
-          );
-          validCategoryId = matchedCat ? matchedCat.id : 'cat_1';
-        }
-      }
-
-      const variants =
-        Array.isArray(rest.variants) && rest.variants.length > 0
-          ? rest.variants
-          : initialMatch?.variants || [
-              {
-                id: `v_std_${rest.id}`,
-                name: 'ปกติ',
-                nameEn: 'Standard',
-                price: rest.price || 0,
-                cost: rest.cost || 0,
-                isAvailable: rest.isAvailable !== false,
-                isSoldOut: rest.isSoldOut || false,
-              },
-            ];
-
-      return {
-        ...rest,
-        id: rest.id || initialMatch?.id || `dish_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-        categoryId: validCategoryId,
-        isAvailable: rest.isAvailable !== false,
-        name: rest.name || initialMatch?.name || 'เมนูอาหาร',
-        nameEn: rest.nameEn || initialMatch?.nameEn || '',
-        descriptionEn: rest.descriptionEn || initialMatch?.descriptionEn || '',
-        image: rest.image || initialMatch?.image || '',
-        variants,
-      };
-    });
-
-    // CRITICAL: Guarantee every initial category has its dishes populated
-    const finalItems = [...normalizedItems];
-    INITIAL_CATEGORIES.forEach((cat) => {
-      const countForCat = finalItems.filter(
-        (i) => i.categoryId === cat.id && i.isAvailable !== false
-      ).length;
-      if (countForCat === 0) {
-        const defaultDishes = INITIAL_MENU_ITEMS.filter((m) => m.categoryId === cat.id);
-        defaultDishes.forEach((dish) => {
-          if (!finalItems.some((ex) => ex.id === dish.id)) {
-            finalItems.push({ ...dish, isAvailable: true });
-          }
-        });
-      }
-    });
-
-    return finalItems;
+    const loaded = loadState<MenuItem[]>(STORAGE_KEYS.MENU, INITIAL_MENU_ITEMS);
+    return normalizeAndSeedMenuItems(loaded);
   });
+
+  // Self-healing check on mount to ensure dishes are never missing
+  useEffect(() => {
+    setMenuItems((prev) => {
+      const checked = normalizeAndSeedMenuItems(prev);
+      const changed =
+        checked.length !== prev.length ||
+        checked.some(
+          (item, i) =>
+            item.categoryId !== prev[i]?.categoryId || item.isAvailable !== prev[i]?.isAvailable
+        );
+      if (changed) {
+        localStorage.setItem(STORAGE_KEYS.MENU, JSON.stringify(checked));
+        return checked;
+      }
+      return prev;
+    });
+  }, []);
 
   // Bills
   const [bills, setBills] = useState<Bill[]>(() =>
@@ -451,7 +482,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (msg.type === 'DATA_RELOAD' || msg.type === 'TABLE_UPDATED') {
         setTables(autoPositionTables(loadState(STORAGE_KEYS.TABLES, INITIAL_TABLES)));
         setBills(loadState(STORAGE_KEYS.BILLS, INITIAL_BILLS));
-        setMenuItems(loadState(STORAGE_KEYS.MENU, INITIAL_MENU_ITEMS));
+        setMenuItems(normalizeAndSeedMenuItems(loadState(STORAGE_KEYS.MENU, INITIAL_MENU_ITEMS)));
         setCategories(loadState(STORAGE_KEYS.CATEGORIES, INITIAL_CATEGORIES));
         setNotifications(loadState(STORAGE_KEYS.NOTIFICATIONS, []));
       }
@@ -968,14 +999,25 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const moveTable = useCallback((fromTableId: string, toTableId: string): boolean => {
     const fromTable = tables.find((t) => t.id === fromTableId);
     const toTable = tables.find((t) => t.id === toTableId);
-    if (!fromTable || !toTable || toTable.status !== 'available' || !fromTable.currentBillId) {
+    if (!fromTable || !toTable || toTable.status !== 'available') {
       return false;
     }
 
-    const billId = fromTable.currentBillId;
-    setBills((prev) =>
-      prev.map((b) => (b.id === billId ? { ...b, tableId: toTableId, tableName: toTable.number } : b))
-    );
+    let billId = fromTable.currentBillId;
+    if (!billId) {
+      const existingBill = bills.find(
+        (b) => b.tableId === fromTableId && b.status === 'open'
+      );
+      if (existingBill) {
+        billId = existingBill.id;
+      }
+    }
+
+    if (billId) {
+      setBills((prev) =>
+        prev.map((b) => (b.id === billId ? { ...b, tableId: toTableId, tableName: toTable.number } : b))
+      );
+    }
 
     setTables((prev) =>
       prev.map((t) => {
@@ -986,15 +1028,16 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             currentBillId: undefined,
             seatedAt: undefined,
             guestCount: undefined,
+            reservation: undefined,
           };
         }
         if (t.id === toTableId) {
           return {
             ...t,
-            status: 'occupied',
+            status: fromTable.status === 'payment_pending' ? 'payment_pending' : 'occupied',
             currentBillId: billId,
-            seatedAt: fromTable.seatedAt,
-            guestCount: fromTable.guestCount,
+            seatedAt: fromTable.seatedAt || new Date().toISOString(),
+            guestCount: fromTable.guestCount || toTable.capacity,
           };
         }
         return t;
@@ -1002,8 +1045,9 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
 
     syncService.broadcast('TABLE_UPDATED');
+    syncService.broadcast('DATA_RELOAD');
     return true;
-  }, [tables]);
+  }, [tables, bills]);
 
   const mergeTables = useCallback((sourceTableIds: string[], targetTableId: string): boolean => {
     const targetTable = tables.find((t) => t.id === targetTableId);
@@ -1214,6 +1258,25 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     syncService.broadcast('DATA_RELOAD');
   }, [activeCategory, menuItems]);
 
+  const reorderCategories = useCallback((startIndex: number, endIndex: number) => {
+    if (startIndex === endIndex) return;
+    setCategories((prev) => {
+      const next = [...prev];
+      const [moved] = next.splice(startIndex, 1);
+      next.splice(endIndex, 0, moved);
+      const updated = next.map((cat, idx) => ({ ...cat, sortOrder: idx + 1 }));
+      localStorage.setItem(STORAGE_KEYS.CATEGORIES, JSON.stringify(updated));
+      syncService.broadcast('DATA_RELOAD');
+      return updated;
+    });
+  }, []);
+
+  const restoreDefaultMenu = useCallback(() => {
+    setMenuItems(INITIAL_MENU_ITEMS);
+    localStorage.setItem(STORAGE_KEYS.MENU, JSON.stringify(INITIAL_MENU_ITEMS));
+    syncService.broadcast('DATA_RELOAD');
+  }, []);
+
   // Shifts
   const openShift = useCallback((startingCash: number, note?: string) => {
     const newShift: Shift = {
@@ -1417,6 +1480,8 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     addCategory,
     updateCategory,
     deleteCategory,
+    reorderCategories,
+    restoreDefaultMenu,
 
     bills,
     activeBill,

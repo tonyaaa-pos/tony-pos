@@ -16,6 +16,7 @@ export const BottomBar: React.FC = () => {
     categories,
     addCategory,
     deleteCategory,
+    reorderCategories,
     bills,
     activeBill,
     currentUser,
@@ -33,6 +34,10 @@ export const BottomBar: React.FC = () => {
   const [isEditMode, setIsEditMode] = useState(false);
   const [categoryToDelete, setCategoryToDelete] = useState<MenuCategory | null>(null);
 
+  // Drag and drop state
+  const [draggedCatIndex, setDraggedCatIndex] = useState<number | null>(null);
+  const [dragOverCatIndex, setDragOverCatIndex] = useState<number | null>(null);
+
   // Bill stats for the permanent first card
   const openBills = bills.filter((b) => b.status === 'open');
   const openBillsCount = openBills.length;
@@ -47,7 +52,9 @@ export const BottomBar: React.FC = () => {
   const handleSelectCategory = (catId: string) => {
     if (isEditMode) return;
     setActiveCategory(catId);
-    setActiveNav('pos');
+    if (activeNav !== 'menu') {
+      setActiveNav('pos');
+    }
   };
 
   const handleAddCategorySubmit = (e: React.FormEvent) => {
@@ -114,15 +121,61 @@ export const BottomBar: React.FC = () => {
 
           <div className="h-7 w-px bg-slate-200 dark:bg-slate-800 shrink-0 mx-1" />
 
-          {/* Category Cards */}
-          {categories.map((cat) => {
+          {/* Category Cards with Drag-and-Drop Reordering */}
+          {categories.map((cat, index) => {
             const isSelected = activeCategory === cat.id;
+            const isDragging = draggedCatIndex === index;
+            const isDragOver = dragOverCatIndex === index;
+
             return (
-              <div key={cat.id} className="relative shrink-0 group">
+              <div
+                key={cat.id}
+                draggable={!isEditMode}
+                onDragStart={(e) => {
+                  if (isEditMode) return;
+                  setDraggedCatIndex(index);
+                  e.dataTransfer.effectAllowed = 'move';
+                  e.dataTransfer.setData('text/plain', String(index));
+                }}
+                onDragOver={(e) => {
+                  if (isEditMode) return;
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = 'move';
+                  if (dragOverCatIndex !== index) {
+                    setDragOverCatIndex(index);
+                  }
+                }}
+                onDragLeave={() => {
+                  if (dragOverCatIndex === index) {
+                    setDragOverCatIndex(null);
+                  }
+                }}
+                onDrop={(e) => {
+                  if (isEditMode) return;
+                  e.preventDefault();
+                  if (draggedCatIndex !== null && draggedCatIndex !== index) {
+                    reorderCategories(draggedCatIndex, index);
+                  }
+                  setDraggedCatIndex(null);
+                  setDragOverCatIndex(null);
+                }}
+                onDragEnd={() => {
+                  setDraggedCatIndex(null);
+                  setDragOverCatIndex(null);
+                }}
+                title={isEditMode ? undefined : 'คลิกค้างแล้วลากเพื่อย้ายตำแหน่งหมวดหมู่'}
+                className={`relative shrink-0 group transition-all ${
+                  isDragging ? 'opacity-40 scale-95 border-dashed border-2 border-amber-500 rounded-2xl' : ''
+                } ${
+                  isDragOver ? 'ring-2 ring-amber-500 scale-105 rounded-2xl shadow-md' : ''
+                }`}
+              >
                 <button
                   type="button"
                   onClick={() => handleSelectCategory(cat.id)}
-                  className={`flex items-center gap-2 px-3.5 py-2.5 rounded-2xl border text-xs font-semibold whitespace-nowrap transition shadow-2xs cursor-pointer ${
+                  className={`flex items-center gap-2 px-3.5 py-2.5 rounded-2xl border text-xs font-semibold whitespace-nowrap transition shadow-2xs ${
+                    isEditMode ? 'cursor-pointer' : 'cursor-grab active:cursor-grabbing'
+                  } ${
                     isSelected
                       ? 'bg-amber-500 text-slate-950 border-amber-600 ring-2 ring-amber-400/50 font-bold'
                       : 'bg-slate-100 dark:bg-slate-800/90 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:border-amber-400'
@@ -150,13 +203,15 @@ export const BottomBar: React.FC = () => {
             );
           })}
 
-          {/* All Categories Button in POS */}
+          {/* All Categories Button */}
           <button
             type="button"
             onClick={() => {
               if (isEditMode) return;
               setActiveCategory('all');
-              setActiveNav('pos');
+              if (activeNav !== 'menu') {
+                setActiveNav('pos');
+              }
             }}
             className={`shrink-0 flex items-center gap-1.5 px-3 py-2.5 rounded-2xl border text-xs font-semibold whitespace-nowrap transition cursor-pointer ${
               activeCategory === 'all'

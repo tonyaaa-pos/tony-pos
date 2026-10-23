@@ -23,6 +23,7 @@ interface TableDetailModalProps {
   bill: Bill | null;
   onOpenPOS: () => void;
   onOpenPayment: () => void;
+  onStartMoveTable?: (table: Table) => void;
 }
 
 export const TableDetailModal: React.FC<TableDetailModalProps> = ({
@@ -32,6 +33,7 @@ export const TableDetailModal: React.FC<TableDetailModalProps> = ({
   bill,
   onOpenPOS,
   onOpenPayment,
+  onStartMoveTable,
 }) => {
   const { tables, moveTable, mergeTables, requestTableBill, cancelReservation, confirmOrder } = usePOS();
   const [subMode, setSubMode] = useState<'main' | 'move' | 'merge'>('main');
@@ -216,7 +218,14 @@ export const TableDetailModal: React.FC<TableDetailModalProps> = ({
 
               <button
                 type="button"
-                onClick={() => setSubMode('move')}
+                onClick={() => {
+                  onClose();
+                  if (onStartMoveTable) {
+                    onStartMoveTable(table);
+                  } else {
+                    setSubMode('move');
+                  }
+                }}
                 className="p-3 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold text-xs flex items-center justify-center gap-2 transition cursor-pointer"
               >
                 <ArrowRightLeft className="w-4 h-4" />

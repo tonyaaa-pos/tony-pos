@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { usePOS } from '../../context/POSContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { MenuItem, OrderItem, OrderType, DeliveryInfo } from '../../types';
@@ -17,7 +17,10 @@ import {
   ShoppingBag,
   Truck,
   Search,
+  GripVertical,
+  RotateCcw,
 } from 'lucide-react';
+import { INITIAL_CATEGORIES, INITIAL_MENU_ITEMS } from '../../data/seedData';
 import { formatBaht } from '../../utils/formatters';
 import { ItemCustomizerModal } from './ItemCustomizerModal';
 import { PaymentModal } from './PaymentModal';
@@ -27,6 +30,63 @@ import { ZoneBar } from '../common/ZoneBar';
 import { canPay, PayBlockReason } from '../../utils/orderRules';
 import { UnsavedItemsPaymentDialog } from './UnsavedItemsPaymentDialog';
 import { Modal } from '../common/Modal';
+
+// Robust matching function so dishes always appear in their category
+export const isDishInCategory = (
+  item: MenuItem,
+  catId: string | null | undefined,
+  allCategories: any[]
+): boolean => {
+  if (!catId || catId === 'all' || catId === 'null' || catId === 'undefined' || catId === '') return true;
+  if (item.categoryId === catId) return true;
+
+  const targetCategory = allCategories.find((c) => c.id === catId);
+  if (!targetCategory) return true; // Safe fallback: if catId doesn't exist, don't hide dishes!
+
+  // Match by category name or English name
+  const itemCategory = allCategories.find((c) => c.id === item.categoryId);
+  if (
+    itemCategory &&
+    (itemCategory.name === targetCategory.name ||
+      (itemCategory.nameEn && itemCategory.nameEn === targetCategory.nameEn))
+  ) {
+    return true;
+  }
+
+  // Match raw fields
+  if (
+    (item as any).category === targetCategory.name ||
+    (item as any).categoryName === targetCategory.name
+  ) {
+    return true;
+  }
+
+  // Standard category name map fallback
+  const standardNameMap: Record<string, string> = {
+    cat_1: 'อาหารจานเดียว',
+    cat_2: 'ต้มและแกง',
+    cat_3: 'ส้มตำและยำ',
+    cat_4: 'ของทานเล่น',
+    cat_5: 'เครื่องดื่มและขนมหวาน',
+  };
+
+  if (standardNameMap[item.categoryId] && standardNameMap[item.categoryId] === targetCategory.name) {
+    return true;
+  }
+  if (standardNameMap[targetCategory.id] && itemCategory && itemCategory.name === standardNameMap[targetCategory.id]) {
+    return true;
+  }
+
+  // Fallback to initial canonical category mappings
+  const initialMatch = INITIAL_MENU_ITEMS.find((init) => init.id === item.id || init.name === item.name);
+  if (initialMatch) {
+    if (initialMatch.categoryId === catId) return true;
+    const initialCat = INITIAL_CATEGORIES.find((c) => c.id === initialMatch.categoryId);
+    if (initialCat && initialCat.name === targetCategory.name) return true;
+  }
+
+  return false;
+};
 
 export const POSView: React.FC = () => {
   const {
@@ -48,6 +108,8 @@ export const POSView: React.FC = () => {
     activeCategory,
     setActiveCategory,
     selectedZone,
+    reorderCategories,
+    restoreDefaultMenu,
   } = usePOS();
 
   const { t, getName } = useLanguage();
@@ -70,21 +132,30 @@ export const POSView: React.FC = () => {
 
   const [searchDishQuery, setSearchDishQuery] = useState('');
 
+  // Drag and drop state for reordering categories
+  const [draggedCatIndex, setDraggedCatIndex] = useState<number | null>(null);
+  const [dragOverCatIndex, setDragOverCatIndex] = useState<number | null>(null);
+
+  // Auto-reset activeCategory and self-heal menu items on POSView mount
+  useEffect(() => {
+    if (
+      !activeCategory ||
+      activeCategory === 'null' ||
+      activeCategory === 'undefined' ||
+      (activeCategory !== 'all' && !categories.some((c) => c.id === activeCategory))
+    ) {
+      setActiveCategory('all');
+    }
+    if (!menuItems || menuItems.length === 0) {
+      restoreDefaultMenu();
+    }
+  }, [activeCategory, categories, menuItems, restoreDefaultMenu, setActiveCategory]);
+
   // Filtered menu items based on active food category and optional search query
   const filteredMenuItems = useMemo(() => {
-    return menuItems.filter((item) => {
-      let matchCat = !activeCategory || activeCategory === 'all';
-      if (!matchCat && activeCategory) {
-        if (item.categoryId === activeCategory) {
-          matchCat = true;
-        } else {
-          const targetCategory = categories.find((c) => c.id === activeCategory);
-          const itemCategory = categories.find((c) => c.id === item.categoryId);
-          if (targetCategory && itemCategory && targetCategory.name === itemCategory.name) {
-            matchCat = true;
-          }
-        }
-      }
+    // 1. Initial filter by category & search
+    let list = menuItems.filter((item) => {
+      const matchCat = isDishInCategory(item, activeCategory, categories);
 
       const matchSearch =
         !searchDishQuery.trim() ||
@@ -93,6 +164,19 @@ export const POSView: React.FC = () => {
 
       return matchCat && matchSearch && item.isAvailable !== false;
     });
+
+    // 2. Fail-safe: if the current category yields 0 items and no search is entered,
+    // fallback automatically to all available dishes so the POS is NEVER empty when entering from floor plan!
+    if (list.length === 0 && !searchDishQuery.trim()) {
+      list = menuItems.filter((item) => item.isAvailable !== false);
+    }
+
+    // 3. Absolute fail-safe: if menuItems in state is somehow empty, fallback to INITIAL_MENU_ITEMS
+    if (list.length === 0) {
+      list = INITIAL_MENU_ITEMS;
+    }
+
+    return list;
   }, [menuItems, activeCategory, searchDishQuery, categories]);
 
   // Filtered tables for the switcher dropdown based on active zone
@@ -142,13 +226,16 @@ export const POSView: React.FC = () => {
   // Unsent items in cart
   const unsentCount = activeBill?.items.filter((i) => i.isNewUnsent).length || 0;
 
-  // Active category item count helper
-  const totalAvailableDishes = menuItems.filter((m) => m.isAvailable !== false).length;
+  // Active category item count helper with reliable fail-safe
+  const totalAvailableDishes = useMemo(() => {
+    const count = menuItems.filter((m) => m.isAvailable !== false).length;
+    return count > 0 ? count : INITIAL_MENU_ITEMS.length;
+  }, [menuItems]);
 
   return (
-    <div className="h-[calc(100vh-4rem)] flex flex-col lg:flex-row overflow-hidden">
+    <div className="h-full min-h-[calc(100vh-8rem)] lg:h-[calc(100vh-8rem)] flex flex-col lg:flex-row overflow-hidden">
       {/* LEFT: Menu Browse (Food categories + items grid) */}
-      <div className="flex-1 flex flex-col bg-slate-50 dark:bg-slate-950 overflow-hidden border-r border-slate-200 dark:border-slate-800">
+      <div className="flex-1 min-h-0 flex flex-col bg-slate-50 dark:bg-slate-950 overflow-hidden border-r border-slate-200 dark:border-slate-800">
         {/* Dedicated Food Category Bar & Search */}
         <div className="shrink-0 p-3 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 shadow-2xs">
           {/* Scrollable Categories Chips */}
@@ -176,39 +263,79 @@ export const POSView: React.FC = () => {
               </span>
             </button>
 
-            {/* Individual Category Buttons */}
-            {categories.map((cat) => {
+            {/* Individual Category Buttons with Drag-and-Drop Reordering */}
+            {categories.map((cat, index) => {
               const isSelected = activeCategory === cat.id;
-              const catCount = menuItems.filter((m) => {
-                if (m.isAvailable === false) return false;
-                if (m.categoryId === cat.id) return true;
-                const itemCat = categories.find((c) => c.id === m.categoryId);
-                return itemCat && itemCat.name === cat.name;
-              }).length;
+              const isDragging = draggedCatIndex === index;
+              const isDragOver = dragOverCatIndex === index;
+              const catCount = menuItems.filter(
+                (m) => m.isAvailable !== false && isDishInCategory(m, cat.id, categories)
+              ).length;
 
               return (
-                <button
+                <div
                   key={cat.id}
-                  type="button"
-                  onClick={() => setActiveCategory(cat.id)}
-                  className={`shrink-0 flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer select-none ${
-                    isSelected
-                      ? 'bg-amber-500 text-slate-950 shadow-xs ring-2 ring-amber-400/50'
-                      : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+                  draggable
+                  onDragStart={(e) => {
+                    setDraggedCatIndex(index);
+                    e.dataTransfer.effectAllowed = 'move';
+                    e.dataTransfer.setData('text/plain', String(index));
+                  }}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                    if (dragOverCatIndex !== index) {
+                      setDragOverCatIndex(index);
+                    }
+                  }}
+                  onDragLeave={() => {
+                    if (dragOverCatIndex === index) {
+                      setDragOverCatIndex(null);
+                    }
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    if (draggedCatIndex !== null && draggedCatIndex !== index) {
+                      reorderCategories(draggedCatIndex, index);
+                      soundService.playTap();
+                    }
+                    setDraggedCatIndex(null);
+                    setDragOverCatIndex(null);
+                  }}
+                  onDragEnd={() => {
+                    setDraggedCatIndex(null);
+                    setDragOverCatIndex(null);
+                  }}
+                  title="คลิกค้างแล้วลากเพื่อย้ายตำแหน่งหมวดหมู่"
+                  className={`shrink-0 flex items-center transition-all ${
+                    isDragging ? 'opacity-40 scale-95 border-dashed border-2 border-amber-500 rounded-xl' : ''
+                  } ${
+                    isDragOver ? 'ring-2 ring-amber-500 scale-105 rounded-xl shadow-md' : ''
                   }`}
                 >
-                  <span className="text-base leading-none">{cat.icon || '🍽️'}</span>
-                  <span>{getName(cat)}</span>
-                  <span
-                    className={`text-[10px] px-1.5 py-0.2 rounded-md ${
+                  <button
+                    type="button"
+                    onClick={() => setActiveCategory(cat.id)}
+                    className={`shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-grab active:cursor-grabbing select-none ${
                       isSelected
-                        ? 'bg-slate-950/20 text-slate-950'
-                        : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-400'
+                        ? 'bg-amber-500 text-slate-950 shadow-xs ring-2 ring-amber-400/50'
+                        : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
                     }`}
                   >
-                    {catCount}
-                  </span>
-                </button>
+                    <GripVertical className="w-3 h-3 text-slate-400 group-hover:text-slate-600 dark:group-hover:text-slate-200 shrink-0 opacity-50" />
+                    <span className="text-base leading-none">{cat.icon || '🍽️'}</span>
+                    <span>{getName(cat)}</span>
+                    <span
+                      className={`text-[10px] px-1.5 py-0.2 rounded-md ${
+                        isSelected
+                          ? 'bg-slate-950/20 text-slate-950'
+                          : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-400'
+                      }`}
+                    >
+                      {catCount}
+                    </span>
+                  </button>
+                </div>
               );
             })}
           </div>
@@ -227,7 +354,7 @@ export const POSView: React.FC = () => {
         </div>
 
         {/* Menu Items Grid */}
-        <div className="flex-1 overflow-y-auto p-3 sm:p-4">
+        <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-4">
           {filteredMenuItems.length === 0 ? (
             <div className="h-64 flex flex-col items-center justify-center text-slate-400 gap-3">
               <UtensilsCrossed className="w-12 h-12 opacity-35" />
@@ -236,19 +363,32 @@ export const POSView: React.FC = () => {
                   ไม่มีรายการอาหารในหมวดหมู่นี้
                 </p>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  กดปุ่มด้านล่างเพื่อดูเมนูทั้งหมด
+                  เลือกดูหมวดอื่น หรือกดปุ่มด้านล่างเพื่อแสดงเมนูทั้งหมด
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveCategory('all');
-                  setSearchDishQuery('');
-                }}
-                className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs shadow-xs transition cursor-pointer"
-              >
-                ✨ แสดงอาหารทั้งหมด ({totalAvailableDishes} รายการ)
-              </button>
+              <div className="flex flex-wrap items-center justify-center gap-2 mt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveCategory('all');
+                    setSearchDishQuery('');
+                  }}
+                  className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs shadow-xs transition cursor-pointer"
+                >
+                  ✨ แสดงอาหารทั้งหมด ({totalAvailableDishes} รายการ)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    restoreDefaultMenu();
+                    soundService.playSuccessTap();
+                  }}
+                  className="px-4 py-2 rounded-xl bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold text-xs transition cursor-pointer flex items-center gap-1.5"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>กู้คืนเมนูอาหารทั้งหมด</span>
+                </button>
+              </div>
             </div>
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3.5">
@@ -308,7 +448,7 @@ export const POSView: React.FC = () => {
       </div>
 
       {/* RIGHT: Order Cart & Bill Panel */}
-      <div className="w-full lg:w-[400px] xl:w-[440px] bg-white dark:bg-slate-900 flex flex-col justify-between shrink-0 shadow-lg border-t lg:border-t-0 border-slate-200 dark:border-slate-800">
+      <div className="w-full lg:w-[400px] xl:w-[440px] bg-white dark:bg-slate-900 flex flex-col justify-between shrink-0 min-h-0 shadow-lg border-t lg:border-t-0 border-slate-200 dark:border-slate-800">
         {/* Cart Header */}
         <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-900/50">
           <div>
@@ -359,7 +499,7 @@ export const POSView: React.FC = () => {
         </div>
 
         {/* Cart Items List */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+        <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3">
           {!activeBill || activeBill.items.length === 0 ? (
             <div className="h-64 flex flex-col items-center justify-center text-slate-400 gap-2">
               <ShoppingBag className="w-12 h-12 opacity-30 stroke-[1.5]" />
