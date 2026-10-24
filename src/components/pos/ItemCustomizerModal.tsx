@@ -43,14 +43,8 @@ export const ItemCustomizerModal: React.FC<ItemCustomizerModalProps> = ({
     return available ? available.id : variants[0].id;
   });
 
-  // Quantity per option or overall
-  const [quantities, setQuantities] = useState<Record<string, number>>(() => {
-    const initial: Record<string, number> = {};
-    variants.forEach((v) => {
-      initial[v.id] = 1;
-    });
-    return initial;
-  });
+  // Overall item quantity placed at the bottom bar
+  const [quantity, setQuantity] = useState<number>(1);
 
   // Single choice options
   const [selectedSingleOptions, setSelectedSingleOptions] = useState<Record<string, string>>(() => {
@@ -66,7 +60,6 @@ export const ItemCustomizerModal: React.FC<ItemCustomizerModalProps> = ({
   // Multiple choice options
   const [selectedMultipleOptions, setSelectedMultipleOptions] = useState<Record<string, string[]>>({});
   const [note, setNote] = useState('');
-  const [addedNotice, setAddedNotice] = useState<string | null>(null);
 
   // Calculate add-on deltas
   let addOnsDelta = 0;
@@ -84,15 +77,12 @@ export const ItemCustomizerModal: React.FC<ItemCustomizerModalProps> = ({
     }
   });
 
-  const handleUpdateQty = (variantId: string, delta: number) => {
-    setQuantities((prev) => ({
-      ...prev,
-      [variantId]: Math.max(1, (prev[variantId] || 1) + delta),
-    }));
-  };
+  const selectedVariant = variants.find((v) => v.id === selectedVariantId) || variants[0];
+  const unitPrice = selectedVariant.price + addOnsDelta;
+  const totalPrice = unitPrice * quantity;
 
-  const handleAddVariant = (variant: ItemVariantOption) => {
-    if (variant.isSoldOut || variant.isAvailable === false) return;
+  const handleConfirmAdd = () => {
+    if (selectedVariant.isSoldOut || selectedVariant.isAvailable === false) return;
 
     soundService.playTap();
 
@@ -133,27 +123,24 @@ export const ItemCustomizerModal: React.FC<ItemCustomizerModalProps> = ({
       }
     });
 
-    const qty = quantities[variant.id] || 1;
-    const finalUnitPrice = variant.price + addOnsDelta;
-
-    const variantNameDisplay = getName(variant);
+    const variantNameDisplay = getName(selectedVariant);
     const itemNameDisplay = getName(menuItem);
     const fullDisplayName =
-      variants.length === 1 && (variant.name === 'ปกติ' || variant.name === 'Standard')
+      variants.length === 1 && (selectedVariant.name === 'ปกติ' || selectedVariant.name === 'Standard')
         ? itemNameDisplay
         : `${itemNameDisplay} (${variantNameDisplay})`;
 
     const orderItem: OrderItem = {
       id: 'ord_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
       menuItemId: menuItem.id,
-      variantId: variant.id,
-      variantName: variant.name,
-      variantNameEn: variant.nameEn,
+      variantId: selectedVariant.id,
+      variantName: selectedVariant.name,
+      variantNameEn: selectedVariant.nameEn,
       name: fullDisplayName,
-      nameEn: `${menuItem.nameEn || menuItem.name} (${variant.nameEn || variant.name})`,
-      price: finalUnitPrice,
-      cost: variant.cost,
-      quantity: qty,
+      nameEn: `${menuItem.nameEn || menuItem.name} (${selectedVariant.nameEn || selectedVariant.name})`,
+      price: unitPrice,
+      cost: selectedVariant.cost,
+      quantity,
       selectedOptions: allSelectedOptions,
       note: note.trim(),
       status: 'confirmed',
@@ -161,12 +148,7 @@ export const ItemCustomizerModal: React.FC<ItemCustomizerModalProps> = ({
     };
 
     onAddToCart(orderItem);
-
-    // Show temporary added banner/toast
-    setAddedNotice(`${t('food_detail_added_toast')} ${variantNameDisplay} x${qty}`);
-    setTimeout(() => {
-      setAddedNotice(null);
-    }, 2500);
+    onClose(); // Automatically close modal and return to POS to order next dish
   };
 
   return (
@@ -174,58 +156,36 @@ export const ItemCustomizerModal: React.FC<ItemCustomizerModalProps> = ({
       isOpen={isOpen}
       onClose={onClose}
       title={getName(menuItem)}
-      maxWidth="max-w-2xl"
+      maxWidth="max-w-xl"
     >
-      <div className="space-y-5">
-        {/* Added Toast Alert */}
-        {addedNotice && (
-          <div className="p-2.5 rounded-xl bg-emerald-500 text-white font-bold text-xs flex items-center justify-between shadow-md transition animate-in fade-in slide-in-from-top-2">
-            <div className="flex items-center gap-2">
-              <Check className="w-4 h-4 stroke-[3]" />
-              <span>{addedNotice}</span>
-            </div>
-            <span className="text-[10px] opacity-90">{t('cart_unconfirmed_badge')}</span>
-          </div>
-        )}
-
-        {/* Top Header: Food Photo + Name + Description */}
-        <div className="flex gap-4 items-start pb-4 border-b border-slate-100 dark:border-slate-800">
-          <div className="relative w-28 h-28 sm:w-32 sm:h-32 rounded-2xl overflow-hidden bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shrink-0 shadow-xs">
-            <img
-              src={menuItem.image}
-              alt={getName(menuItem)}
-              referrerPolicy="no-referrer"
-              className="w-full h-full object-cover"
-              onError={(e) => {
-                (e.target as HTMLImageElement).src =
-                  'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" fill="%23cbd5e1"><rect width="100" height="100"/><text x="50" y="55" font-family="sans-serif" font-size="14" fill="%23475569" text-anchor="middle">Food</text></svg>';
-              }}
-            />
-            {menuItem.isRecommended && (
-              <div className="absolute top-2 left-2 px-2 py-0.5 rounded-md bg-amber-500 text-slate-950 font-bold text-[10px] shadow-xs flex items-center gap-1">
-                <Sparkles className="w-3 h-3" />
-                <span>{t('recommended_badge')}</span>
-              </div>
-            )}
-          </div>
-
-          <div className="min-w-0 flex-1">
-            <h3 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white leading-tight">
+      <div className="space-y-4">
+        {/* Top Header: Dish Name & Description ONLY (No Food Photo per user request) */}
+        <div className="pb-3 border-b border-slate-100 dark:border-slate-800">
+          <div className="flex items-center gap-2">
+            <h3 className="text-lg sm:text-xl font-black text-slate-900 dark:text-white leading-tight">
               {getName(menuItem)}
             </h3>
-            {menuItem.nameEn && menuItem.nameEn !== menuItem.name && (
-              <p className="text-xs text-slate-400 font-medium mt-0.5">
-                {menuItem.nameEn}
-              </p>
+            {menuItem.isRecommended && (
+              <span className="px-2 py-0.5 rounded-md bg-amber-500 text-slate-950 font-bold text-[10px] shadow-xs flex items-center gap-1">
+                <Sparkles className="w-3 h-3" />
+                <span>{t('recommended_badge')}</span>
+              </span>
             )}
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-2 line-clamp-3 leading-relaxed">
+          </div>
+          {menuItem.nameEn && menuItem.nameEn !== menuItem.name && (
+            <p className="text-xs text-slate-400 font-medium mt-0.5">
+              {menuItem.nameEn}
+            </p>
+          )}
+          {menuItem.description && (
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1.5 line-clamp-2">
               {getDescription(menuItem)}
             </p>
-          </div>
+          )}
         </div>
 
-        {/* Section 1: Options & Variants (Prices are ONLY shown here!) */}
-        <div className="space-y-3">
+        {/* Section 1: Options & Variants (Shows ONLY option name and price, no quantity selector per option) */}
+        <div className="space-y-2.5">
           <div className="flex items-center justify-between">
             <h4 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider flex items-center gap-1.5">
               <span>{t('food_detail_options_title')}</span>
@@ -235,11 +195,10 @@ export const ItemCustomizerModal: React.FC<ItemCustomizerModalProps> = ({
             </span>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             {variants.map((variant) => {
               const isSoldOut = variant.isSoldOut || variant.isAvailable === false;
               const isSelected = selectedVariantId === variant.id;
-              const currentQty = quantities[variant.id] || 1;
               const optionPrice = variant.price + addOnsDelta;
 
               return (
@@ -248,89 +207,46 @@ export const ItemCustomizerModal: React.FC<ItemCustomizerModalProps> = ({
                   onClick={() => {
                     if (!isSoldOut) {
                       setSelectedVariantId(variant.id);
+                      soundService.playTap();
                     }
                   }}
-                  className={`p-3 rounded-2xl border transition flex flex-col justify-between select-none ${
+                  className={`p-3 rounded-2xl border transition flex items-center justify-between select-none ${
                     isSoldOut
                       ? 'bg-slate-100 dark:bg-slate-900 border-slate-200 dark:border-slate-800 opacity-60 cursor-not-allowed'
                       : isSelected
-                      ? 'bg-amber-500/10 dark:bg-amber-500/15 border-amber-500 shadow-xs'
+                      ? 'bg-amber-500/15 dark:bg-amber-500/20 border-amber-500 ring-2 ring-amber-400/50 shadow-xs cursor-pointer'
                       : 'bg-white dark:bg-slate-800/80 border-slate-200 dark:border-slate-700 hover:border-amber-400 hover:bg-slate-50 cursor-pointer'
                   }`}
                 >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <span className="font-bold text-xs sm:text-sm text-slate-900 dark:text-white truncate">
-                          {getName(variant)}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-bold text-xs sm:text-sm text-slate-900 dark:text-white truncate">
+                        {getName(variant)}
+                      </span>
+                      {isSoldOut && (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-500 text-white">
+                          {t('option_sold_out')}
                         </span>
-                        {isSoldOut && (
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-500 text-white">
-                            {t('option_sold_out')}
-                          </span>
-                        )}
-                      </div>
-                      {variant.nameEn && variant.nameEn !== variant.name && (
-                        <p className="text-[10px] text-slate-400 truncate mt-0.5">
-                          {variant.nameEn}
-                        </p>
                       )}
                     </div>
-
-                    {/* Price displayed ONLY here */}
-                    <div className="text-right shrink-0">
-                      <span className="font-mono font-bold text-sm sm:text-base text-amber-600 dark:text-amber-400 tabular-nums">
-                        {formatBaht(optionPrice)}
-                      </span>
-                    </div>
+                    {variant.nameEn && variant.nameEn !== variant.name && (
+                      <p className="text-[10px] text-slate-400 truncate mt-0.5">
+                        {variant.nameEn}
+                      </p>
+                    )}
                   </div>
 
-                  {/* Quantity & Add Button per Option */}
-                  {!isSoldOut && (
-                    <div className="mt-3 pt-2 border-t border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between gap-2">
-                      {/* Qty controls */}
-                      <div
-                        className="flex items-center gap-1 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 p-0.5"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <button
-                          type="button"
-                          onClick={() => handleUpdateQty(variant.id, -1)}
-                          className="w-6 h-6 rounded-lg flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
-                          aria-label="Decrease"
-                        >
-                          <Minus className="w-3 h-3" />
-                        </button>
-                        <span className="w-6 text-center font-mono font-bold text-xs text-slate-900 dark:text-white tabular-nums">
-                          {currentQty}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => handleUpdateQty(variant.id, 1)}
-                          className="w-6 h-6 rounded-lg flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
-                          aria-label="Increase"
-                        >
-                          <Plus className="w-3 h-3" />
-                        </button>
+                  {/* Price & Selected Checkmark */}
+                  <div className="flex items-center gap-2 shrink-0 ml-2">
+                    <span className="font-mono font-bold text-sm text-amber-600 dark:text-amber-400 tabular-nums">
+                      {formatBaht(optionPrice)}
+                    </span>
+                    {isSelected && (
+                      <div className="w-5 h-5 rounded-full bg-amber-500 text-slate-950 flex items-center justify-center">
+                        <Check className="w-3 h-3 stroke-[3]" />
                       </div>
-
-                      {/* Add Button */}
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleAddVariant(variant);
-                        }}
-                        className="flex-1 py-1.5 px-3 rounded-xl bg-amber-500 hover:bg-amber-600 active:scale-98 text-slate-950 font-bold text-xs shadow-xs transition flex items-center justify-center gap-1.5 cursor-pointer"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                        <span>{t('food_detail_add_button')}</span>
-                        <span className="font-mono tabular-nums opacity-90">
-                          ({formatBaht(optionPrice * currentQty)})
-                        </span>
-                      </button>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
               );
             })}
@@ -339,7 +255,7 @@ export const ItemCustomizerModal: React.FC<ItemCustomizerModalProps> = ({
 
         {/* Section 2: Option Groups / Customization (Spiciness, Size, Add-ons) */}
         {menuItem.optionGroups && menuItem.optionGroups.length > 0 && (
-          <div className="space-y-4 pt-4 border-t border-slate-100 dark:border-slate-800">
+          <div className="space-y-3 pt-3 border-t border-slate-100 dark:border-slate-800">
             {menuItem.optionGroups.map((group) => (
               <div key={group.id} className="space-y-2">
                 <div className="flex items-center justify-between">
@@ -376,6 +292,7 @@ export const ItemCustomizerModal: React.FC<ItemCustomizerModalProps> = ({
                               return { ...prev, [group.id]: next };
                             });
                           }
+                          soundService.playTap();
                         }}
                         className={`p-2.5 rounded-xl border text-xs flex items-center justify-between transition cursor-pointer select-none ${
                           isSelected
@@ -390,7 +307,7 @@ export const ItemCustomizerModal: React.FC<ItemCustomizerModalProps> = ({
                               +{choice.priceDelta}฿
                             </span>
                           )}
-                          {isSelected && <Check className="w-3.5 h-3.5" />}
+                          {isSelected && <Check className="w-3.5 h-3.5 stroke-[3]" />}
                         </div>
                       </button>
                     );
@@ -403,7 +320,7 @@ export const ItemCustomizerModal: React.FC<ItemCustomizerModalProps> = ({
 
         {/* Section 3: Kitchen Note */}
         <div className="pt-2">
-          <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+          <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
             {t('food_detail_kitchen_note')}
           </label>
           <input
@@ -411,19 +328,60 @@ export const ItemCustomizerModal: React.FC<ItemCustomizerModalProps> = ({
             value={note}
             onChange={(e) => setNote(e.target.value)}
             placeholder={t('food_detail_kitchen_note_placeholder')}
-            className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs focus:outline-none focus:ring-2 focus:ring-amber-500 text-slate-800 dark:text-slate-100"
+            className="w-full px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs focus:outline-none focus:ring-2 focus:ring-amber-500 text-slate-800 dark:text-slate-100"
           />
         </div>
 
-        {/* Bottom Close Bar */}
-        <div className="flex items-center justify-end pt-4 border-t border-slate-100 dark:border-slate-800">
-          <button
-            type="button"
-            onClick={onClose}
-            className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-bold text-xs transition cursor-pointer text-center"
-          >
-            {t('food_detail_close')}
-          </button>
+        {/* Bottom Bar: Quantity Selector + Close Button + Add Button */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-3 border-t border-slate-100 dark:border-slate-800">
+          {/* Quantity Controls */}
+          <div className="flex items-center justify-between sm:justify-start gap-2.5">
+            <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
+              จำนวน:
+            </span>
+            <div className="flex items-center bg-slate-100 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-0.5">
+              <button
+                type="button"
+                onClick={() => setQuantity((q) => Math.max(1, q - 1))}
+                className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition cursor-pointer"
+                aria-label="Decrease quantity"
+              >
+                <Minus className="w-3.5 h-3.5" />
+              </button>
+              <span className="w-9 text-center font-mono font-bold text-sm text-slate-900 dark:text-white tabular-nums">
+                {quantity}
+              </span>
+              <button
+                type="button"
+                onClick={() => setQuantity((q) => q + 1)}
+                className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition cursor-pointer"
+                aria-label="Increase quantity"
+              >
+                <Plus className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+
+          {/* Action Buttons: Close + Add */}
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 sm:flex-initial px-5 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-xs transition cursor-pointer"
+            >
+              {t('food_detail_close')}
+            </button>
+
+            <button
+              type="button"
+              onClick={handleConfirmAdd}
+              disabled={selectedVariant.isSoldOut || selectedVariant.isAvailable === false}
+              className="flex-1 sm:flex-initial px-6 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 active:scale-98 text-slate-950 font-bold text-xs shadow-md transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Plus className="w-4 h-4 stroke-[2.5]" />
+              <span>เพิ่ม ({formatBaht(totalPrice)})</span>
+            </button>
+          </div>
         </div>
       </div>
     </Modal>

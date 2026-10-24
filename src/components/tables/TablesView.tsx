@@ -283,8 +283,13 @@ export const TablesView: React.FC = () => {
     }
 
     if (table.status === 'available') {
-      setGuestCountInput(Math.min(2, table.capacity));
-      setShowOpenModal(table);
+      const defaultGuests = table.capacity || 2;
+      const billId = openTable(table.id, defaultGuests);
+      setActiveBillId(billId);
+      setActiveCategory('all');
+      setActiveNav('pos');
+      soundService.playTap();
+      return;
     } else {
       setShowDetailModal(table);
     }

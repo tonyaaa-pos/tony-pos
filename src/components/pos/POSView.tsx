@@ -236,112 +236,26 @@ export const POSView: React.FC = () => {
     <div className="h-full min-h-[calc(100vh-8rem)] lg:h-[calc(100vh-8rem)] flex flex-col lg:flex-row overflow-hidden">
       {/* LEFT: Menu Browse (Food categories + items grid) */}
       <div className="flex-1 min-h-0 flex flex-col bg-slate-50 dark:bg-slate-950 overflow-hidden border-r border-slate-200 dark:border-slate-800">
-        {/* Dedicated Food Category Bar & Search */}
-        <div className="shrink-0 p-3 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 shadow-2xs">
-          {/* Scrollable Categories Chips */}
-          <div className="flex-1 flex items-center gap-1.5 overflow-x-auto no-scrollbar scroll-smooth py-0.5">
-            {/* 'All' Category Button */}
-            <button
-              type="button"
-              onClick={() => setActiveCategory('all')}
-              className={`shrink-0 flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer select-none ${
-                !activeCategory || activeCategory === 'all'
-                  ? 'bg-amber-500 text-slate-950 shadow-xs ring-2 ring-amber-400/50'
-                  : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
-              }`}
-            >
-              <span>✨</span>
-              <span>{t('bottom_all_categories')}</span>
-              <span
-                className={`text-[10px] px-1.5 py-0.2 rounded-md ${
-                  !activeCategory || activeCategory === 'all'
-                    ? 'bg-slate-950/20 text-slate-950'
-                    : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-400'
-                }`}
-              >
-                {totalAvailableDishes}
+        {/* Top Header: Active Category Indicator & Search (Category chips removed per user request, managed via BottomBar) */}
+        <div className="shrink-0 px-4 py-3 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3 shadow-2xs">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-xl leading-none">
+              {categories.find((c) => c.id === activeCategory)?.icon || '✨'}
+            </span>
+            <div className="min-w-0">
+              <span className="font-extrabold text-sm text-slate-900 dark:text-white truncate block">
+                {activeCategory && activeCategory !== 'all'
+                  ? getName(categories.find((c) => c.id === activeCategory) || { name: 'หมวดหมู่อาหาร' })
+                  : t('bottom_all_categories')}
               </span>
-            </button>
-
-            {/* Individual Category Buttons with Drag-and-Drop Reordering */}
-            {categories.map((cat, index) => {
-              const isSelected = activeCategory === cat.id;
-              const isDragging = draggedCatIndex === index;
-              const isDragOver = dragOverCatIndex === index;
-              const catCount = menuItems.filter(
-                (m) => m.isAvailable !== false && isDishInCategory(m, cat.id, categories)
-              ).length;
-
-              return (
-                <div
-                  key={cat.id}
-                  draggable
-                  onDragStart={(e) => {
-                    setDraggedCatIndex(index);
-                    e.dataTransfer.effectAllowed = 'move';
-                    e.dataTransfer.setData('text/plain', String(index));
-                  }}
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    e.dataTransfer.dropEffect = 'move';
-                    if (dragOverCatIndex !== index) {
-                      setDragOverCatIndex(index);
-                    }
-                  }}
-                  onDragLeave={() => {
-                    if (dragOverCatIndex === index) {
-                      setDragOverCatIndex(null);
-                    }
-                  }}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    if (draggedCatIndex !== null && draggedCatIndex !== index) {
-                      reorderCategories(draggedCatIndex, index);
-                      soundService.playTap();
-                    }
-                    setDraggedCatIndex(null);
-                    setDragOverCatIndex(null);
-                  }}
-                  onDragEnd={() => {
-                    setDraggedCatIndex(null);
-                    setDragOverCatIndex(null);
-                  }}
-                  title="คลิกค้างแล้วลากเพื่อย้ายตำแหน่งหมวดหมู่"
-                  className={`shrink-0 flex items-center transition-all ${
-                    isDragging ? 'opacity-40 scale-95 border-dashed border-2 border-amber-500 rounded-xl' : ''
-                  } ${
-                    isDragOver ? 'ring-2 ring-amber-500 scale-105 rounded-xl shadow-md' : ''
-                  }`}
-                >
-                  <button
-                    type="button"
-                    onClick={() => setActiveCategory(cat.id)}
-                    className={`shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-grab active:cursor-grabbing select-none ${
-                      isSelected
-                        ? 'bg-amber-500 text-slate-950 shadow-xs ring-2 ring-amber-400/50'
-                        : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
-                    }`}
-                  >
-                    <GripVertical className="w-3 h-3 text-slate-400 group-hover:text-slate-600 dark:group-hover:text-slate-200 shrink-0 opacity-50" />
-                    <span className="text-base leading-none">{cat.icon || '🍽️'}</span>
-                    <span>{getName(cat)}</span>
-                    <span
-                      className={`text-[10px] px-1.5 py-0.2 rounded-md ${
-                        isSelected
-                          ? 'bg-slate-950/20 text-slate-950'
-                          : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-400'
-                      }`}
-                    >
-                      {catCount}
-                    </span>
-                  </button>
-                </div>
-              );
-            })}
+              <span className="text-[11px] text-slate-400 font-medium">
+                {filteredMenuItems.length} {t('items_unit')}
+              </span>
+            </div>
           </div>
 
           {/* Quick Search Input */}
-          <div className="relative w-full sm:w-56 shrink-0">
+          <div className="relative w-full sm:w-64 shrink-0">
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
             <input
               type="text"
