@@ -3,8 +3,6 @@ import { usePOS } from '../../context/POSContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { MenuItem, OrderItem, OrderType, DeliveryInfo } from '../../types';
 import {
-  Plus,
-  Minus,
   Trash2,
   CheckCircle,
   CreditCard,
@@ -100,7 +98,6 @@ export const POSView: React.FC = () => {
     createBillForOrder,
     assignTableToBill,
     addItemsToBill,
-    updateBillItemQuantity,
     removeUnsentItemFromBill,
     confirmOrder,
     voidOrderItem,
@@ -438,7 +435,7 @@ export const POSView: React.FC = () => {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <span className="font-bold text-xs text-slate-900 dark:text-white leading-snug">
-                        {item.name}
+                        {getName(item)} <span className="text-amber-600 dark:text-amber-400 font-bold ml-1">x {item.quantity}</span>
                       </span>
                       {item.isNewUnsent && (
                         <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-500 text-slate-950">
@@ -457,7 +454,7 @@ export const POSView: React.FC = () => {
                       <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 space-x-1">
                         {item.selectedOptions.map((opt) => (
                           <span key={opt.choiceId} className="inline-block">
-                            • {opt.choiceName}
+                            • {getName({ name: opt.choiceName, nameEn: opt.choiceNameEn })}
                             {opt.priceDelta > 0 && ` (+${opt.priceDelta}฿)`}
                           </span>
                         ))}
@@ -471,69 +468,40 @@ export const POSView: React.FC = () => {
                     )}
                   </div>
 
-                  <div className="text-right shrink-0">
-                    <div className="font-mono font-bold text-xs sm:text-sm text-slate-900 dark:text-white tabular-nums">
-                      {formatBaht(item.price * item.quantity)}
-                    </div>
-                    {item.quantity > 1 && (
-                      <div className="text-[10px] text-slate-400 font-mono">
-                        @{formatBaht(item.price)}
+                  <div className="text-right shrink-0 flex flex-col items-end justify-between self-stretch gap-1">
+                    <div>
+                      <div className="font-mono font-bold text-xs sm:text-sm text-slate-900 dark:text-white tabular-nums">
+                        {formatBaht(item.price * item.quantity)}
                       </div>
+                      {item.quantity > 1 && (
+                        <div className="text-[10px] text-slate-400 font-mono">
+                          @{formatBaht(item.price)}
+                        </div>
+                      )}
+                    </div>
+
+                    {item.status !== 'voided' && (
+                      item.isNewUnsent ? (
+                        <button
+                          type="button"
+                          onClick={() => removeUnsentItemFromBill(activeBill.id, item.id)}
+                          className="p-1 text-slate-400 hover:text-rose-500 transition cursor-pointer"
+                          title={t('delete')}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setVoidingItem(item)}
+                          className="text-[10px] font-semibold text-rose-500 hover:underline cursor-pointer"
+                        >
+                          {t('void_item_btn')}
+                        </button>
+                      )
                     )}
                   </div>
                 </div>
-
-                {/* Actions & Quantity row */}
-                {item.status !== 'voided' && (
-                  <div className="mt-2.5 pt-2 border-t border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between">
-                    <div className="flex items-center gap-1 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 p-0.5">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          item.isNewUnsent
-                            ? item.quantity > 1
-                              ? updateBillItemQuantity(activeBill.id, item.id, item.quantity - 1)
-                              : removeUnsentItemFromBill(activeBill.id, item.id)
-                            : updateBillItemQuantity(activeBill.id, item.id, item.quantity - 1)
-                        }
-                        className="w-6 h-6 rounded-lg flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
-                      >
-                        <Minus className="w-3 h-3" />
-                      </button>
-                      <span className="w-6 text-center font-mono font-bold text-xs text-slate-900 dark:text-white tabular-nums">
-                        {item.quantity}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          updateBillItemQuantity(activeBill.id, item.id, item.quantity + 1)
-                        }
-                        className="w-6 h-6 rounded-lg flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
-                      >
-                        <Plus className="w-3 h-3" />
-                      </button>
-                    </div>
-
-                    {item.isNewUnsent ? (
-                      <button
-                        type="button"
-                        onClick={() => removeUnsentItemFromBill(activeBill.id, item.id)}
-                        className="p-1 text-slate-400 hover:text-rose-500 transition cursor-pointer"
-                        title={t('delete')}
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => setVoidingItem(item)}
-                        className="text-[11px] font-semibold text-rose-500 hover:underline cursor-pointer"
-                      >
-                        {t('void_item_btn')}
-                      </button>
-                    )}
-                  </div>
-                )}
               </div>
             ))
           )}
