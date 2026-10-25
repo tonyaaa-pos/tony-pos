@@ -17,6 +17,7 @@ import {
   Minus,
   Maximize2,
   ArrowRightLeft,
+  Merge,
 } from 'lucide-react';
 import { formatBaht, formatElapsedTime } from '../../utils/formatters';
 import { soundService } from '../../utils/audio';
@@ -68,6 +69,7 @@ export const TablesView: React.FC = () => {
     bills,
     openTable,
     moveTable,
+    mergeTables,
     reserveTable,
     setActiveNav,
     setActiveBillId,
@@ -85,8 +87,9 @@ export const TablesView: React.FC = () => {
   const [isEditLayout, setIsEditLayout] = useState<boolean>(false);
   const [activeTableId, setActiveTableId] = useState<string | null>(null);
 
-  // Interactive Table Move mode directly on Floor Plan
+  // Interactive Table Move & Merge mode directly on Floor Plan
   const [movingSourceTable, setMovingSourceTable] = useState<Table | null>(null);
+  const [mergingSourceTable, setMergingSourceTable] = useState<Table | null>(null);
   const [moveFeedback, setMoveFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Modals
@@ -276,6 +279,46 @@ export const TablesView: React.FC = () => {
         setMoveFeedback({
           type: 'error',
           message: 'ไม่สามารถย้ายโต๊ะได้ กรุณาลองใหม่อีกครั้ง',
+        });
+        setTimeout(() => setMoveFeedback(null), 3500);
+      }
+      return;
+    }
+
+    // Floor plan interactive table merge mode
+    if (mergingSourceTable) {
+      if (table.id === mergingSourceTable.id) {
+        return;
+      }
+
+      const hasCustomers = isTableWithCustomers(table, bills) || table.status === 'occupied' || Boolean(table.currentBillId);
+
+      if (!hasCustomers) {
+        soundService.playTap();
+        setMoveFeedback({
+          type: 'error',
+          message: `โต๊ะ ${table.number} เป็นโต๊ะว่าง (สามารถรวมได้เฉพาะโต๊ะที่มีลูกค้า/ออเดอร์เปิดอยู่เท่านั้น)`,
+        });
+        setTimeout(() => setMoveFeedback(null), 3000);
+        return;
+      }
+
+      const fromNumber = table.number;
+      const toNumber = mergingSourceTable.number;
+      const success = mergeTables([table.id], mergingSourceTable.id);
+
+      if (success) {
+        soundService.playSuccessTap();
+        setMergingSourceTable(null);
+        setMoveFeedback({
+          type: 'success',
+          message: `รวมรายการอาหารและบิลจากโต๊ะ ${fromNumber} เข้ากับโต๊ะ ${toNumber} สำเร็จเรียบร้อยแล้ว`,
+        });
+        setTimeout(() => setMoveFeedback(null), 4000);
+      } else {
+        setMoveFeedback({
+          type: 'error',
+          message: 'ไม่สามารถรวมโต๊ะได้ กรุณาลองใหม่อีกครั้ง',
         });
         setTimeout(() => setMoveFeedback(null), 3500);
       }
@@ -478,6 +521,8 @@ export const TablesView: React.FC = () => {
             onClick={() => {
               setIsEditLayout(!isEditLayout);
               setActiveTableId(null);
+              setMovingSourceTable(null);
+              setMergingSourceTable(null);
             }}
             className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition shadow-xs cursor-pointer ${
               isEditLayout
@@ -513,6 +558,32 @@ export const TablesView: React.FC = () => {
             className="px-4 py-2 rounded-xl bg-slate-950 text-white hover:bg-slate-900 text-xs font-bold shadow-xs transition cursor-pointer self-start sm:self-auto shrink-0"
           >
             ยกเลิกการย้ายโต๊ะ
+          </button>
+        </div>
+      )}
+
+      {/* Interactive Table Merge Banner on Floor Plan */}
+      {mergingSourceTable && (
+        <div className="p-4 bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-600 text-white rounded-2xl shadow-lg border-2 border-purple-400 flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in slide-in-from-top-2 duration-200">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-white text-purple-700 shadow-sm">
+              <Merge className="w-5 h-5 animate-pulse" />
+            </div>
+            <div>
+              <div className="text-[11px] font-black uppercase tracking-wider text-purple-200">
+                โหมดรวมโต๊ะ (แตะเลือกอีกโต๊ะหนึ่งบนผังด้านล่างเพื่อรวม)
+              </div>
+              <div className="text-sm font-black">
+                โต๊ะหลัก: <span className="underline decoration-2 underline-offset-2">โต๊ะ {mergingSourceTable.number}</span> ← แตะเลือกโต๊ะที่มีลูกค้าที่ต้องการรวมเข้ามา
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setMergingSourceTable(null)}
+            className="px-4 py-2 rounded-xl bg-slate-950/80 hover:bg-slate-950 text-white text-xs font-bold shadow-xs transition cursor-pointer self-start sm:self-auto shrink-0 border border-purple-300/40"
+          >
+            ยกเลิกการรวมโต๊ะ
           </button>
         </div>
       )}
@@ -667,6 +738,14 @@ export const TablesView: React.FC = () => {
             const isMoveTarget = Boolean(movingSourceTable && table.status === 'available');
             const isMoveBlocked = Boolean(movingSourceTable && !isMoveSource && table.status !== 'available');
 
+            const isMergeSource = mergingSourceTable?.id === table.id;
+            const isMergeTarget = Boolean(
+              mergingSourceTable &&
+                !isMergeSource &&
+                (withCustomers || table.status === 'occupied' || Boolean(table.currentBillId))
+            );
+            const isMergeBlocked = Boolean(mergingSourceTable && !isMergeSource && !isMergeTarget);
+
             let statusClass = 'border-[3px] border-[#047857] dark:border-[#10b981] bg-emerald-500/10 text-emerald-950 dark:text-emerald-200';
             if (table.status === 'reserved') {
               statusClass = 'border-[3px] border-sky-500 bg-sky-500 text-white shadow-md shadow-sky-500/20';
@@ -683,6 +762,12 @@ export const TablesView: React.FC = () => {
             } else if (isMoveTarget) {
               statusClass = 'border-[3px] border-emerald-500 bg-emerald-500/25 text-emerald-950 dark:text-emerald-100 ring-4 ring-emerald-400 ring-offset-2 shadow-xl shadow-emerald-500/40 animate-pulse';
             } else if (isMoveBlocked) {
+              statusClass = 'opacity-35 grayscale border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-400 cursor-not-allowed';
+            } else if (isMergeSource) {
+              statusClass = 'border-[3px] border-purple-500 bg-purple-600 text-white ring-4 ring-purple-400 ring-offset-2 animate-pulse shadow-xl shadow-purple-500/40';
+            } else if (isMergeTarget) {
+              statusClass = 'border-[3px] border-indigo-500 bg-indigo-500/25 text-indigo-950 dark:text-indigo-100 ring-4 ring-indigo-400 ring-offset-2 shadow-xl shadow-indigo-500/40 animate-pulse cursor-pointer';
+            } else if (isMergeBlocked) {
               statusClass = 'opacity-35 grayscale border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-400 cursor-not-allowed';
             }
 
@@ -1006,6 +1091,11 @@ export const TablesView: React.FC = () => {
           onClose={() => setShowDetailModal(null)}
           onStartMoveTable={(tbl) => {
             setMovingSourceTable(tbl);
+            setMergingSourceTable(null);
+          }}
+          onStartMergeTable={(tbl) => {
+            setMergingSourceTable(tbl);
+            setMovingSourceTable(null);
           }}
           onOpenPOS={() => {
             let billId = showDetailModal.currentBillId;
