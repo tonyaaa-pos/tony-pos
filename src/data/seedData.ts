@@ -13,6 +13,7 @@ import {
   Bill,
   PaymentQrImage,
   Shift,
+  OptionGroup,
 } from '../types';
 
 export const INITIAL_USERS: User[] = [
@@ -1334,3 +1335,86 @@ export const INITIAL_CURRENT_SHIFT: Shift = {
 };
 
 export const INITIAL_SHIFT = INITIAL_CURRENT_SHIFT;
+
+export const DEFAULT_OPTION_GROUP_PRESETS: OptionGroup[] = [
+  {
+    id: 'preset_egg',
+    name: 'เพิ่มไข่ดาว / ไข่พิเศษ',
+    nameEn: 'Add Eggs',
+    type: 'multiple',
+    required: false,
+    choices: [
+      { id: 'ch_egg_fried', name: 'ไข่ดาวสุก', nameEn: 'Well-done Fried Egg', priceDelta: 10 },
+      { id: 'ch_egg_soft', name: 'ไข่ดาวไม่สุก (ไข่แดงเยิ้ม)', nameEn: 'Sunny-side Up (Runny)', priceDelta: 10 },
+      { id: 'ch_egg_omelet', name: 'ไข่เจียว', nameEn: 'Thai Omelet', priceDelta: 15 },
+      { id: 'ch_egg_onsen', name: 'ไข่ออนเซ็น', nameEn: 'Onsen Soft Egg', priceDelta: 15 },
+      { id: 'ch_egg_salted', name: 'ไข่เค็ม', nameEn: 'Salted Egg', priceDelta: 15 },
+    ],
+  },
+  {
+    id: 'preset_spiciness',
+    name: 'เลือกระดับความเผ็ด',
+    nameEn: 'Spiciness Level',
+    type: 'single',
+    required: true,
+    choices: [
+      { id: 'ch_spicy_0', name: 'ไม่เผ็ด (0 พริก)', nameEn: 'Non-spicy', priceDelta: 0 },
+      { id: 'ch_spicy_1', name: 'เผ็ดน้อย (1 พริก)', nameEn: 'Mild', priceDelta: 0 },
+      { id: 'ch_spicy_2', name: 'เผ็ดกลาง / มาตรฐาน (2 พริก)', nameEn: 'Medium (Standard)', priceDelta: 0 },
+      { id: 'ch_spicy_3', name: 'เผ็ดมาก (3 พริก)', nameEn: 'Extra Hot', priceDelta: 0 },
+      { id: 'ch_spicy_4', name: 'เผ็ดพ่นไฟ / ซี้ดซ๊าด (5 พริก)', nameEn: 'Super Spicy', priceDelta: 5 },
+    ],
+  },
+  {
+    id: 'preset_toppings',
+    name: 'เลือกท๊อปปิ้ง / เพิ่มเครื่อง',
+    nameEn: 'Toppings & Add-ons',
+    type: 'multiple',
+    required: false,
+    choices: [
+      { id: 'ch_top_crispypork', name: 'เพิ่มหมูกรอบ', nameEn: 'Extra Crispy Pork', priceDelta: 25 },
+      { id: 'ch_top_shrimp', name: 'เพิ่มกุ้งสด', nameEn: 'Extra Prawns', priceDelta: 30 },
+      { id: 'ch_top_cheese', name: 'เพิ่มชีสยืด', nameEn: 'Melted Cheese', priceDelta: 20 },
+      { id: 'ch_top_porkcrackling', name: 'กากหมูเจียวกรอบ', nameEn: 'Pork Cracklings', priceDelta: 15 },
+      { id: 'ch_top_sweetpork', name: 'กุนเชียงทอด', nameEn: 'Chinese Sausage', priceDelta: 15 },
+    ],
+  },
+  {
+    id: 'preset_size',
+    name: 'เลือกขนาดจาน',
+    nameEn: 'Portion Size',
+    type: 'single',
+    required: true,
+    choices: [
+      { id: 'ch_size_std', name: 'ธรรมดา', nameEn: 'Regular', priceDelta: 0 },
+      { id: 'ch_size_spec', name: 'พิเศษ (+กับข้าวและข้าว)', nameEn: 'Special (+Extra)', priceDelta: 15 },
+      { id: 'ch_size_jumbo', name: 'จัมโบ้ (จุใจ)', nameEn: 'Jumbo', priceDelta: 25 },
+    ],
+  },
+  {
+    id: 'preset_sweetness',
+    name: 'เลือกระดับความหวาน',
+    nameEn: 'Sweetness Level',
+    type: 'single',
+    required: true,
+    choices: [
+      { id: 'ch_sw_0', name: 'ไม่หวาน (0%)', nameEn: 'No Sugar (0%)', priceDelta: 0 },
+      { id: 'ch_sw_25', name: 'หวานน้อย (25%)', nameEn: 'Less Sweet (25%)', priceDelta: 0 },
+      { id: 'ch_sw_50', name: 'หวานปกติ (50%)', nameEn: 'Regular (50%)', priceDelta: 0 },
+      { id: 'ch_sw_100', name: 'หวานมาก (100%)', nameEn: 'Extra Sweet (100%)', priceDelta: 0 },
+    ],
+  },
+  {
+    id: 'preset_drink_toppings',
+    name: 'เลือกท๊อปปิ้งเครื่องดื่ม',
+    nameEn: 'Drink Toppings',
+    type: 'multiple',
+    required: false,
+    choices: [
+      { id: 'ch_dtop_pearl', name: 'ไข่มุกบราวน์ชูการ์', nameEn: 'Brown Sugar Pearl', priceDelta: 10 },
+      { id: 'ch_dtop_crystal', name: 'บุกคริสตัล', nameEn: 'Crystal Jelly', priceDelta: 10 },
+      { id: 'ch_dtop_pudding', name: 'พุดดิ้งนมสด', nameEn: 'Milk Pudding', priceDelta: 15 },
+      { id: 'ch_dtop_grass', name: 'เฉาก๊วยหนึบ', nameEn: 'Grass Jelly', priceDelta: 10 },
+    ],
+  },
+];

@@ -17,6 +17,7 @@ import {
   PaymentRecord,
   ReservationInfo,
   DeliveryInfo,
+  OptionGroup,
 } from '../types';
 import {
   INITIAL_USERS,
@@ -28,6 +29,7 @@ import {
   INITIAL_SETTINGS,
   INITIAL_QR_IMAGES,
   INITIAL_SHIFT,
+  DEFAULT_OPTION_GROUP_PRESETS,
 } from '../data/seedData';
 import { syncService, SyncMessage } from '../services/syncService';
 import { soundService } from '../utils/audio';
@@ -83,6 +85,13 @@ interface POSContextType {
   deleteCategory: (id: string) => void;
   reorderCategories: (startIndex: number, endIndex: number) => void;
   restoreDefaultMenu: () => void;
+
+  // Option Presets (หมวด set เมนูย่อย)
+  optionPresets: OptionGroup[];
+  addOptionPreset: (preset: Omit<OptionGroup, 'id'>) => void;
+  updateOptionPreset: (id: string, updates: Partial<OptionGroup>) => void;
+  deleteOptionPreset: (id: string) => void;
+  reorderOptionPresets: (startIndexOrList: number | OptionGroup[], endIndex?: number) => void;
 
   // Order & Bills
   bills: Bill[];
@@ -150,6 +159,7 @@ const STORAGE_KEYS = {
   QR_IMAGES: 'kind_pos_qr_images_v2',
   SHIFT: 'kind_pos_shift_v2',
   NOTIFICATIONS: 'kind_pos_notifications_v2',
+  OPTION_PRESETS: 'kind_pos_option_presets_v2',
 };
 
 // Safe storage loader with automatic migration for tables and users
@@ -414,7 +424,16 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     loadState(STORAGE_KEYS.NOTIFICATIONS, [])
   );
 
+  // Option Presets (หมวด set เมนูย่อย)
+  const [optionPresets, setOptionPresets] = useState<OptionGroup[]>(() =>
+    loadState(STORAGE_KEYS.OPTION_PRESETS, DEFAULT_OPTION_GROUP_PRESETS)
+  );
+
   // Persistent storage writers with safe cleanup
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.OPTION_PRESETS, JSON.stringify(optionPresets));
+  }, [optionPresets]);
+
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(users));
   }, [users]);
@@ -1277,6 +1296,50 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     syncService.broadcast('DATA_RELOAD');
   }, []);
 
+  // Option Presets Management (หมวด set เมนูย่อย)
+  const addOptionPreset = useCallback((presetData: Omit<OptionGroup, 'id'>) => {
+    const newPreset: OptionGroup = {
+      ...presetData,
+      id: 'preset_' + Date.now(),
+    };
+    setOptionPresets((prev) => [...prev, newPreset]);
+    syncService.broadcast('DATA_RELOAD');
+  }, []);
+
+  const updateOptionPreset = useCallback((id: string, updates: Partial<OptionGroup>) => {
+    setOptionPresets((prev) =>
+      prev.map((p) => (p.id === id ? { ...p, ...updates } : p))
+    );
+    syncService.broadcast('DATA_RELOAD');
+  }, []);
+
+  const deleteOptionPreset = useCallback((id: string) => {
+    setOptionPresets((prev) => prev.filter((p) => p.id !== id));
+    syncService.broadcast('DATA_RELOAD');
+  }, []);
+
+  const reorderOptionPresets = useCallback(
+    (startIndexOrList: number | OptionGroup[], endIndex?: number) => {
+      setOptionPresets((prev) => {
+        let next: OptionGroup[];
+        if (Array.isArray(startIndexOrList)) {
+          next = [...startIndexOrList];
+        } else if (typeof endIndex === 'number') {
+          if (startIndexOrList === endIndex) return prev;
+          next = [...prev];
+          const [moved] = next.splice(startIndexOrList, 1);
+          next.splice(endIndex, 0, moved);
+        } else {
+          return prev;
+        }
+        localStorage.setItem(STORAGE_KEYS.OPTION_PRESETS, JSON.stringify(next));
+        syncService.broadcast('DATA_RELOAD');
+        return next;
+      });
+    },
+    []
+  );
+
   // Shifts
   const openShift = useCallback((startingCash: number, note?: string) => {
     const newShift: Shift = {
@@ -1482,6 +1545,12 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     deleteCategory,
     reorderCategories,
     restoreDefaultMenu,
+
+    optionPresets,
+    addOptionPreset,
+    updateOptionPreset,
+    deleteOptionPreset,
+    reorderOptionPresets,
 
     bills,
     activeBill,
