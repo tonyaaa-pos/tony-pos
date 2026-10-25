@@ -16,9 +16,18 @@ import {
   Plus,
   Trash2,
 } from 'lucide-react';
-import { formatBaht } from '../../utils/formatters';
 import { ReceiptPrint } from './ReceiptPrint';
 import { soundService } from '../../utils/audio';
+
+const formatAmount = (amount: number, showDecimals = true): string => {
+  if (isNaN(amount) || amount === null || amount === undefined) {
+    return showDecimals ? '0.00' : '0';
+  }
+  return amount.toLocaleString('th-TH', {
+    minimumFractionDigits: showDecimals ? 2 : 0,
+    maximumFractionDigits: showDecimals ? 2 : 0,
+  });
+};
 
 interface PaymentModalProps {
   isOpen: boolean;
@@ -195,7 +204,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
               บันทึกการชำระเงินเรียบร้อยแล้ว
             </h4>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-              ยอดสุทธิ: {formatBaht(completedBill.grandTotal)} · โต๊ะ {completedBill.tableName || '-'} พร้อมใช้งานใหม่
+              ยอดสุทธิ: {formatAmount(completedBill.grandTotal)} · โต๊ะ {completedBill.tableName || '-'} พร้อมใช้งานใหม่
             </p>
           </div>
 
@@ -219,11 +228,11 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
             <div>
               <div className="text-xs text-slate-400">ยอดที่ต้องชำระทั้งหมด</div>
               <div className="text-3xl font-extrabold font-mono tabular-nums text-amber-400">
-                {formatBaht(bill.grandTotal)}
+                {formatAmount(bill.grandTotal)}
               </div>
               {remainingDue > 0 && remainingDue < bill.grandTotal && (
                 <div className="text-xs text-rose-400 font-mono mt-1">
-                  ยอดคงเหลือที่ต้องจ่าย: {formatBaht(remainingDue)}
+                  ยอดคงเหลือที่ต้องจ่าย: {formatAmount(remainingDue)}
                 </div>
               )}
             </div>
@@ -272,7 +281,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
               <div className="text-right">
                 <span className="text-slate-500">คนละ: </span>
                 <span className="text-base font-bold font-mono text-blue-700 dark:text-blue-400">
-                  {formatBaht(Math.ceil(bill.grandTotal / splitPersons))}
+                  {formatAmount(Math.ceil(bill.grandTotal / splitPersons))}
                 </span>
               </div>
             </div>
@@ -322,7 +331,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
                     discountType === 'fixed' ? 'bg-amber-500 text-slate-950 font-bold' : 'text-slate-500'
                   }`}
                 >
-                  ลดบาท (฿)
+                  ลดบาท
                 </button>
               </div>
             </div>
@@ -342,7 +351,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
                   className="w-24 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-bold font-mono"
                 />
                 <span className="text-xs font-bold text-rose-600">
-                  (-{formatBaht(bill.discountAmount)})
+                  (-{formatAmount(bill.discountAmount)})
                 </span>
               </div>
             )}
@@ -374,7 +383,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
                       }}
                       className="px-2.5 py-1 rounded-lg bg-emerald-600 text-white text-[11px] font-bold cursor-pointer"
                     >
-                      ใช้แต้มลด {matchedMember.points}฿
+                      ใช้แต้มลด {matchedMember.points}
                     </button>
                   )}
                 </div>
@@ -448,7 +457,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
                         onClick={() => handleQuickCash(note)}
                         className="px-3.5 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 font-bold font-mono text-sm hover:bg-amber-50 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200 cursor-pointer"
                       >
-                        +{note}฿
+                        +{note}
                       </button>
                     ))}
                     <button
@@ -456,7 +465,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
                       onClick={() => handleQuickCash(remainingDue)}
                       className="px-3.5 py-2 rounded-xl bg-amber-500/20 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700 font-bold text-xs cursor-pointer"
                     >
-                      พอดี ({formatBaht(remainingDue, false)})
+                      พอดี ({formatAmount(remainingDue, false)})
                     </button>
                   </div>
                 </div>
@@ -468,7 +477,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
                       เงินทอน (Change):
                     </span>
                     <span className="text-xl font-black font-mono tabular-nums text-emerald-700 dark:text-emerald-400">
-                      {formatBaht(parseFloat(cashReceived) - remainingDue)}
+                      {formatAmount(parseFloat(cashReceived) - remainingDue)}
                     </span>
                   </div>
                 )}
@@ -501,7 +510,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
                 <div>
                   <div className="text-xs text-slate-500">ยอดเงินที่ต้องสแกนจ่าย</div>
                   <div className="text-3xl font-extrabold font-mono text-amber-600 dark:text-amber-400">
-                    {formatBaht(remainingDue)}
+                    {formatAmount(remainingDue)}
                   </div>
                   <div className="text-xs font-semibold text-slate-700 dark:text-slate-300 mt-0.5">
                     {activeQrImage?.label}
@@ -535,7 +544,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
                 <div className="flex items-center justify-between text-xs">
                   <span className="font-semibold text-slate-600 dark:text-slate-300">ยอดชำระผ่านบัตร:</span>
                   <span className="text-lg font-bold font-mono text-slate-900 dark:text-white">
-                    {formatBaht(remainingDue)}
+                    {formatAmount(remainingDue)}
                   </span>
                 </div>
                 <div>
@@ -559,7 +568,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
                 <div className="flex items-center justify-between text-xs">
                   <span className="font-semibold text-slate-600 dark:text-slate-300">ยอดที่ต้องบันทึก:</span>
                   <span className="text-lg font-bold font-mono text-slate-900 dark:text-white">
-                    {formatBaht(remainingDue)}
+                    {formatAmount(remainingDue)}
                   </span>
                 </div>
                 <div>
@@ -588,7 +597,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
                 <div key={idx} className="flex items-center justify-between text-xs py-1 border-b border-slate-100 dark:border-slate-800">
                   <span>{p.method.toUpperCase()} ({p.ref || 'ชำระแล้ว'})</span>
                   <div className="flex items-center gap-2">
-                    <span className="font-bold font-mono">{formatBaht(p.amount)}</span>
+                    <span className="font-bold font-mono">{formatAmount(p.amount)}</span>
                     <button
                       type="button"
                       onClick={() => setPayments((prev) => prev.filter((_, i) => i !== idx))}
