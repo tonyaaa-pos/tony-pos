@@ -1208,13 +1208,13 @@ export const MenuManagementView: React.FC = () => {
                         onClick={() => handleToggleOptionPreset(preset)}
                         className={`p-2.5 rounded-xl border transition cursor-pointer select-none flex items-center justify-between gap-2 ${
                           isSelected
-                            ? 'bg-amber-500/15 dark:bg-amber-500/20 border-amber-500 ring-1 ring-amber-400/50 shadow-2xs'
+                            ? 'bg-amber-100/80 dark:bg-amber-950/40 border-amber-400 dark:border-amber-500 ring-2 ring-amber-400/30 shadow-2xs'
                             : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 hover:border-amber-300'
                         }`}
                       >
                         <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-bold text-xs text-slate-900 dark:text-white truncate">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-bold text-xs px-2 py-0.5 rounded-lg bg-amber-500 text-slate-950 shadow-xs truncate">
                               {preset.name}
                             </span>
                             <span
@@ -1227,7 +1227,7 @@ export const MenuManagementView: React.FC = () => {
                               {preset.type === 'single' ? 'เลือกได้ 1 อย่าง' : 'เลือกได้หลายอย่าง'}
                             </span>
                           </div>
-                          <p className="text-[10px] text-slate-400 truncate mt-0.5">
+                          <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate mt-1">
                             {preset.choices
                               .map((c) => c.name + (c.priceDelta > 0 ? ` (+${c.priceDelta}฿)` : ''))
                               .join(', ')}
@@ -1335,8 +1335,8 @@ export const MenuManagementView: React.FC = () => {
                               </span>
 
                               <div className="min-w-0 flex-1">
-                                <div className="flex items-center gap-1.5">
-                                  <span className="font-bold text-xs text-slate-900 dark:text-white truncate">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="font-bold text-xs px-2.5 py-0.5 rounded-lg bg-amber-500 text-slate-950 shadow-xs truncate">
                                     {group.name}
                                   </span>
                                   {group.nameEn && (
@@ -1355,12 +1355,12 @@ export const MenuManagementView: React.FC = () => {
                                   </span>
                                 </div>
 
-                                {/* Choices preview pills */}
+                                {/* Choices preview pills with soft highlight */}
                                 <div className="flex flex-wrap gap-1 mt-1">
                                   {(group.choices || []).map((c) => (
                                     <span
                                       key={c.id}
-                                      className="px-1.5 py-0.5 rounded text-[9px] bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700/60"
+                                      className="px-2 py-0.5 rounded-md text-[9px] font-medium bg-amber-50 dark:bg-amber-950/40 text-amber-950 dark:text-amber-200 border border-amber-200/80 dark:border-amber-800/60"
                                     >
                                       {c.name}
                                       {c.priceDelta > 0 && (

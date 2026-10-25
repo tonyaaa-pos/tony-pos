@@ -187,10 +187,11 @@ export const ItemCustomizerModal: React.FC<ItemCustomizerModalProps> = ({
         {/* Section 1: Options & Variants (Shows ONLY option name and price, no quantity selector per option) */}
         <div className="space-y-2.5">
           <div className="flex items-center justify-between">
-            <h4 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider flex items-center gap-1.5">
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-amber-500 text-slate-950 font-bold text-xs shadow-xs">
+              <span className="w-1.5 h-1.5 rounded-full bg-slate-950"></span>
               <span>{t('food_detail_options_title')}</span>
-            </h4>
-            <span className="text-[11px] text-slate-400">
+            </div>
+            <span className="text-[11px] font-semibold text-amber-800 dark:text-amber-300 bg-amber-100/80 dark:bg-amber-950/60 px-2 py-0.5 rounded-lg border border-amber-300 dark:border-amber-800/80">
               {variants.length} {t('items_unit')}
             </span>
           </div>
@@ -214,7 +215,7 @@ export const ItemCustomizerModal: React.FC<ItemCustomizerModalProps> = ({
                     isSoldOut
                       ? 'bg-slate-100 dark:bg-slate-900 border-slate-200 dark:border-slate-800 opacity-60 cursor-not-allowed'
                       : isSelected
-                      ? 'bg-amber-500/15 dark:bg-amber-500/20 border-amber-500 ring-2 ring-amber-400/50 shadow-xs cursor-pointer'
+                      ? 'bg-amber-100/90 dark:bg-amber-950/50 text-amber-950 dark:text-amber-100 border-amber-400 dark:border-amber-500 ring-2 ring-amber-400/30 shadow-xs cursor-pointer'
                       : 'bg-white dark:bg-slate-800/80 border-slate-200 dark:border-slate-700 hover:border-amber-400 hover:bg-slate-50 cursor-pointer'
                   }`}
                 >
@@ -255,14 +256,15 @@ export const ItemCustomizerModal: React.FC<ItemCustomizerModalProps> = ({
 
         {/* Section 2: Option Groups / Customization (Spiciness, Size, Add-ons) */}
         {menuItem.optionGroups && menuItem.optionGroups.length > 0 && (
-          <div className="space-y-3 pt-3 border-t border-slate-100 dark:border-slate-800">
+          <div className="space-y-4 pt-3 border-t border-slate-100 dark:border-slate-800">
             {menuItem.optionGroups.map((group) => (
               <div key={group.id} className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                    {getName(group)}
-                  </span>
-                  <span className="text-[11px] text-slate-400">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-amber-500 text-slate-950 font-bold text-xs shadow-xs">
+                    <span className="w-1.5 h-1.5 rounded-full bg-slate-950"></span>
+                    <span>{getName(group)}</span>
+                  </div>
+                  <span className="text-[11px] font-semibold text-amber-800 dark:text-amber-300 bg-amber-100/80 dark:bg-amber-950/60 px-2 py-0.5 rounded-lg border border-amber-300 dark:border-amber-800/80">
                     {group.type === 'single'
                       ? t('food_detail_single_choice_hint')
                       : t('food_detail_multi_choice_hint')}
@@ -296,18 +298,28 @@ export const ItemCustomizerModal: React.FC<ItemCustomizerModalProps> = ({
                         }}
                         className={`p-2.5 rounded-xl border text-xs flex items-center justify-between transition cursor-pointer select-none ${
                           isSelected
-                            ? 'bg-amber-500 text-slate-950 font-bold border-amber-600 shadow-2xs'
-                            : 'bg-slate-50 dark:bg-slate-800/80 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100'
+                            ? 'bg-amber-100/90 dark:bg-amber-950/50 text-amber-950 dark:text-amber-100 font-bold border-amber-400 dark:border-amber-500 ring-2 ring-amber-400/30 shadow-2xs'
+                            : 'bg-white dark:bg-slate-800/80 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-50'
                         }`}
                       >
                         <span className="truncate">{getName(choice)}</span>
-                        <div className="flex items-center gap-1 shrink-0 ml-1.5">
+                        <div className="flex items-center gap-1.5 shrink-0 ml-1.5">
                           {choice.priceDelta > 0 && (
-                            <span className="tabular-nums font-mono opacity-90 text-[11px]">
+                            <span
+                              className={`tabular-nums font-mono text-[11px] font-bold ${
+                                isSelected
+                                  ? 'text-amber-800 dark:text-amber-300'
+                                  : 'text-slate-500 dark:text-slate-400'
+                              }`}
+                            >
                               +{choice.priceDelta}฿
                             </span>
                           )}
-                          {isSelected && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+                          {isSelected && (
+                            <div className="w-4 h-4 rounded-full bg-amber-500 text-slate-950 flex items-center justify-center shrink-0">
+                              <Check className="w-2.5 h-2.5 stroke-[3]" />
+                            </div>
+                          )}
                         </div>
                       </button>
                     );
