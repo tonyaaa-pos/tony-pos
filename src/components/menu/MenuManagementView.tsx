@@ -234,47 +234,56 @@ export const MenuManagementView: React.FC = () => {
     });
   };
 
-  // Option Groups management within editing item
-  const handleAddOptionGroupFromPreset = (preset: OptionGroup) => {
-    if (!editingItem) return;
-    const currentGroups = editingItem.optionGroups || [];
-    // Deep clone preset with fresh unique IDs
-    const newGroup: OptionGroup = {
-      ...preset,
-      id: 'opt_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
-      choices: (preset.choices || []).map((c, i) => ({
-        ...c,
-        id: 'ch_' + Date.now() + '_' + i + '_' + Math.random().toString(36).substring(2, 6),
-      })),
-    };
-    setEditingItem({
-      ...editingItem,
-      optionGroups: [...currentGroups, newGroup],
-    });
+  // Option Groups selection within editing item
+  const isPresetSelected = (preset: OptionGroup): boolean => {
+    if (!editingItem?.optionGroups) return false;
+    return editingItem.optionGroups.some(
+      (g) =>
+        g.id === preset.id ||
+        g.name === preset.name ||
+        (g as any).presetId === preset.id ||
+        g.id.startsWith(`opt_${preset.id}_`)
+    );
   };
 
-  const handleAddCustomOptionGroup = () => {
+  const handleToggleOptionPreset = (preset: OptionGroup) => {
     if (!editingItem) return;
     const currentGroups = editingItem.optionGroups || [];
-    const newGroup: OptionGroup = {
-      id: 'opt_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
-      name: '',
-      nameEn: '',
-      type: 'single',
-      required: false,
-      choices: [
-        {
-          id: 'ch_' + Date.now() + '_1',
-          name: '',
-          nameEn: '',
-          priceDelta: 0,
-        },
-      ],
-    };
-    setEditingItem({
-      ...editingItem,
-      optionGroups: [...currentGroups, newGroup],
-    });
+    const isSelected = isPresetSelected(preset);
+
+    if (isSelected) {
+      // Unselect / Remove
+      const updated = currentGroups.filter(
+        (g) =>
+          g.id !== preset.id &&
+          g.name !== preset.name &&
+          (g as any).presetId !== preset.id &&
+          !g.id.startsWith(`opt_${preset.id}_`)
+      );
+      setEditingItem({
+        ...editingItem,
+        optionGroups: updated,
+      });
+    } else {
+      // Select / Add clone
+      const newGroup: OptionGroup = {
+        ...preset,
+        id: `opt_${preset.id}_${Date.now()}`,
+        choices: (preset.choices || []).map((c, i) => ({
+          ...c,
+          id: `ch_${c.id || i}_${Date.now()}`,
+        })),
+      };
+      (newGroup as any).presetId = preset.id;
+      setEditingItem({
+        ...editingItem,
+        optionGroups: [...currentGroups, newGroup],
+      });
+    }
+  };
+
+  const handleAddOptionGroupFromPreset = (preset: OptionGroup) => {
+    handleToggleOptionPreset(preset);
   };
 
   const handleUpdateOptionGroup = (idx: number, updates: Partial<OptionGroup>) => {
@@ -1158,295 +1167,228 @@ export const MenuManagementView: React.FC = () => {
               </div>
             </div>
 
-            {/* Section: Option Sets / หมวด set เมนูย่อย (e.g., egg set, spiciness set, toppings set) */}
+            {/* Section: เลือกใช้งาน set เมนูย่อย (Option Sets) */}
             <div className="p-3.5 rounded-2xl bg-amber-500/5 dark:bg-slate-800/80 border border-amber-200/70 dark:border-slate-700 space-y-3">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <div>
                   <div className="flex items-center gap-1.5">
                     <Sliders className="w-4 h-4 text-amber-500" />
                     <h4 className="text-xs font-bold text-slate-900 dark:text-white">
-                      หมวด set เมนูย่อย (Option Sets)
+                      เลือกใช้งาน set เมนูย่อย (Option Sets)
                     </h4>
                   </div>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                    เช่น set เพิ่มไข่ดาว, เลือกความเผ็ด, เลือกท๊อปปิ้ง • คลิกค้างแล้วลากเพื่อย้าย หรือใช้ลูกศรขึ้น-ลง
+                    คลิกเลือก set เมนูย่อยที่สร้างไว้เพื่อใช้กับเมนูนี้ (สามารถลากย้ายตำแหน่ง หรือใช้ลูกศรขึ้น-ลงได้)
                   </p>
                 </div>
 
                 <button
                   type="button"
-                  onClick={handleAddCustomOptionGroup}
-                  className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs shadow-xs transition cursor-pointer shrink-0 self-start sm:self-auto"
+                  onClick={() => setShowOptionPresetsModal(true)}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-200 border border-amber-200 dark:border-amber-800/60 text-xs font-bold hover:bg-amber-200 transition cursor-pointer shrink-0 self-start sm:self-auto"
+                  title="เปิดหน้าต่างจัดการหรือเพิ่ม set เมนูย่อยแม่แบบ"
                 >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>สร้าง set กำหนดเอง</span>
+                  <Sliders className="w-3.5 h-3.5" />
+                  <span>จัดการ set เมนูย่อยแม่แบบ</span>
                 </button>
               </div>
 
-              {/* Quick Pick from Master Presets */}
+              {/* Selection list of Master Presets */}
               <div className="space-y-1.5">
                 <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400">
-                  เลือกใช้ set เมนูย่อยแม่แบบที่สร้างไว้ (คลิกเพื่อเพิ่มใส่เมนูนี้):
+                  คลิกเพื่อเลือกใช้งาน set เมนูย่อย:
                 </label>
-                <div className="flex flex-wrap gap-1.5">
-                  {optionPresets.map((preset) => (
-                    <button
-                      key={preset.id}
-                      type="button"
-                      onClick={() => handleAddOptionGroupFromPreset(preset)}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-800/60 text-slate-800 dark:text-slate-200 hover:bg-amber-100 dark:hover:bg-amber-950/60 hover:border-amber-500 transition cursor-pointer shadow-2xs"
-                      title={`เพิ่ม ${preset.name} (${preset.choices.length} ตัวเลือก)`}
-                    >
-                      <PlusCircle className="w-3 h-3 text-amber-500" />
-                      <span>{preset.name}</span>
-                      <span className="text-[10px] text-slate-400 font-mono">
-                        ({preset.choices.length})
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* List of Attached Option Groups */}
-              {(!editingItem.optionGroups || editingItem.optionGroups.length === 0) ? (
-                <div className="p-4 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 text-center bg-white/50 dark:bg-slate-900/50">
-                  <p className="text-xs text-slate-400">
-                    เมนูนี้ยังไม่มีหมวด set เมนูย่อย สามารถคลิกเลือก set แม่แบบด้านบน หรือกด "สร้าง set กำหนดเอง"
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {editingItem.optionGroups.map((group, gIdx) => {
-                    const isDragging = draggedOptionGroupIndex === gIdx;
-                    const isOver = dragOverOptionGroupIndex === gIdx;
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {optionPresets.map((preset) => {
+                    const isSelected = isPresetSelected(preset);
 
                     return (
                       <div
-                        key={group.id || gIdx}
-                        draggable
-                        onDragStart={() => handleOptionGroupDragStart(gIdx)}
-                        onDragOver={(e) => handleOptionGroupDragOver(e, gIdx)}
-                        onDrop={() => handleOptionGroupDrop(gIdx)}
-                        onDragEnd={() => {
-                          setDraggedOptionGroupIndex(null);
-                          setDragOverOptionGroupIndex(null);
-                        }}
-                        className={`p-3 rounded-xl bg-white dark:bg-slate-900 border transition-all ${
-                          isDragging
-                            ? 'opacity-40 border-dashed border-amber-500 scale-[0.99]'
-                            : isOver
-                            ? 'border-amber-500 ring-2 ring-amber-400/30'
-                            : 'border-slate-200 dark:border-slate-700 shadow-2xs'
+                        key={preset.id}
+                        onClick={() => handleToggleOptionPreset(preset)}
+                        className={`p-2.5 rounded-xl border transition cursor-pointer select-none flex items-center justify-between gap-2 ${
+                          isSelected
+                            ? 'bg-amber-500/15 dark:bg-amber-500/20 border-amber-500 ring-1 ring-amber-400/50 shadow-2xs'
+                            : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 hover:border-amber-300'
                         }`}
                       >
-                        {/* Group Header Bar with Drag Handle, Up/Down Arrows, and Delete */}
-                        <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-slate-100 dark:border-slate-800">
+                        <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-1.5">
-                            {/* Drag handle */}
-                            <div
-                              className="p-1 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-grab active:cursor-grabbing"
-                              title="คลิกค้างแล้วลากเพื่อย้ายตำแหน่ง (Drag & Drop)"
+                            <span className="font-bold text-xs text-slate-900 dark:text-white truncate">
+                              {preset.name}
+                            </span>
+                            <span
+                              className={`px-1.5 py-0.5 rounded text-[9px] font-semibold shrink-0 ${
+                                preset.type === 'single'
+                                  ? 'bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300'
+                                  : 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300'
+                              }`}
                             >
-                              <GripVertical className="w-4 h-4" />
-                            </div>
-
-                            {/* Up / Down arrow buttons */}
-                            <div className="flex items-center gap-0.5">
-                              <button
-                                type="button"
-                                disabled={gIdx === 0}
-                                onClick={() => handleMoveOptionGroup(gIdx, 'up')}
-                                className={`p-1 rounded text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 ${
-                                  gIdx === 0 ? 'opacity-25 cursor-not-allowed' : 'cursor-pointer hover:text-amber-600'
-                                }`}
-                                title="เลื่อน set ขึ้น"
-                              >
-                                <ArrowUp className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                type="button"
-                                disabled={gIdx === (editingItem.optionGroups?.length || 1) - 1}
-                                onClick={() => handleMoveOptionGroup(gIdx, 'down')}
-                                className={`p-1 rounded text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 ${
-                                  gIdx === (editingItem.optionGroups?.length || 1) - 1
-                                    ? 'opacity-25 cursor-not-allowed'
-                                    : 'cursor-pointer hover:text-amber-600'
-                                }`}
-                                title="เลื่อน set ลง"
-                              >
-                                <ArrowDown className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-800 dark:text-amber-300 font-mono">
-                              Set #{gIdx + 1}
+                              {preset.type === 'single' ? 'เลือกได้ 1 อย่าง' : 'เลือกได้หลายอย่าง'}
                             </span>
                           </div>
-
-                          <div className="flex items-center gap-2">
-                            {/* Single or Multiple Type Selector */}
-                            <div className="flex items-center gap-1 text-[11px] bg-slate-100 dark:bg-slate-800 p-0.5 rounded-lg">
-                              <button
-                                type="button"
-                                onClick={() => handleUpdateOptionGroup(gIdx, { type: 'single' })}
-                                className={`px-2 py-0.5 rounded-md font-medium transition cursor-pointer ${
-                                  group.type === 'single'
-                                    ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-2xs font-bold'
-                                    : 'text-slate-500 dark:text-slate-400'
-                                }`}
-                              >
-                                เลือกได้ 1 อย่าง (Single)
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleUpdateOptionGroup(gIdx, { type: 'multiple' })}
-                                className={`px-2 py-0.5 rounded-md font-medium transition cursor-pointer ${
-                                  group.type === 'multiple'
-                                    ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-2xs font-bold'
-                                    : 'text-slate-500 dark:text-slate-400'
-                                }`}
-                              >
-                                เลือกได้หลายอย่าง (Multiple)
-                              </button>
-                            </div>
-
-                            <label className="hidden sm:flex items-center gap-1 cursor-pointer text-[11px] text-slate-600 dark:text-slate-400">
-                              <input
-                                type="checkbox"
-                                checked={group.required || false}
-                                onChange={(e) =>
-                                  handleUpdateOptionGroup(gIdx, { required: e.target.checked })
-                                }
-                                className="w-3.5 h-3.5 rounded text-amber-500"
-                              />
-                              <span>จำเป็นต้องเลือก</span>
-                            </label>
-
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteOptionGroup(gIdx)}
-                              className="p-1 rounded text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"
-                              title="ลบ set นี้ออกจากเมนู"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
+                          <p className="text-[10px] text-slate-400 truncate mt-0.5">
+                            {preset.choices
+                              .map((c) => c.name + (c.priceDelta > 0 ? ` (+${c.priceDelta}฿)` : ''))
+                              .join(', ')}
+                          </p>
                         </div>
 
-                        {/* Set Name Inputs (TH & EN) */}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2.5">
-                          <div>
-                            <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-0.5">
-                              ชื่อหมวด set (ภาษาไทย) <span className="text-rose-500">*</span>
-                            </label>
-                            <input
-                              type="text"
-                              required
-                              value={group.name}
-                              onChange={(e) =>
-                                handleUpdateOptionGroup(gIdx, { name: e.target.value })
-                              }
-                              placeholder="เช่น เพิ่มไข่ดาว, เลือกระดับความเผ็ด"
-                              className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold"
-                            />
-                          </div>
-
-                          <div>
-                            <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-0.5">
-                              ชื่อหมวด set (English)
-                            </label>
-                            <input
-                              type="text"
-                              value={group.nameEn || ''}
-                              onChange={(e) =>
-                                handleUpdateOptionGroup(gIdx, { nameEn: e.target.value })
-                              }
-                              placeholder="e.g. Add Eggs, Spiciness Level"
-                              className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs"
-                            />
-                          </div>
-                        </div>
-
-                        {/* Choices within this Option Group */}
-                        <div className="pt-2.5 space-y-2">
-                          <div className="flex items-center justify-between">
-                            <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
-                              รายการตัวเลือกใน set ({group.choices?.length || 0} รายการ)
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => handleAddChoiceToGroup(gIdx)}
-                              className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-600 dark:text-amber-400 hover:underline cursor-pointer"
-                            >
-                              <Plus className="w-3 h-3" />
-                              <span>เพิ่มตัวเลือกใน set นี้</span>
-                            </button>
-                          </div>
-
-                          <div className="space-y-1.5">
-                            {(group.choices || []).map((choice, cIdx) => (
-                              <div
-                                key={choice.id || cIdx}
-                                className="flex items-center gap-1.5 p-1.5 rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-xs"
-                              >
-                                <span className="text-[10px] text-slate-400 font-mono w-4 text-center">
-                                  {cIdx + 1}
-                                </span>
-
-                                <input
-                                  type="text"
-                                  placeholder="ชื่อตัวเลือก (ไทย)"
-                                  value={choice.name}
-                                  onChange={(e) =>
-                                    handleUpdateChoiceInGroup(gIdx, cIdx, { name: e.target.value })
-                                  }
-                                  className="flex-1 px-2 py-1 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs"
-                                />
-
-                                <input
-                                  type="text"
-                                  placeholder="Name (EN)"
-                                  value={choice.nameEn || ''}
-                                  onChange={(e) =>
-                                    handleUpdateChoiceInGroup(gIdx, cIdx, { nameEn: e.target.value })
-                                  }
-                                  className="flex-1 px-2 py-1 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs hidden sm:block"
-                                />
-
-                                <div className="flex items-center gap-1 w-24 shrink-0">
-                                  <span className="text-[11px] text-slate-400 font-mono">+฿</span>
-                                  <input
-                                    type="number"
-                                    min={0}
-                                    placeholder="0"
-                                    value={choice.priceDelta}
-                                    onChange={(e) =>
-                                      handleUpdateChoiceInGroup(gIdx, cIdx, {
-                                        priceDelta: Number(e.target.value),
-                                      })
-                                    }
-                                    className="w-full px-2 py-1 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-mono font-bold text-amber-600 dark:text-amber-400"
-                                    title="ราคาบวกเพิ่ม (0 = ฟรี)"
-                                  />
-                                </div>
-
-                                <button
-                                  type="button"
-                                  onClick={() => handleDeleteChoiceFromGroup(gIdx, cIdx)}
-                                  className="p-1 text-slate-400 hover:text-rose-500 cursor-pointer shrink-0"
-                                  title="ลบตัวเลือกนี้"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
-                            ))}
-                          </div>
+                        <div className="shrink-0 flex items-center">
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => {}} // handled by parent onClick
+                            className="w-4 h-4 rounded text-amber-500 pointer-events-none cursor-pointer"
+                          />
                         </div>
                       </div>
                     );
                   })}
                 </div>
-              )}
+              </div>
+
+              {/* Selected Sets Order List */}
+              <div className="pt-2 border-t border-slate-200/70 dark:border-slate-700/60 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
+                    ลำดับ set เมนูย่อยที่ใช้งานในเมนูนี้ ({editingItem.optionGroups?.length || 0} set)
+                  </span>
+                  <span className="text-[10px] text-slate-400">
+                    คลิกค้างแล้วลาก หรือใช้ลูกศรขึ้น-ลง เพื่อจัดลำดับการแสดงผล
+                  </span>
+                </div>
+
+                {(!editingItem.optionGroups || editingItem.optionGroups.length === 0) ? (
+                  <div className="p-4 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 text-center bg-white/40 dark:bg-slate-900/40">
+                    <p className="text-xs text-slate-400">
+                      ยังไม่ได้เลือกใช้งาน set เมนูย่อยใดๆ (คลิกเลือก set จากรายการด้านบน)
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {editingItem.optionGroups.map((group, gIdx) => {
+                      const isDragging = draggedOptionGroupIndex === gIdx;
+                      const isOver = dragOverOptionGroupIndex === gIdx;
+
+                      return (
+                        <div
+                          key={group.id || gIdx}
+                          draggable
+                          onDragStart={() => handleOptionGroupDragStart(gIdx)}
+                          onDragOver={(e) => handleOptionGroupDragOver(e, gIdx)}
+                          onDrop={() => handleOptionGroupDrop(gIdx)}
+                          onDragEnd={() => {
+                            setDraggedOptionGroupIndex(null);
+                            setDragOverOptionGroupIndex(null);
+                          }}
+                          className={`p-2.5 rounded-xl bg-white dark:bg-slate-900 border transition-all ${
+                            isDragging
+                              ? 'opacity-40 border-dashed border-amber-500 scale-[0.99]'
+                              : isOver
+                              ? 'border-amber-500 ring-2 ring-amber-400/30'
+                              : 'border-slate-200 dark:border-slate-700 shadow-2xs'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 min-w-0 flex-1">
+                              {/* Drag handle */}
+                              <div
+                                className="p-1 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-grab active:cursor-grabbing shrink-0"
+                                title="คลิกค้างแล้วลากเพื่อย้ายลำดับ"
+                              >
+                                <GripVertical className="w-4 h-4" />
+                              </div>
+
+                              {/* Up / Down arrows */}
+                              <div className="flex items-center gap-0.5 shrink-0">
+                                <button
+                                  type="button"
+                                  disabled={gIdx === 0}
+                                  onClick={() => handleMoveOptionGroup(gIdx, 'up')}
+                                  className={`p-1 rounded text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 ${
+                                    gIdx === 0
+                                      ? 'opacity-25 cursor-not-allowed'
+                                      : 'cursor-pointer hover:text-amber-600'
+                                  }`}
+                                  title="เลื่อนขึ้น"
+                                >
+                                  <ArrowUp className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={gIdx === (editingItem.optionGroups?.length || 1) - 1}
+                                  onClick={() => handleMoveOptionGroup(gIdx, 'down')}
+                                  className={`p-1 rounded text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 ${
+                                    gIdx === (editingItem.optionGroups?.length || 1) - 1
+                                      ? 'opacity-25 cursor-not-allowed'
+                                      : 'cursor-pointer hover:text-amber-600'
+                                  }`}
+                                  title="เลื่อนลง"
+                                >
+                                  <ArrowDown className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-800 dark:text-amber-300 font-mono shrink-0">
+                                #{gIdx + 1}
+                              </span>
+
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-bold text-xs text-slate-900 dark:text-white truncate">
+                                    {group.name}
+                                  </span>
+                                  {group.nameEn && (
+                                    <span className="text-[10px] text-slate-400 truncate hidden sm:inline">
+                                      ({group.nameEn})
+                                    </span>
+                                  )}
+                                  <span
+                                    className={`px-1.5 py-0.5 rounded text-[9px] font-semibold shrink-0 ${
+                                      group.type === 'single'
+                                        ? 'bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300'
+                                        : 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300'
+                                    }`}
+                                  >
+                                    {group.type === 'single' ? 'เลือกได้ 1 อย่าง' : 'เลือกได้หลายอย่าง'}
+                                  </span>
+                                </div>
+
+                                {/* Choices preview pills */}
+                                <div className="flex flex-wrap gap-1 mt-1">
+                                  {(group.choices || []).map((c) => (
+                                    <span
+                                      key={c.id}
+                                      className="px-1.5 py-0.5 rounded text-[9px] bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700/60"
+                                    >
+                                      {c.name}
+                                      {c.priceDelta > 0 && (
+                                        <span className="text-amber-600 dark:text-amber-400 font-bold ml-1 font-mono">
+                                          +{c.priceDelta}฿
+                                        </span>
+                                      )}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteOptionGroup(gIdx)}
+                              className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer shrink-0"
+                              title="ยกเลิกการเลือก set นี้"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
