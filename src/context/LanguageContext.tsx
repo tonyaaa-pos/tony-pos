@@ -221,7 +221,8 @@ const translations: Record<Language, Record<string, string>> = {
     select_table_modal_desc: 'กรุณาแตะเลือกโต๊ะเพื่อบันทึกรายการอาหารลงโต๊ะ',
 
     // Food Type Detail & Options Modal
-    food_detail_options_title: 'ตัวเลือกและขนาด (Options & Variants)',
+    food_detail_options_title: 'ตัวเลือกและขนาด',
+    food_detail_quantity: 'จำนวน:',
     food_detail_add_button: 'เพิ่ม',
     food_detail_added_toast: 'เพิ่มแล้ว!',
     food_detail_single_choice_hint: '(เลือกได้ 1 รายการ)',
@@ -560,6 +561,7 @@ const translations: Record<Language, Record<string, string>> = {
 
     // Food Type Detail & Options Modal
     food_detail_options_title: 'Options & Variants',
+    food_detail_quantity: 'Quantity:',
     food_detail_add_button: 'Add to Order',
     food_detail_added_toast: 'Added!',
     food_detail_single_choice_hint: '(Select 1 option)',

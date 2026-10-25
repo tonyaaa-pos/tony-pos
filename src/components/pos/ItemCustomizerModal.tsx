@@ -334,7 +334,7 @@ export const ItemCustomizerModal: React.FC<ItemCustomizerModalProps> = ({
           {/* Quantity Controls */}
           <div className="flex items-center justify-between sm:justify-start gap-2.5">
             <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
-              จำนวน:
+              {t('food_detail_quantity')}
             </span>
             <div className="flex items-center bg-slate-100 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-0.5">
               <button
@@ -376,7 +376,7 @@ export const ItemCustomizerModal: React.FC<ItemCustomizerModalProps> = ({
               className="flex-1 sm:flex-initial px-6 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 active:scale-98 text-slate-950 font-bold text-xs shadow-md transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Plus className="w-4 h-4 stroke-[2.5]" />
-              <span>เพิ่ม ({formatBaht(totalPrice)})</span>
+              <span>{t('food_detail_add_button')} ({formatBaht(totalPrice)})</span>
             </button>
           </div>
         </div>
