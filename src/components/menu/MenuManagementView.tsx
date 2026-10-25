@@ -761,14 +761,6 @@ export const MenuManagementView: React.FC = () => {
                   <h4 className="font-bold text-sm text-slate-900 dark:text-white truncate">
                     {getName(item)}
                   </h4>
-                  {item.nameEn && item.nameEn !== item.name && (
-                    <p className="text-[11px] text-slate-400 truncate">
-                      {item.nameEn}
-                    </p>
-                  )}
-                  <p className="text-xs text-slate-400 mt-1 line-clamp-2">
-                    {getDescription(item)}
-                  </p>
                 </div>
 
                 {/* Variants preview & prices */}
@@ -1005,39 +997,6 @@ export const MenuManagementView: React.FC = () => {
                     {t('menu_form_sold_out')}
                   </span>
                 </label>
-              </div>
-            </div>
-
-            {/* Descriptions (TH & EN) */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  {t('menu_form_desc_th')}
-                </label>
-                <textarea
-                  rows={2}
-                  value={editingItem.description || ''}
-                  onChange={(e) =>
-                    setEditingItem((prev) => ({ ...prev, description: e.target.value }))
-                  }
-                  placeholder="สูตรโบราณ รสเข้มข้น หอมใบกะเพราแท้..."
-                  className="w-full px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-900 dark:text-white"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  {t('menu_form_desc_en')}
-                </label>
-                <textarea
-                  rows={2}
-                  value={editingItem.descriptionEn || ''}
-                  onChange={(e) =>
-                    setEditingItem((prev) => ({ ...prev, descriptionEn: e.target.value }))
-                  }
-                  placeholder="Traditional holy basil stir-fry, fragrant and spicy..."
-                  className="w-full px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-900 dark:text-white"
-                />
               </div>
             </div>
 

@@ -159,7 +159,7 @@ export const ItemCustomizerModal: React.FC<ItemCustomizerModalProps> = ({
       maxWidth="max-w-xl"
     >
       <div className="space-y-4">
-        {/* Top Header: Dish Name & Description ONLY (No Food Photo per user request) */}
+        {/* Top Header: Dish Name ONLY (in active language, no food description, no food photo) */}
         <div className="pb-3 border-b border-slate-100 dark:border-slate-800">
           <div className="flex items-center gap-2">
             <h3 className="text-lg sm:text-xl font-black text-slate-900 dark:text-white leading-tight">
@@ -172,16 +172,6 @@ export const ItemCustomizerModal: React.FC<ItemCustomizerModalProps> = ({
               </span>
             )}
           </div>
-          {menuItem.nameEn && menuItem.nameEn !== menuItem.name && (
-            <p className="text-xs text-slate-400 font-medium mt-0.5">
-              {menuItem.nameEn}
-            </p>
-          )}
-          {menuItem.description && (
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1.5 line-clamp-2">
-              {getDescription(menuItem)}
-            </p>
-          )}
         </div>
 
         {/* Section 1: Options & Variants (Shows ONLY option name and price, no quantity selector per option) */}
@@ -230,11 +220,6 @@ export const ItemCustomizerModal: React.FC<ItemCustomizerModalProps> = ({
                         </span>
                       )}
                     </div>
-                    {variant.nameEn && variant.nameEn !== variant.name && (
-                      <p className="text-[10px] text-slate-400 truncate mt-0.5">
-                        {variant.nameEn}
-                      </p>
-                    )}
                   </div>
 
                   {/* Price & Selected Checkmark */}
