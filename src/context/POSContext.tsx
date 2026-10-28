@@ -108,6 +108,7 @@ interface POSContextType {
   applyBillDiscount: (billId: string, type: 'percentage' | 'fixed', value: number) => void;
   applyMembershipDiscount: (billId: string, memberPhone: string, pointsToRedeem: number) => boolean;
   canPay: (target: Bill | Table | null | undefined) => CanPayResult;
+  splitBill: (originalBillId: string, itemSplits: { itemId: string; quantity: number }[]) => { originalBill: Bill; newBill: Bill } | null;
   completeBillPayment: (billId: string, payments: PaymentRecord[]) => { success: boolean; bill: Bill };
   voidBill: (billId: string, reason: string) => void;
   lastCompletedBill: Bill | null;
@@ -942,21 +943,38 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         );
       }
 
-      // Free the table
+      // Free the table only if no other open bills remain for this table
       if (targetBill.tableId) {
-        setTables((prev) =>
-          prev.map((t) =>
-            t.id === targetBill.tableId
-              ? {
-                  ...t,
-                  status: 'available',
-                  currentBillId: undefined,
-                  seatedAt: undefined,
-                  guestCount: undefined,
-                }
-              : t
-          )
+        const otherOpenBills = bills.filter(
+          (b) => b.tableId === targetBill.tableId && b.id !== billId && b.status === 'open'
         );
+        if (otherOpenBills.length > 0) {
+          setTables((prev) =>
+            prev.map((t) =>
+              t.id === targetBill.tableId
+                ? {
+                    ...t,
+                    status: 'occupied',
+                    currentBillId: otherOpenBills[0].id,
+                  }
+                : t
+            )
+          );
+        } else {
+          setTables((prev) =>
+            prev.map((t) =>
+              t.id === targetBill.tableId
+                ? {
+                    ...t,
+                    status: 'available',
+                    currentBillId: undefined,
+                    seatedAt: undefined,
+                    guestCount: undefined,
+                  }
+                : t
+            )
+          );
+        }
       }
 
       setBills((prev) => prev.map((b) => (b.id === billId ? updatedBill : b)));
@@ -1012,6 +1030,89 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       syncService.broadcast('DATA_RELOAD');
     },
     [activeBillId, bills, currentUser?.name]
+  );
+
+  const splitBill = useCallback(
+    (
+      originalBillId: string,
+      itemSplits: { itemId: string; quantity: number }[]
+    ): { originalBill: Bill; newBill: Bill } | null => {
+      const originalBill = bills.find((b) => b.id === originalBillId);
+      if (!originalBill) return null;
+
+      const now = new Date();
+      // Calculate suffix, e.g. -B, -C, etc.
+      const existingSplitsCount = bills.filter(
+        (b) => b.tableId && b.tableId === originalBill.tableId
+      ).length;
+      const splitSuffix = String.fromCharCode(65 + existingSplitsCount);
+      const baseBillNum = originalBill.billNumber.replace(/-[A-Z]$/, '');
+      const newBillNumber = `${baseBillNum}-${splitSuffix}`;
+
+      const remainingItems: OrderItem[] = [];
+      const movedItems: OrderItem[] = [];
+
+      originalBill.items.forEach((item) => {
+        const splitSpec = itemSplits.find((s) => s.itemId === item.id);
+        const splitQty = splitSpec ? Math.min(item.quantity, Math.max(0, splitSpec.quantity)) : 0;
+        const remainQty = item.quantity - splitQty;
+
+        if (splitQty > 0) {
+          movedItems.push({
+            ...item,
+            id: 'ord_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+            quantity: splitQty,
+            isNewUnsent: false,
+          });
+        }
+
+        if (remainQty > 0) {
+          remainingItems.push({
+            ...item,
+            quantity: remainQty,
+          });
+        }
+      });
+
+      if (movedItems.length === 0) return null;
+
+      const updatedOriginal = recalculateBill({ ...originalBill, items: remainingItems }, settings);
+
+      const createdNewBill: Bill = recalculateBill(
+        {
+          id: 'bill_' + Date.now() + '_split',
+          billNumber: newBillNumber,
+          orderType: originalBill.orderType,
+          tableId: originalBill.tableId,
+          tableName: originalBill.tableName,
+          guestCount: 1,
+          items: movedItems,
+          status: 'open',
+          createdAt: now.toISOString(),
+          createdByUserId: currentUser?.id || 'unknown',
+          createdByName: currentUser?.name || 'พนักงาน',
+          subtotal: 0,
+          discountType: 'percentage',
+          discountValue: 0,
+          discountAmount: 0,
+          serviceChargeRate: originalBill.serviceChargeRate,
+          serviceChargeAmount: 0,
+          vatRate: originalBill.vatRate,
+          vatAmount: 0,
+          vatIncluded: originalBill.vatIncluded,
+          grandTotal: 0,
+          payments: [],
+        },
+        settings
+      );
+
+      setBills((prev) => [...prev.map((b) => (b.id === originalBillId ? updatedOriginal : b)), createdNewBill]);
+      syncService.broadcast('TABLE_UPDATED');
+      syncService.broadcast('DATA_RELOAD');
+
+      return { originalBill: updatedOriginal, newBill: createdNewBill };
+    },
+    [bills, currentUser?.id, currentUser?.name, recalculateBill, settings]
   );
 
   // Table Floor Plan & Layout Operations
@@ -1566,6 +1667,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     applyBillDiscount,
     applyMembershipDiscount,
     canPay: checkCanPay,
+    splitBill,
     completeBillPayment,
     voidBill,
     lastCompletedBill,

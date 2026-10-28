@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Modal } from '../common/Modal';
 import { Bill, PaymentMethod, PaymentRecord } from '../../types';
 import { usePOS } from '../../context/POSContext';
+import { useLanguage } from '../../context/LanguageContext';
 import {
   Banknote,
   QrCode,
@@ -9,12 +10,12 @@ import {
   Building,
   Wallet,
   CheckCircle2,
-  Printer,
-  Sparkles,
   Users,
   Split,
   Plus,
+  Minus,
   Trash2,
+  Check,
 } from 'lucide-react';
 import { ReceiptPrint } from './ReceiptPrint';
 import { soundService } from '../../utils/audio';
@@ -40,24 +41,28 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
     settings,
     qrImages,
     completeBillPayment,
-    applyBillDiscount,
-    applyMembershipDiscount,
-    members,
-    findMemberByPhone,
     canPay,
+    splitBill,
+    bills,
   } = usePOS();
+  const { getName } = useLanguage();
 
   const [finalizeError, setFinalizeError] = useState<string>('');
 
-  // Discount controls
-  const [discountType, setDiscountType] = useState<'none' | 'percentage' | 'fixed'>(
-    bill.discountValue > 0 ? bill.discountType : 'none'
-  );
-  const [discountValue, setDiscountValue] = useState<number>(bill.discountValue || 0);
+  // Active bill tracking (supporting split bills for the same table)
+  const [activeBillId, setActiveBillId] = useState<string>(bill.id);
+  const activeBill = bills.find((b) => b.id === activeBillId) || bill;
 
-  // Membership lookup
-  const [memberPhone, setMemberPhone] = useState(bill.membershipPhone || '');
-  const [redeemPoints, setRedeemPoints] = useState<number>(bill.membershipDiscountPoints || 0);
+  // Sync activeBillId if prop bill changes
+  useEffect(() => {
+    setActiveBillId(bill.id);
+    setPayments([]);
+    setCashReceived('');
+    setCardRef('');
+    setTransferRef('');
+    setItemSplits({});
+    setSplitMode('single');
+  }, [bill.id]);
 
   // Payments list (supporting mixed payments!)
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
@@ -72,38 +77,36 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
     return def ? def.id : qrImages[0]?.id || '';
   });
 
-  // Split mode: 'single' | 'equal'
-  const [splitMode, setSplitMode] = useState<'single' | 'equal'>('single');
+  // Split mode: 'single' | 'equal' | 'items'
+  const [splitMode, setSplitMode] = useState<'single' | 'equal' | 'items'>('single');
   const [splitPersons, setSplitPersons] = useState<number>(2);
+  const [itemSplits, setItemSplits] = useState<Record<string, number>>({});
 
   // Completion state
   const [completedBill, setCompletedBill] = useState<Bill | null>(null);
 
   // Calculate live amount due
   const totalPaidSoFar = payments.reduce((sum, p) => sum + p.amount, 0);
-  const remainingDue = Math.max(0, Math.round((bill.grandTotal - totalPaidSoFar) * 100) / 100);
+  const remainingDue = Math.max(0, Math.round((activeBill.grandTotal - totalPaidSoFar) * 100) / 100);
 
-  const matchedMember = memberPhone ? findMemberByPhone(memberPhone) : undefined;
+  // Related open bills for this table
+  const tableOpenBills = bills.filter(
+    (b) => b.tableId && b.tableId === activeBill.tableId && b.status === 'open'
+  );
 
-  // Handle applying discount
-  const handleApplyDiscount = (type: 'percentage' | 'fixed', val: number) => {
-    applyBillDiscount(bill.id, type, val);
-  };
+  // Active valid items in this bill
+  const validItems = activeBill.items.filter((i) => i.status !== 'voided');
 
-  const handleApplyMemberPoints = () => {
-    if (memberPhone && redeemPoints > 0) {
-      applyMembershipDiscount(bill.id, memberPhone, redeemPoints);
-    }
-  };
+  const totalItemsCount = validItems.reduce((sum, i) => sum + i.quantity, 0);
 
-  // Quick banknote buttons
-  const banknotes = [20, 50, 100, 500, 1000];
+  const splitSelectedCount = Object.values(itemSplits).reduce((sum, q) => sum + q, 0);
 
-  const handleQuickCash = (amount: number) => {
-    setCashReceived(String(amount));
-  };
+  const splitSelectedTotal = validItems.reduce(
+    (sum, item) => sum + item.price * (itemSplits[item.id] || 0),
+    0
+  );
 
-  // Add payment to list
+  // Add partial payment to list
   const handleAddPayment = () => {
     soundService.playTap();
 
@@ -158,7 +161,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
 
   // Complete entire bill
   const handleFinalize = () => {
-    const check = canPay(bill);
+    const check = canPay(activeBill);
     if (!check.allowed) {
       setFinalizeError(
         check.reason === 'empty'
@@ -172,17 +175,97 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
     const finalPayments = payments.length > 0 ? payments : [
       {
         method: activeMethod,
-        amount: bill.grandTotal,
-        receivedAmount: activeMethod === 'cash' ? (parseFloat(cashReceived) || bill.grandTotal) : undefined,
-        change: activeMethod === 'cash' ? Math.max(0, (parseFloat(cashReceived) || bill.grandTotal) - bill.grandTotal) : 0,
+        amount: activeBill.grandTotal,
+        receivedAmount: activeMethod === 'cash' ? (parseFloat(cashReceived) || activeBill.grandTotal) : undefined,
+        change: activeMethod === 'cash' ? Math.max(0, (parseFloat(cashReceived) || activeBill.grandTotal) - activeBill.grandTotal) : 0,
         ref: activeMethod === 'card' ? cardRef : activeMethod === 'qr' ? 'QR-PAID' : undefined,
         qrImageId: activeMethod === 'qr' ? selectedQrId : undefined,
       } as PaymentRecord
     ];
 
-    const result = completeBillPayment(bill.id, finalPayments);
+    const result = completeBillPayment(activeBill.id, finalPayments);
     if (result.success) {
       setCompletedBill(result.bill);
+    }
+  };
+
+  // Handle Calculator Numpad key press
+  const handleNumpadPress = (key: string) => {
+    soundService.playTap();
+    if (key === 'C') {
+      setCashReceived('');
+    } else if (key === 'backspace') {
+      setCashReceived((prev) => (prev.length > 0 ? prev.slice(0, -1) : ''));
+    } else if (key === 'exact') {
+      setCashReceived(String(remainingDue));
+    } else if (key === '+100') {
+      const current = parseFloat(cashReceived) || 0;
+      setCashReceived(String(current + 100));
+    } else if (key === '.') {
+      if (!cashReceived) {
+        setCashReceived('0.');
+      } else if (!cashReceived.includes('.')) {
+        setCashReceived((prev) => prev + '.');
+      }
+    } else {
+      // Numbers: 0-9, 00
+      if (cashReceived === '0' && key !== '.') {
+        setCashReceived(key);
+      } else {
+        setCashReceived((prev) => prev + key);
+      }
+    }
+  };
+
+  // Handle Item Split Quantity Stepper
+  const handleItemSplitChange = (itemId: string, maxQty: number, delta: number) => {
+    soundService.playTap();
+    setItemSplits((prev) => {
+      const current = prev[itemId] || 0;
+      const next = Math.max(0, Math.min(maxQty, current + delta));
+      if (next === 0) {
+        const copy = { ...prev };
+        delete copy[itemId];
+        return copy;
+      }
+      return { ...prev, [itemId]: next };
+    });
+  };
+
+  // Set all of an item to split
+  const handleItemSplitAll = (itemId: string, maxQty: number) => {
+    soundService.playTap();
+    setItemSplits((prev) => {
+      if (prev[itemId] === maxQty) {
+        const copy = { ...prev };
+        delete copy[itemId];
+        return copy;
+      }
+      return { ...prev, [itemId]: maxQty };
+    });
+  };
+
+  // Execute Split Bill into a new Bill
+  const handleConfirmSplitBill = () => {
+    if (splitSelectedCount === 0) return;
+    if (splitSelectedCount >= totalItemsCount) {
+      alert('ไม่สามารถแยกรายการทั้งหมดได้ (กรุณาใช้ปุ่ม "จ่ายรวม" สำหรับการชำระทั้งบิล)');
+      return;
+    }
+
+    const payload = Object.entries(itemSplits)
+      .filter(([_, qty]) => qty > 0)
+      .map(([itemId, quantity]) => ({ itemId, quantity }));
+
+    const res = splitBill(activeBill.id, payload);
+    if (res) {
+      soundService.playReadyChime();
+      setItemSplits({});
+      setSplitMode('single');
+      // Automatically switch to the newly created bill to pay!
+      setActiveBillId(res.newBill.id);
+      setPayments([]);
+      setCashReceived('');
     }
   };
 
@@ -193,7 +276,13 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title={completedBill ? 'ชำระเงินสำเร็จ' : `ชำระเงินบิล: ${bill.billNumber} (${bill.tableName ? `โต๊ะ ${bill.tableName}` : 'ออเดอร์'})`}
+      title={
+        completedBill
+          ? 'ชำระเงินสำเร็จ'
+          : `ชำระเงินบิล: ${activeBill.billNumber} (${
+              activeBill.tableName ? `โต๊ะ ${activeBill.tableName}` : 'ออเดอร์'
+            })`
+      }
       maxWidth="max-w-2xl"
     >
       {completedBill ? (
@@ -215,35 +304,67 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
             <button
               type="button"
               onClick={onClose}
-              className="px-6 py-2.5 rounded-xl bg-slate-900 text-white dark:bg-white dark:text-slate-900 font-bold text-sm"
+              className="px-6 py-2.5 rounded-xl bg-slate-900 text-white dark:bg-white dark:text-slate-900 font-bold text-sm cursor-pointer"
             >
               เสร็จสิ้น / ปิดหน้าต่าง
             </button>
           </div>
         </div>
       ) : (
-        <div className="space-y-5">
+        <div className="space-y-4">
+          {/* Multi-bill switcher tabs if multiple open bills exist for this table */}
+          {tableOpenBills.length > 1 && (
+            <div className="flex items-center gap-2 overflow-x-auto pb-1 border-b border-slate-200 dark:border-slate-800">
+              <span className="text-xs text-slate-500 font-semibold whitespace-nowrap">
+                บิลแยกในโต๊ะนี้ ({tableOpenBills.length}):
+              </span>
+              {tableOpenBills.map((b, index) => {
+                const isActive = b.id === activeBill.id;
+                return (
+                  <button
+                    key={b.id}
+                    type="button"
+                    onClick={() => {
+                      setActiveBillId(b.id);
+                      setPayments([]);
+                      setCashReceived('');
+                      setItemSplits({});
+                      setSplitMode('single');
+                    }}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition cursor-pointer ${
+                      isActive
+                        ? 'bg-amber-500 text-slate-950 shadow-sm'
+                        : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+                    }`}
+                  >
+                    บิล {index + 1}: {b.billNumber} ({formatAmount(b.grandTotal)})
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
           {/* Top Bar: Grand Total & Split selector */}
           <div className="p-4 rounded-2xl bg-slate-900 text-white flex flex-wrap items-center justify-between gap-4">
             <div>
               <div className="text-xs text-slate-400">ยอดที่ต้องชำระทั้งหมด</div>
               <div className="text-3xl font-extrabold font-mono tabular-nums text-amber-400">
-                {formatAmount(bill.grandTotal)}
+                {formatAmount(activeBill.grandTotal)}
               </div>
-              {remainingDue > 0 && remainingDue < bill.grandTotal && (
+              {remainingDue > 0 && remainingDue < activeBill.grandTotal && (
                 <div className="text-xs text-rose-400 font-mono mt-1">
                   ยอดคงเหลือที่ต้องจ่าย: {formatAmount(remainingDue)}
                 </div>
               )}
             </div>
 
-            {/* Split options */}
-            <div className="flex items-center gap-2 bg-slate-800 p-1.5 rounded-xl text-xs">
+            {/* Split options: จ่ายรวม, หารเท่ากัน, จ่ายแยก */}
+            <div className="flex items-center gap-1.5 bg-slate-800 p-1.5 rounded-xl text-xs">
               <button
                 type="button"
                 onClick={() => setSplitMode('single')}
                 className={`px-3 py-1.5 rounded-lg font-medium transition cursor-pointer ${
-                  splitMode === 'single' ? 'bg-amber-500 text-slate-950 font-bold' : 'text-slate-300'
+                  splitMode === 'single' ? 'bg-amber-500 text-slate-950 font-bold' : 'text-slate-300 hover:text-white'
                 }`}
               >
                 จ่ายรวม
@@ -252,16 +373,26 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
                 type="button"
                 onClick={() => setSplitMode('equal')}
                 className={`px-3 py-1.5 rounded-lg font-medium transition cursor-pointer flex items-center gap-1 ${
-                  splitMode === 'equal' ? 'bg-amber-500 text-slate-950 font-bold' : 'text-slate-300'
+                  splitMode === 'equal' ? 'bg-amber-500 text-slate-950 font-bold' : 'text-slate-300 hover:text-white'
+                }`}
+              >
+                <Users className="w-3.5 h-3.5" />
+                <span>หารเท่ากัน</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setSplitMode('items')}
+                className={`px-3 py-1.5 rounded-lg font-medium transition cursor-pointer flex items-center gap-1 ${
+                  splitMode === 'items' ? 'bg-amber-500 text-slate-950 font-bold' : 'text-slate-300 hover:text-white'
                 }`}
               >
                 <Split className="w-3.5 h-3.5" />
-                <span>หารเท่ากัน</span>
+                <span>จ่ายแยก</span>
               </button>
             </div>
           </div>
 
-          {/* Equal split helper */}
+          {/* 1. Equal split helper */}
           {splitMode === 'equal' && (
             <div className="p-3.5 rounded-xl bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900 flex items-center justify-between text-xs">
               <div className="flex items-center gap-2">
@@ -281,117 +412,146 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
               <div className="text-right">
                 <span className="text-slate-500">คนละ: </span>
                 <span className="text-base font-bold font-mono text-blue-700 dark:text-blue-400">
-                  {formatAmount(Math.ceil(bill.grandTotal / splitPersons))}
+                  {formatAmount(Math.ceil(activeBill.grandTotal / splitPersons))}
                 </span>
               </div>
             </div>
           )}
 
-          {/* Discounts & Member Point Redemption */}
-          <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-800 space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                <span>ส่วนลด & สมาชิกสะสมแต้ม</span>
-              </span>
-
-              {/* Discount Segment */}
-              <div className="flex items-center gap-1 text-xs">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setDiscountType('none');
-                    handleApplyDiscount('fixed', 0);
-                  }}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-medium cursor-pointer ${
-                    discountType === 'none' ? 'bg-slate-200 dark:bg-slate-700 font-bold' : 'text-slate-500'
-                  }`}
-                >
-                  ไม่มี
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setDiscountType('percentage');
-                    handleApplyDiscount('percentage', discountValue || 10);
-                  }}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-medium cursor-pointer ${
-                    discountType === 'percentage' ? 'bg-amber-500 text-slate-950 font-bold' : 'text-slate-500'
-                  }`}
-                >
-                  ลด %
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setDiscountType('fixed');
-                    handleApplyDiscount('fixed', discountValue || 50);
-                  }}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-medium cursor-pointer ${
-                    discountType === 'fixed' ? 'bg-amber-500 text-slate-950 font-bold' : 'text-slate-500'
-                  }`}
-                >
-                  ลดบาท
-                </button>
-              </div>
-            </div>
-
-            {discountType !== 'none' && (
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-slate-500">ระบุจำนวนลด:</span>
-                <input
-                  type="number"
-                  min={0}
-                  value={discountValue}
-                  onChange={(e) => {
-                    const val = Number(e.target.value);
-                    setDiscountValue(val);
-                    handleApplyDiscount(discountType, val);
-                  }}
-                  className="w-24 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-bold font-mono"
-                />
-                <span className="text-xs font-bold text-rose-600">
-                  (-{formatAmount(bill.discountAmount)})
-                </span>
-              </div>
-            )}
-
-            {/* Member phone input */}
-            <div className="pt-2 border-t border-slate-200 dark:border-slate-700 flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2 flex-1 min-w-[200px]">
-                <input
-                  type="tel"
-                  placeholder="เบอร์โทรสมาชิก (เช่น 0812345678)"
-                  value={memberPhone}
-                  onChange={(e) => setMemberPhone(e.target.value)}
-                  className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs flex-1"
-                />
-              </div>
-
-              {matchedMember ? (
-                <div className="text-xs flex items-center gap-2">
-                  <span className="text-slate-600 dark:text-slate-300">
-                    {matchedMember.name} (มี {matchedMember.points} แต้ม)
-                  </span>
-                  {matchedMember.points > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const pts = Math.min(matchedMember.points, Math.floor(bill.grandTotal));
-                        setRedeemPoints(pts);
-                        applyMembershipDiscount(bill.id, memberPhone, pts);
-                      }}
-                      className="px-2.5 py-1 rounded-lg bg-emerald-600 text-white text-[11px] font-bold cursor-pointer"
-                    >
-                      ใช้แต้มลด {matchedMember.points}
-                    </button>
-                  )}
+          {/* 2. Items split interface (แยกรายการออกเป็นบิลใหม่) */}
+          {splitMode === 'items' && (
+            <div className="p-4 rounded-2xl bg-amber-50/60 dark:bg-amber-950/20 border-2 border-amber-300 dark:border-amber-700/60 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h5 className="text-xs font-bold text-amber-900 dark:text-amber-200 flex items-center gap-1.5">
+                    <Split className="w-4 h-4 text-amber-600" />
+                    <span>เลือกรายการอาหารเพื่อแยกบิล</span>
+                  </h5>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                    ปรับจำนวนเพื่อแยกรายการออกไปเป็นอีก 1 บิล สำหรับลูกค้าที่จ่ายแยก
+                  </p>
                 </div>
-              ) : memberPhone.length >= 9 ? (
-                <span className="text-[11px] text-slate-400">ไม่พบสมาชิกเบอร์นี้</span>
-              ) : null}
+                {splitSelectedCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setItemSplits({})}
+                    className="text-xs text-rose-600 hover:underline cursor-pointer"
+                  >
+                    ล้างที่เลือก
+                  </button>
+                )}
+              </div>
+
+              {/* Items List to Split */}
+              <div className="max-h-56 overflow-y-auto space-y-2 pr-1">
+                {validItems.map((item) => {
+                  const splitQty = itemSplits[item.id] || 0;
+                  const isSelected = splitQty > 0;
+                  return (
+                    <div
+                      key={item.id}
+                      className={`p-2.5 rounded-xl border transition flex items-center justify-between gap-3 ${
+                        isSelected
+                          ? 'bg-white dark:bg-slate-900 border-amber-400 dark:border-amber-600 shadow-xs'
+                          : 'bg-white/70 dark:bg-slate-900/50 border-slate-200 dark:border-slate-800'
+                      }`}
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-xs text-slate-800 dark:text-slate-100 truncate">
+                            {getName(item)}
+                          </span>
+                          <span className="text-[11px] text-slate-400">
+                            (สั่งไว้ x {item.quantity})
+                          </span>
+                        </div>
+                        {item.selectedOptions && item.selectedOptions.length > 0 && (
+                          <div className="text-[10px] text-slate-500 truncate mt-0.5">
+                            {item.selectedOptions.map((o) => o.choiceName).join(', ')}
+                          </div>
+                        )}
+                        <div className="text-xs font-mono font-semibold text-slate-600 dark:text-slate-300 mt-0.5">
+                          {formatAmount(item.price)} / รายการ
+                        </div>
+                      </div>
+
+                      {/* Stepper Controls */}
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => handleItemSplitChange(item.id, item.quantity, -1)}
+                          disabled={splitQty <= 0}
+                          className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-800 disabled:opacity-30 border border-slate-200 dark:border-slate-700 flex items-center justify-center font-bold text-xs cursor-pointer hover:bg-slate-200"
+                        >
+                          <Minus className="w-3.5 h-3.5" />
+                        </button>
+                        <span className="w-8 text-center font-mono font-bold text-sm">
+                          {splitQty}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleItemSplitChange(item.id, item.quantity, 1)}
+                          disabled={splitQty >= item.quantity}
+                          className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-800 disabled:opacity-30 border border-slate-200 dark:border-slate-700 flex items-center justify-center font-bold text-xs cursor-pointer hover:bg-slate-200"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleItemSplitAll(item.id, item.quantity)}
+                          className={`px-2 py-1 rounded-lg text-[10px] font-bold cursor-pointer transition ${
+                            splitQty === item.quantity
+                              ? 'bg-amber-500 text-slate-950'
+                              : 'bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-300'
+                          }`}
+                        >
+                          ทั้งหมด
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Split Summary & Confirmation CTA */}
+              <div className="p-3 bg-amber-100/70 dark:bg-amber-950/40 rounded-xl flex items-center justify-between gap-3 text-xs">
+                <div>
+                  <span className="text-slate-600 dark:text-slate-300">
+                    เลือกแยก:{' '}
+                    <strong className="text-slate-900 dark:text-white font-mono">
+                      {splitSelectedCount}
+                    </strong>{' '}
+                    รายการ
+                  </span>
+                  <div className="text-sm font-extrabold font-mono text-amber-700 dark:text-amber-400">
+                    ยอดแยกบิลใหม่: {formatAmount(splitSelectedTotal)}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setItemSplits({});
+                      setSplitMode('single');
+                    }}
+                    className="px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 cursor-pointer"
+                  >
+                    ยกเลิก
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleConfirmSplitBill}
+                    disabled={splitSelectedCount === 0 || splitSelectedCount >= totalItemsCount}
+                    className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 disabled:opacity-40 text-slate-950 font-bold text-xs shadow-sm transition cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    <span>ยืนยันแยกบิล ({formatAmount(splitSelectedTotal)})</span>
+                  </button>
+                </div>
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Payment Method Selector Tabs */}
           <div>
@@ -416,7 +576,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
                     className={`p-3 rounded-xl border flex flex-col items-center justify-center gap-1.5 transition cursor-pointer select-none ${
                       isSelected
                         ? 'bg-amber-500 text-slate-950 font-bold border-amber-600 shadow-sm scale-102'
-                        : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-50'
+                        : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-750'
                     }`}
                   >
                     <Icon className="w-5 h-5" />
@@ -429,45 +589,112 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
 
           {/* Method Details Input Area */}
           <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200/80 dark:border-slate-700">
-            {/* 1. Cash Method */}
+            {/* 1. Cash Method with Calculator Numpad */}
             {activeMethod === 'cash' && (
-              <div className="space-y-4">
+              <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">
                     ยอดเงินสดที่รับมา (บาท):
                   </span>
                   <input
-                    type="number"
-                    step="any"
+                    type="text"
+                    readOnly
                     value={cashReceived}
-                    onChange={(e) => setCashReceived(e.target.value)}
                     placeholder={String(remainingDue)}
-                    className="w-40 px-3.5 py-2 text-right rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-lg font-bold font-mono focus:ring-2 focus:ring-amber-500"
+                    className="w-48 px-3.5 py-2.5 text-right rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xl font-bold font-mono text-slate-900 dark:text-white focus:outline-none"
                   />
                 </div>
 
-                {/* Quick banknotes */}
-                <div>
-                  <div className="text-[11px] text-slate-400 mb-1.5">ปุ่มด่วนตามมูลค่าธนบัตร:</div>
-                  <div className="flex flex-wrap gap-2">
-                    {banknotes.map((note) => (
-                      <button
-                        key={note}
-                        type="button"
-                        onClick={() => handleQuickCash(note)}
-                        className="px-3.5 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 font-bold font-mono text-sm hover:bg-amber-50 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200 cursor-pointer"
-                      >
-                        +{note}
-                      </button>
-                    ))}
+                {/* Calculator Numpad */}
+                <div className="grid grid-cols-4 gap-2 pt-1 max-w-sm mx-auto">
+                  {/* Row 1 */}
+                  {['7', '8', '9'].map((num) => (
                     <button
+                      key={num}
                       type="button"
-                      onClick={() => handleQuickCash(remainingDue)}
-                      className="px-3.5 py-2 rounded-xl bg-amber-500/20 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700 font-bold text-xs cursor-pointer"
+                      onClick={() => handleNumpadPress(num)}
+                      className="py-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-lg font-bold font-mono text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 active:scale-95 transition cursor-pointer shadow-xs"
                     >
-                      พอดี ({formatAmount(remainingDue, false)})
+                      {num}
                     </button>
-                  </div>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => handleNumpadPress('C')}
+                    className="py-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 text-lg font-bold font-mono text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/60 active:scale-95 transition cursor-pointer"
+                  >
+                    C
+                  </button>
+
+                  {/* Row 2 */}
+                  {['4', '5', '6'].map((num) => (
+                    <button
+                      key={num}
+                      type="button"
+                      onClick={() => handleNumpadPress(num)}
+                      className="py-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-lg font-bold font-mono text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 active:scale-95 transition cursor-pointer shadow-xs"
+                    >
+                      {num}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => handleNumpadPress('backspace')}
+                    className="py-3 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-lg font-bold font-mono text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 active:scale-95 transition cursor-pointer flex items-center justify-center"
+                    title="ลบตัวเลข"
+                  >
+                    ⌫
+                  </button>
+
+                  {/* Row 3 */}
+                  {['1', '2', '3'].map((num) => (
+                    <button
+                      key={num}
+                      type="button"
+                      onClick={() => handleNumpadPress(num)}
+                      className="py-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-lg font-bold font-mono text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 active:scale-95 transition cursor-pointer shadow-xs"
+                    >
+                      {num}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => handleNumpadPress('exact')}
+                    className="py-2.5 px-1 rounded-xl bg-amber-500/20 dark:bg-amber-500/30 border border-amber-300 dark:border-amber-700 text-xs font-bold text-amber-900 dark:text-amber-300 hover:bg-amber-500/30 active:scale-95 transition cursor-pointer flex flex-col items-center justify-center leading-tight"
+                  >
+                    <span>พอดี</span>
+                    <span className="text-[10px] font-mono">({formatAmount(remainingDue, false)})</span>
+                  </button>
+
+                  {/* Row 4 */}
+                  <button
+                    type="button"
+                    onClick={() => handleNumpadPress('0')}
+                    className="py-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-lg font-bold font-mono text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 active:scale-95 transition cursor-pointer shadow-xs"
+                  >
+                    0
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleNumpadPress('00')}
+                    className="py-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-lg font-bold font-mono text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 active:scale-95 transition cursor-pointer shadow-xs"
+                  >
+                    00
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleNumpadPress('.')}
+                    className="py-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-lg font-bold font-mono text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 active:scale-95 transition cursor-pointer shadow-xs"
+                  >
+                    .
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleNumpadPress('+100')}
+                    className="py-3 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm font-bold font-mono text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 active:scale-95 transition cursor-pointer"
+                  >
+                    +100
+                  </button>
                 </div>
 
                 {/* Change calculation */}
@@ -484,7 +711,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
               </div>
             )}
 
-            {/* 2. QR Payment: DISPLAY UPLOADED QR IMAGE LARGE AND CLEAR WITH AMOUNT */}
+            {/* 2. QR Payment */}
             {activeMethod === 'qr' && (
               <div className="space-y-4 flex flex-col items-center text-center">
                 {qrImages.length > 1 && (
@@ -601,7 +828,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
                     <button
                       type="button"
                       onClick={() => setPayments((prev) => prev.filter((_, i) => i !== idx))}
-                      className="text-rose-500 hover:text-rose-700 p-1"
+                      className="text-rose-500 hover:text-rose-700 p-1 cursor-pointer"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
@@ -622,7 +849,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2.5 text-xs font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl"
+              className="px-4 py-2.5 text-xs font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl cursor-pointer"
             >
               ยกเลิก
             </button>
@@ -633,7 +860,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
                 <button
                   type="button"
                   onClick={handleAddPayment}
-                  className="px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-1"
+                  className="px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-1 cursor-pointer"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   <span>เพิ่มยอดวิธีนี้</span>
