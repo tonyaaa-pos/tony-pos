@@ -63,13 +63,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
       roles: ['owner', 'cashier'],
     },
     {
-      id: 'reports',
-      label: t('nav_reports'),
-      subtitle: t('nav_reports_sub'),
-      icon: BarChart3,
-      roles: ['owner', 'cashier'],
-    },
-    {
       id: 'settings',
       label: t('nav_settings'),
       subtitle: t('nav_settings_sub'),

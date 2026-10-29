@@ -131,12 +131,18 @@ export interface OrderItem {
 }
 
 export type OrderType = 'dine_in' | 'takeaway' | 'delivery';
+export type DeliveryPlatform = 'grab' | 'lineman' | 'shopeefood' | 'robinhood' | 'direct' | 'other';
 
 export interface DeliveryInfo {
   customerName: string;
   phone: string;
   address: string;
   driverNote?: string;
+  platform?: DeliveryPlatform;
+  platformOrderId?: string;
+  gpRate?: number; // GP commission % (e.g. 30 or 32.1)
+  gpAmount?: number; // GP fee in Baht deducted by platform
+  packagingCost?: number; // Packaging cost in Baht
 }
 
 export type PaymentMethod = 'cash' | 'qr' | 'card' | 'transfer' | 'ewallet';
@@ -158,6 +164,10 @@ export interface Bill {
   tableName?: string;
   guestCount?: number;
   deliveryInfo?: DeliveryInfo;
+  deliveryPlatform?: DeliveryPlatform;
+  deliveryGpRate?: number;
+  deliveryGpAmount?: number;
+  packagingCost?: number;
   items: OrderItem[];
   status: 'open' | 'paid' | 'voided';
   createdAt: string;

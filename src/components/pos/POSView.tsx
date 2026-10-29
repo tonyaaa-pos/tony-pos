@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { usePOS } from '../../context/POSContext';
 import { useLanguage } from '../../context/LanguageContext';
-import { MenuItem, OrderItem, OrderType, DeliveryInfo } from '../../types';
+import { MenuItem, OrderItem, OrderType, DeliveryInfo, DeliveryPlatform } from '../../types';
 import {
   Trash2,
   CheckCircle,
@@ -14,6 +14,8 @@ import {
   User,
   ShoppingBag,
   Truck,
+  Bike,
+  Package,
   Search,
   GripVertical,
   RotateCcw,
@@ -98,6 +100,7 @@ export const POSView: React.FC = () => {
     setActiveBillId,
     setActiveNav,
     createBillForOrder,
+    updateBillDeliveryInfo,
     assignTableToBill,
     addItemsToBill,
     removeUnsentItemFromBill,
@@ -123,8 +126,12 @@ export const POSView: React.FC = () => {
   const [payBlockReason, setPayBlockReason] = useState<PayBlockReason>('unsaved_items');
   const [showTableSelectModal, setShowTableSelectModal] = useState(false);
 
-  // Delivery info edit mode
+  // Delivery platform info edit mode
   const [showDeliveryForm, setShowDeliveryForm] = useState(false);
+  const [deliveryPlatform, setDeliveryPlatform] = useState<DeliveryPlatform>('grab');
+  const [deliveryPlatformOrderId, setDeliveryPlatformOrderId] = useState('');
+  const [deliveryGpRate, setDeliveryGpRate] = useState<number>(30);
+  const [deliveryPackagingCost, setDeliveryPackagingCost] = useState<number>(15);
   const [deliveryName, setDeliveryName] = useState('');
   const [deliveryPhone, setDeliveryPhone] = useState('');
   const [deliveryAddress, setDeliveryAddress] = useState('');
@@ -190,16 +197,47 @@ export const POSView: React.FC = () => {
   // Current order type
   const orderType: OrderType = activeBill ? activeBill.orderType : 'dine_in';
 
+  const handleOpenDeliveryModal = () => {
+    if (activeBill?.deliveryInfo) {
+      setDeliveryPlatform(activeBill.deliveryInfo.platform || 'grab');
+      setDeliveryPlatformOrderId(activeBill.deliveryInfo.platformOrderId || '');
+      setDeliveryGpRate(activeBill.deliveryInfo.gpRate ?? (activeBill.deliveryGpRate ?? 30));
+      setDeliveryPackagingCost(activeBill.deliveryInfo.packagingCost ?? (activeBill.packagingCost ?? 15));
+      setDeliveryName(activeBill.deliveryInfo.customerName || '');
+      setDeliveryPhone(activeBill.deliveryInfo.phone || '');
+      setDeliveryAddress(activeBill.deliveryInfo.address || '');
+    } else {
+      setDeliveryPlatform('grab');
+      setDeliveryPlatformOrderId('');
+      setDeliveryGpRate(30);
+      setDeliveryPackagingCost(15);
+      setDeliveryName('');
+      setDeliveryPhone('');
+      setDeliveryAddress('');
+    }
+    setShowDeliveryForm(true);
+  };
+
   const handleConfirmDelivery = (e: React.FormEvent) => {
     e.preventDefault();
     const info: DeliveryInfo = {
-      customerName: deliveryName.trim(),
+      platform: deliveryPlatform,
+      platformOrderId: deliveryPlatformOrderId.trim(),
+      gpRate: Number(deliveryGpRate) || 0,
+      packagingCost: Number(deliveryPackagingCost) || 0,
+      customerName: deliveryName.trim() || `${deliveryPlatform.toUpperCase()} Customer`,
       phone: deliveryPhone.trim(),
       address: deliveryAddress.trim(),
     };
-    const newBill = createBillForOrder('delivery', undefined, 1, info);
-    setActiveBillId(newBill.id);
+
+    if (activeBill) {
+      updateBillDeliveryInfo(activeBill.id, info);
+    } else {
+      const newBill = createBillForOrder('delivery', undefined, 1, info);
+      setActiveBillId(newBill.id);
+    }
     setShowDeliveryForm(false);
+    soundService.playSuccessTap();
   };
 
   // Card click: opens food-type detail modal directly
@@ -599,7 +637,7 @@ export const POSView: React.FC = () => {
                 </span>
               )}
             </div>
-            <div className="text-xs text-slate-400">
+            <div className="text-xs text-slate-400 mt-0.5">
               {activeBill?.guestCount
                 ? t('cart_guests_count', { count: activeBill.guestCount })
                 : activeBill?.deliveryInfo
@@ -608,6 +646,34 @@ export const POSView: React.FC = () => {
                     phone: activeBill.deliveryInfo.phone,
                   })
                 : t('order_type_dine_in')}
+            </div>
+
+            <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+              {activeBill?.orderType === 'delivery' ? (
+                <button
+                  type="button"
+                  onClick={handleOpenDeliveryModal}
+                  className="px-2 py-0.5 rounded-lg bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 font-bold text-[10px] flex items-center gap-1 cursor-pointer hover:bg-emerald-200 transition"
+                  title="คลิกเพื่อแก้ไขข้อมูลเดลิเวอรี / GP"
+                >
+                  <Bike className="w-3 h-3" />
+                  <span>
+                    {activeBill.deliveryPlatform ? activeBill.deliveryPlatform.toUpperCase() : 'DELIVERY'}
+                    {activeBill.deliveryInfo?.platformOrderId ? ` #${activeBill.deliveryInfo.platformOrderId}` : ''}
+                    {' '}(GP {activeBill.deliveryGpRate ?? 30}%)
+                  </span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleOpenDeliveryModal}
+                  className="px-2 py-0.5 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-500 hover:text-amber-600 hover:border-amber-400 text-[10px] font-medium flex items-center gap-1 cursor-pointer transition"
+                  title="เปลี่ยนบิลนี้เป็นออเดอร์เดลิเวอรี (Grab / LINE MAN)"
+                >
+                  <Bike className="w-3 h-3" />
+                  <span>🛵 สั่งเดลิเวอรี (Grab/LINE MAN)</span>
+                </button>
+              )}
             </div>
           </div>
 
@@ -767,6 +833,15 @@ export const POSView: React.FC = () => {
                 </span>
                 <span className="font-mono tabular-nums">
                   {formatBaht(activeBill?.vatAmount || 0)}
+                </span>
+              </div>
+            )}
+
+            {Boolean(activeBill?.deliveryGpAmount) && (
+              <div className="flex justify-between text-rose-500 text-[11px]">
+                <span>หัก GP เดลิเวอรี ({activeBill?.deliveryGpRate}%)</span>
+                <span className="font-mono tabular-nums">
+                  -{formatBaht(activeBill?.deliveryGpAmount || 0)}
                 </span>
               </div>
             )}
@@ -938,6 +1013,139 @@ export const POSView: React.FC = () => {
             setVoidingItem(null);
           }}
         />
+      )}
+
+      {/* Delivery Platform & Order Info Modal */}
+      {showDeliveryForm && (
+        <Modal
+          isOpen={true}
+          onClose={() => setShowDeliveryForm(false)}
+          title="🛵 บันทึกข้อมูลออเดอร์เดลิเวอรี & GP (Delivery Order)"
+          maxWidth="max-w-md"
+        >
+          <form onSubmit={handleConfirmDelivery} className="space-y-4 text-xs">
+            <div>
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1.5">
+                เลือกแพลตฟอร์มเดลิเวอรี *
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { id: 'grab', label: 'GrabFood', icon: '🟢', defaultGp: 30 },
+                  { id: 'lineman', label: 'LINE MAN', icon: '🟢', defaultGp: 30 },
+                  { id: 'shopeefood', label: 'ShopeeFood', icon: '🟠', defaultGp: 30 },
+                  { id: 'robinhood', label: 'Robinhood', icon: '🟣', defaultGp: 0 },
+                  { id: 'direct', label: 'ร้านส่งเอง', icon: '🛵', defaultGp: 0 },
+                  { id: 'other', label: 'อื่นๆ', icon: '📦', defaultGp: 30 },
+                ].map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => {
+                      setDeliveryPlatform(p.id as DeliveryPlatform);
+                      setDeliveryGpRate(p.defaultGp);
+                    }}
+                    className={`p-2.5 rounded-xl border flex flex-col items-center justify-center gap-1 transition cursor-pointer font-bold ${
+                      deliveryPlatform === p.id
+                        ? 'bg-amber-500 text-slate-950 border-amber-600 ring-2 ring-amber-400/50 shadow-xs'
+                        : 'bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-amber-400'
+                    }`}
+                  >
+                    <span className="text-base">{p.icon}</span>
+                    <span className="text-xs">{p.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  รหัสออเดอร์บนแอป (Order ID)
+                </label>
+                <input
+                  type="text"
+                  placeholder="เช่น GF-9821, LM-402"
+                  value={deliveryPlatformOrderId}
+                  onChange={(e) => setDeliveryPlatformOrderId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-mono font-bold"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  อัตราหัก GP แพลตฟอร์ม (%)
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={deliveryGpRate}
+                  onChange={(e) => setDeliveryGpRate(Number(e.target.value))}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-mono font-bold"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                ต้นทุนกล่องและบรรจุภัณฑ์ (บาท)
+              </label>
+              <input
+                type="number"
+                min={0}
+                value={deliveryPackagingCost}
+                onChange={(e) => setDeliveryPackagingCost(Number(e.target.value))}
+                className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-mono font-bold"
+                placeholder="15"
+              />
+            </div>
+
+            <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <span className="text-slate-400 text-[11px] block">
+                ข้อมูลลูกค้าหรือไรเดอร์ (ไม่บังคับ):
+              </span>
+              <div className="grid grid-cols-2 gap-2">
+                <input
+                  type="text"
+                  placeholder="ชื่อลูกค้า / ไรเดอร์"
+                  value={deliveryName}
+                  onChange={(e) => setDeliveryName(e.target.value)}
+                  className="w-full px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs"
+                />
+                <input
+                  type="tel"
+                  placeholder="เบอร์โทรติดต่อ"
+                  value={deliveryPhone}
+                  onChange={(e) => setDeliveryPhone(e.target.value)}
+                  className="w-full px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-mono"
+                />
+              </div>
+              <input
+                type="text"
+                placeholder="ที่อยู่จัดส่ง / อาคาร / ซอย"
+                value={deliveryAddress}
+                onChange={(e) => setDeliveryAddress(e.target.value)}
+                className="w-full px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs"
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setShowDeliveryForm(false)}
+                className="px-4 py-2 rounded-xl text-slate-600 dark:text-slate-400 font-semibold cursor-pointer"
+              >
+                {t('cancel')}
+              </button>
+              <button
+                type="submit"
+                className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold shadow-xs cursor-pointer"
+              >
+                บันทึกออเดอร์เดลิเวอรี
+              </button>
+            </div>
+          </form>
+        </Modal>
       )}
     </div>
   );

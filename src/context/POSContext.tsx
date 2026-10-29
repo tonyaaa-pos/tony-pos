@@ -98,6 +98,7 @@ interface POSContextType {
   activeBill: Bill | null;
   setActiveBillId: (billId: string | null) => void;
   createBillForOrder: (orderType: OrderType, tableId?: string, guestCount?: number, deliveryInfo?: DeliveryInfo) => Bill;
+  updateBillDeliveryInfo: (billId: string, deliveryInfo: DeliveryInfo) => void;
   assignTableToBill: (billId: string, tableId: string) => void;
   addItemsToBill: (billId: string, items: OrderItem[]) => void;
   updateBillItemQuantity: (billId: string, itemId: string, newQty: number) => void;
@@ -551,12 +552,18 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     }
 
+    const deliveryGpAmount =
+      bill.deliveryGpRate && bill.deliveryGpRate > 0
+        ? Math.round((subtotal * (bill.deliveryGpRate / 100)) * 100) / 100
+        : (bill.deliveryGpAmount || 0);
+
     return {
       ...bill,
       subtotal,
       discountAmount,
       serviceChargeAmount,
       vatAmount,
+      deliveryGpAmount,
       grandTotal: Math.round(grandTotal * 100) / 100,
     };
   }, []);
@@ -663,6 +670,10 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         tableName: assignedTable?.number,
         guestCount: guestCount || (assignedTable?.capacity || 2),
         deliveryInfo,
+        deliveryPlatform: deliveryInfo?.platform,
+        deliveryGpRate: deliveryInfo?.gpRate,
+        deliveryGpAmount: deliveryInfo?.gpAmount,
+        packagingCost: deliveryInfo?.packagingCost,
         items: [],
         status: 'open',
         createdAt: now.toISOString(),
@@ -746,6 +757,27 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       syncService.broadcast('DATA_RELOAD');
     },
     [tables]
+  );
+
+  const updateBillDeliveryInfo = useCallback(
+    (billId: string, deliveryInfo: DeliveryInfo) => {
+      setBills((prev) =>
+        prev.map((b) => {
+          if (b.id !== billId) return b;
+          const updated: Bill = {
+            ...b,
+            orderType: 'delivery',
+            deliveryInfo,
+            deliveryPlatform: deliveryInfo.platform,
+            deliveryGpRate: deliveryInfo.gpRate,
+            deliveryGpAmount: deliveryInfo.gpAmount,
+            packagingCost: deliveryInfo.packagingCost,
+          };
+          return recalculateBill(updated, settings);
+        })
+      );
+    },
+    [recalculateBill, settings]
   );
 
   const addItemsToBill = useCallback((billId: string, newItems: OrderItem[]) => {
@@ -1734,6 +1766,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     activeBill,
     setActiveBillId,
     createBillForOrder,
+    updateBillDeliveryInfo,
     assignTableToBill,
     addItemsToBill,
     updateBillItemQuantity,

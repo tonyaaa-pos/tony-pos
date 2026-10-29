@@ -35,9 +35,8 @@ const MainLayout: React.FC = () => {
       case 'menu':
         return <MenuManagementView />;
       case 'dashboard':
-        return <DashboardView />;
       case 'reports':
-        return <ReportsView />;
+        return <DashboardView />;
       case 'settings':
         return <SettingsView />;
       default:
