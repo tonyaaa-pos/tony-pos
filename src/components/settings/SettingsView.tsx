@@ -16,12 +16,21 @@ import {
   Save,
   RotateCcw,
   Download,
+  AlertCircle,
+  CheckCircle2,
+  FileText,
+  X,
+  ShieldCheck,
+  Package,
+  Layers,
+  Info,
 } from 'lucide-react';
 import { formatBaht } from '../../utils/formatters';
 import { compressImageFile } from '../../utils/imageCompressor';
 import { Modal } from '../common/Modal';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import { Table, User, TableShape, ChairStyle } from '../../types';
+import { soundService } from '../../utils/audio';
 
 export const SettingsView: React.FC = () => {
   const {
@@ -40,6 +49,10 @@ export const SettingsView: React.FC = () => {
     updateStaff,
     deleteStaff,
     members,
+    categories,
+    menuItems,
+    bills,
+    optionPresets,
     resetDemoData,
     exportDataJson,
     importDataJson,
@@ -90,6 +103,15 @@ export const SettingsView: React.FC = () => {
 
   // Reset confirmation
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+
+  // Restore & Backup states
+  const [showRestoreModal, setShowRestoreModal] = useState(false);
+  const [pendingRestoreData, setPendingRestoreData] = useState<any | null>(null);
+  const [pendingRestoreRaw, setPendingRestoreRaw] = useState<string>('');
+  const [pendingFileName, setPendingFileName] = useState<string>('');
+  const [restoreError, setRestoreError] = useState<string | null>(null);
+  const [restoreSuccess, setRestoreSuccess] = useState<string | null>(null);
+  const [exportSuccessMessage, setExportSuccessMessage] = useState<string | null>(null);
 
   // Save Shop Settings
   const handleSaveShopSettings = (e: React.FormEvent) => {
@@ -187,23 +209,85 @@ export const SettingsView: React.FC = () => {
     setEditingStaff(null);
   };
 
-  // JSON Import
-  const handleImportFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Export full backup with all data: images, prices, variants, option presets, tables, bills, settings
+  const handleExportFullBackup = () => {
+    soundService.playTap();
+    const data = exportDataJson();
+    const blob = new Blob([data], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const nowStr = new Date().toISOString().slice(0, 10);
+    const fileName = `kind_pos_full_backup_${nowStr}.json`;
+    a.download = fileName;
+    a.click();
+    URL.revokeObjectURL(url);
+    soundService.playReadyChime();
+    setExportSuccessMessage(`สำรองข้อมูลทั้งหมดสำเร็จ! ดาวน์โหลดไฟล์ "${fileName}" เรียบร้อยแล้ว`);
+    setTimeout(() => setExportSuccessMessage(null), 6000);
+  };
+
+  // Select and validate JSON backup file for restore
+  const handleSelectRestoreFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    setRestoreError(null);
+    setRestoreSuccess(null);
+
     const reader = new FileReader();
     reader.onload = (event) => {
-      const content = event.target?.result as string;
-      if (content) {
-        const ok = importDataJson(content);
-        if (ok) {
-          alert('นำเข้าข้อมูลสำเร็จ');
-        } else {
-          alert('ไฟล์สำรองไม่ถูกต้อง');
+      try {
+        const content = event.target?.result as string;
+        if (!content) throw new Error('ไฟล์ว่างเปล่า');
+
+        const parsed = JSON.parse(content);
+        if (!parsed || typeof parsed !== 'object') throw new Error('โครงสร้างไฟล์ไม่ถูกต้อง');
+
+        const hasValidData = Boolean(
+          (parsed.menuItems && Array.isArray(parsed.menuItems)) ||
+          (parsed.tables && Array.isArray(parsed.tables)) ||
+          (parsed.categories && Array.isArray(parsed.categories)) ||
+          (parsed.settings && typeof parsed.settings === 'object')
+        );
+
+        if (!hasValidData) {
+          setRestoreError('ไฟล์ที่เลือกไม่ใช่ไฟล์สำรองข้อมูลของระบบ KinD POS กรุณาตรวจสอบและเลือกไฟล์ .json ที่ถูกต้อง');
+          return;
         }
+
+        soundService.playTap();
+        setPendingRestoreData(parsed);
+        setPendingRestoreRaw(content);
+        setPendingFileName(file.name);
+        setShowRestoreModal(true);
+      } catch (err: any) {
+        setRestoreError('ไม่สามารถอ่านไฟล์สำรองได้: ' + (err?.message || 'ไฟล์เสียหายหรือรูปแบบไม่ถูกต้อง'));
       }
     };
     reader.readAsText(file);
+    e.target.value = ''; // Reset input to allow re-selection
+  };
+
+  // Confirm and execute complete system restore
+  const handleConfirmRestore = () => {
+    if (!pendingRestoreRaw) return;
+
+    const ok = importDataJson(pendingRestoreRaw);
+    if (ok) {
+      soundService.playReadyChime();
+      setRestoreSuccess(
+        'กู้คืนข้อมูลสำเร็จเรียบร้อยแล้ว! รายการอาหาร รูปภาพ ราคา ตัวเลือกย่อย ผังโต๊ะ และข้อมูลระบบทั้งหมดได้รับการกู้คืนอย่างสมบูรณ์'
+      );
+      setShowRestoreModal(false);
+      setPendingRestoreData(null);
+      setPendingRestoreRaw('');
+      setPendingFileName('');
+      setTimeout(() => setRestoreSuccess(null), 8000);
+    } else {
+      setRestoreError('เกิดข้อผิดพลาดในการกู้คืนข้อมูล กรุณาตรวจสอบไฟล์สำรองอีกครั้ง');
+      setShowRestoreModal(false);
+    }
   };
 
   return (
@@ -750,51 +834,197 @@ export const SettingsView: React.FC = () => {
         </div>
       )}
 
-      {/* Tab 6: Backup & Reset */}
+      {/* Tab 6: Backup & Restore */}
       {activeTab === 'backup' && (
         <div className="space-y-6">
-          <div className="p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
-            <h3 className="font-bold text-sm text-slate-900 dark:text-white border-b border-slate-100 dark:border-slate-800 pb-3">
-              สำรองและกู้คืนข้อมูล (Export / Import Backup)
-            </h3>
-            <p className="text-xs text-slate-500">
-              ดาวน์โหลดไฟล์สำรองข้อมูล JSON ทั้งหมดของร้านอาหาร (รวมถึงเมนู, โต๊ะ, ยอดขาย, สต็อก) หรือกู้คืนจากไฟล์ที่เคยบันทึกไว้
-            </p>
-
-            <div className="flex flex-wrap items-center gap-3 pt-2">
-              {/* Export Button */}
+          {/* Success Banner */}
+          {restoreSuccess && (
+            <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800 flex items-start justify-between gap-3 shadow-xs">
+              <div className="flex items-start gap-3">
+                <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+                <div>
+                  <div className="text-xs font-bold text-emerald-900 dark:text-emerald-200">
+                    กู้คืนข้อมูลสำเร็จเรียบร้อย
+                  </div>
+                  <div className="text-xs text-emerald-700 dark:text-emerald-300 mt-0.5">
+                    {restoreSuccess}
+                  </div>
+                </div>
+              </div>
               <button
                 type="button"
-                onClick={() => {
-                  const data = exportDataJson();
-                  const blob = new Blob([data], { type: 'application/json' });
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement('a');
-                  a.href = url;
-                  a.download = `kind_pos_backup_${new Date().toISOString().slice(0, 10)}.json`;
-                  a.click();
-                }}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-slate-900 text-white dark:bg-white dark:text-slate-900 font-bold text-xs shadow-xs cursor-pointer"
+                onClick={() => setRestoreSuccess(null)}
+                className="text-emerald-500 hover:text-emerald-700 p-1 cursor-pointer"
               >
-                <Download className="w-4 h-4" />
-                <span>ส่งออกข้อมูลสำรอง (Export JSON)</span>
+                <X className="w-4 h-4" />
               </button>
+            </div>
+          )}
 
-              {/* Import Button */}
-              <label className="flex items-center gap-2 px-5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-bold text-xs cursor-pointer shadow-xs">
-                <Upload className="w-4 h-4" />
-                <span>นำเข้าไฟล์สำรอง (Import JSON)</span>
-                <input
-                  type="file"
-                  accept=".json"
-                  onChange={handleImportFile}
-                  className="hidden"
-                />
-              </label>
+          {exportSuccessMessage && (
+            <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 flex items-start justify-between gap-3 shadow-xs">
+              <div className="flex items-start gap-3">
+                <CheckCircle2 className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                <div>
+                  <div className="text-xs font-bold text-amber-900 dark:text-amber-200">
+                    สำรองข้อมูลสำเร็จ
+                  </div>
+                  <div className="text-xs text-amber-700 dark:text-amber-300 mt-0.5">
+                    {exportSuccessMessage}
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setExportSuccessMessage(null)}
+                className="text-amber-500 hover:text-amber-700 p-1 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+
+          {/* Error Banner */}
+          {restoreError && (
+            <div className="p-4 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800 flex items-start justify-between gap-3 shadow-xs">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" />
+                <div>
+                  <div className="text-xs font-bold text-rose-900 dark:text-rose-200">
+                    เกิดข้อผิดพลาด
+                  </div>
+                  <div className="text-xs text-rose-700 dark:text-rose-300 mt-0.5">
+                    {restoreError}
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setRestoreError(null)}
+                className="text-rose-500 hover:text-rose-700 p-1 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+
+          {/* Card 1: Full System Backup */}
+          <div className="p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-600 dark:text-amber-400 flex items-center justify-center">
+                  <ShieldCheck className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm text-slate-900 dark:text-white">
+                    สำรองข้อมูลทั้งหมดของร้าน (Full Backup)
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    บันทึกข้อมูลทุกอย่างเป็นไฟล์ JSON เพื่อป้องกันข้อมูลสูญหาย
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+              การสำรองข้อมูลนี้จะรวม<strong>ข้อมูลทุกอย่างในระบบแบบสมบูรณ์</strong> ทั้งรูปภาพรายการอาหาร (Food Photos), ราคาและต้นทุน, ตัวเลือกย่อยและหมวด set เมนูย่อย, ผังโต๊ะและเก้าอี้, บิลและประวัติการขาย, บัญชี QR ชำระเงิน, ข้อมูลร้าน และระบบสมาชิกสะสมแต้ม
+            </p>
+
+            {/* Current System Data Summary Badges */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
+              <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700">
+                <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold block">รายการอาหาร</span>
+                <span className="font-bold text-sm text-slate-900 dark:text-white mt-0.5 block">
+                  {menuItems.length} รายการ
+                </span>
+                <span className="text-[10px] text-amber-600 dark:text-amber-400 font-medium">รูปภาพ+ตัวเลือกย่อยครบ</span>
+              </div>
+              <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700">
+                <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold block">หมวดหมู่ & Set ย่อย</span>
+                <span className="font-bold text-sm text-slate-900 dark:text-white mt-0.5 block">
+                  {categories.length} หมวด / {optionPresets.length} set
+                </span>
+                <span className="text-[10px] text-slate-400">โครงสร้างเมนูครบ</span>
+              </div>
+              <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700">
+                <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold block">ผังโต๊ะ & เก้าอี้</span>
+                <span className="font-bold text-sm text-slate-900 dark:text-white mt-0.5 block">
+                  {tables.length} ตัว
+                </span>
+                <span className="text-[10px] text-slate-400">พิกัดและขนาดเก้าอี้</span>
+              </div>
+              <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700">
+                <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold block">บิล & สมาชิก & QR</span>
+                <span className="font-bold text-sm text-slate-900 dark:text-white mt-0.5 block">
+                  {bills.length} บิล / {members.length} สมาชิก
+                </span>
+                <span className="text-[10px] text-slate-400">{qrImages.length} บัญชี QR ชำระเงิน</span>
+              </div>
+            </div>
+
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={handleExportFullBackup}
+                className="flex items-center gap-2 px-6 py-3 rounded-2xl bg-amber-500 hover:bg-amber-600 active:scale-98 text-slate-950 font-extrabold text-xs shadow-md transition cursor-pointer"
+              >
+                <Download className="w-4 h-4 stroke-[2.5]" />
+                <span>ดาวน์โหลดไฟล์สำรองข้อมูลทั้งหมด (.json)</span>
+              </button>
             </div>
           </div>
 
-          {/* Reset Demo Data Card */}
+          {/* Card 2: Restore Data from Backup */}
+          <div className="p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-blue-500/20 text-blue-600 dark:text-blue-400 flex items-center justify-center">
+                  <Upload className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm text-slate-900 dark:text-white">
+                    กู้คืนข้อมูลระบบ (Restore from Backup)
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    นำไฟล์สำรองที่เคยบันทึกไว้กลับมาติดตั้งใหม่ในระบบ เพื่อป้องกันข้อมูลสูญหาย
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+              เมื่อเลือกไฟล์สำรอง (.json) ระบบจะตรวจสอบความถูกต้องของไฟล์ และแสดงรายละเอียดข้อมูลที่จะถูกกู้คืน (รวมถึงรายการอาหาร รูปภาพ ราคา ตัวเลือกย่อย และผังโต๊ะ) ให้ตรวจสอบก่อนกดยืนยันกู้คืน
+            </p>
+
+            <label className="flex flex-col sm:flex-row items-center justify-between p-4.5 rounded-2xl border-2 border-dashed border-blue-300 dark:border-blue-700/80 bg-blue-50/40 dark:bg-blue-950/20 hover:bg-blue-100/50 dark:hover:bg-blue-950/40 transition cursor-pointer gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-blue-500/20 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
+                  <FileText className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="text-xs font-bold text-slate-900 dark:text-white">
+                    เลือกไฟล์สำรองข้อมูล (.json) เพื่อกู้คืน
+                  </div>
+                  <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                    คลิกเพื่อเปิดหาไฟล์ backup (.json) ที่ดาวน์โหลดไว้จากเครื่องของคุณ
+                  </div>
+                </div>
+              </div>
+
+              <div className="px-5 py-2.5 rounded-xl bg-blue-600 text-white font-bold text-xs shadow-xs shrink-0 flex items-center gap-1.5 pointer-events-none">
+                <Upload className="w-3.5 h-3.5" />
+                <span>เลือกไฟล์สำรอง</span>
+              </div>
+              <input
+                type="file"
+                accept=".json,application/json"
+                onChange={handleSelectRestoreFile}
+                className="hidden"
+              />
+            </label>
+          </div>
+
+          {/* Card 3: Reset Demo Data */}
           <div className="p-6 rounded-3xl bg-rose-50/50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/60 shadow-xs space-y-3">
             <h3 className="font-bold text-sm text-rose-700 dark:text-rose-400">
               รีเซ็ตข้อมูลตัวอย่างเริ่มต้น (Reset Demo Data)
@@ -1062,6 +1292,130 @@ export const SettingsView: React.FC = () => {
           title="ยืนยันการลบพนักงาน"
           message={`คุณต้องการลบพนักงาน "${staffToDelete.name}" ออกจากระบบหรือไม่?`}
         />
+      )}
+
+      {/* Restore Confirmation Modal */}
+      {showRestoreModal && pendingRestoreData && (
+        <Modal
+          isOpen={true}
+          onClose={() => {
+            setShowRestoreModal(false);
+            setPendingRestoreData(null);
+            setPendingRestoreRaw('');
+            setPendingFileName('');
+          }}
+          title="ยืนยันการกู้คืนข้อมูลร้าน (Restore Confirmation)"
+          maxWidth="max-w-xl"
+        >
+          <div className="space-y-4">
+            <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 flex items-start gap-3">
+              <ShieldCheck className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+              <div className="text-xs space-y-1">
+                <div className="font-bold text-amber-900 dark:text-amber-200">
+                  ตรวจพบไฟล์สำรองข้อมูล: {pendingFileName}
+                </div>
+                <p className="text-slate-600 dark:text-slate-400 text-[11px]">
+                  สำรองเมื่อ:{' '}
+                  {pendingRestoreData.exportedAt
+                    ? new Date(pendingRestoreData.exportedAt).toLocaleString('th-TH')
+                    : 'ไม่ระบุวันเวลา'}
+                </p>
+              </div>
+            </div>
+
+            {/* Summary of Data in the Backup */}
+            <div>
+              <div className="text-xs font-bold text-slate-700 dark:text-slate-300 mb-2">
+                ข้อมูลที่จะได้รับการกู้คืนเข้าสู่ระบบทั้งหมด:
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700">
+                  <span className="text-slate-500 dark:text-slate-400 block text-[11px]">ชื่อร้านค้า:</span>
+                  <span className="font-bold text-slate-900 dark:text-white truncate block">
+                    {pendingRestoreData.settings?.shopName || 'ไม่ระบุ'}
+                  </span>
+                </div>
+                <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700">
+                  <span className="text-slate-500 dark:text-slate-400 block text-[11px]">รายการอาหาร:</span>
+                  <span className="font-bold text-slate-900 dark:text-white">
+                    {pendingRestoreData.menuItems?.length || 0} รายการ (รูปภาพ & ตัวเลือกย่อยครบ)
+                  </span>
+                </div>
+                <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700">
+                  <span className="text-slate-500 dark:text-slate-400 block text-[11px]">หมวดหมู่อาหาร:</span>
+                  <span className="font-bold text-slate-900 dark:text-white">
+                    {pendingRestoreData.categories?.length || 0} หมวดหมู่
+                  </span>
+                </div>
+                <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700">
+                  <span className="text-slate-500 dark:text-slate-400 block text-[11px]">หมวด set เมนูย่อย:</span>
+                  <span className="font-bold text-slate-900 dark:text-white">
+                    {pendingRestoreData.optionPresets?.length || 0} ชุด
+                  </span>
+                </div>
+                <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700">
+                  <span className="text-slate-500 dark:text-slate-400 block text-[11px]">ผังโต๊ะ & เก้าอี้:</span>
+                  <span className="font-bold text-slate-900 dark:text-white">
+                    {pendingRestoreData.tables?.length || 0} ตัว
+                  </span>
+                </div>
+                <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700">
+                  <span className="text-slate-500 dark:text-slate-400 block text-[11px]">ประวัติบิลออเดอร์:</span>
+                  <span className="font-bold text-slate-900 dark:text-white">
+                    {pendingRestoreData.bills?.length || 0} บิล
+                  </span>
+                </div>
+                <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700">
+                  <span className="text-slate-500 dark:text-slate-400 block text-[11px]">QR ชำระเงิน:</span>
+                  <span className="font-bold text-slate-900 dark:text-white">
+                    {pendingRestoreData.qrImages?.length || 0} บัญชี
+                  </span>
+                </div>
+                <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700">
+                  <span className="text-slate-500 dark:text-slate-400 block text-[11px]">สมาชิกสะสมแต้ม:</span>
+                  <span className="font-bold text-slate-900 dark:text-white">
+                    {pendingRestoreData.members?.length || 0} คน
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Warning */}
+            <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/60 text-rose-800 dark:text-rose-300 text-xs">
+              <div className="font-bold flex items-center gap-1.5">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>คำเตือน:</span>
+              </div>
+              <p className="mt-1 text-[11px] leading-relaxed">
+                การกู้คืนข้อมูลจะนำข้อมูลจากไฟล์สำรองนี้มาเขียนทับข้อมูลปัจจุบันของระบบทั้งหมด กรุณาตรวจสอบให้แน่ใจก่อนกดยืนยัน
+              </p>
+            </div>
+
+            {/* Action buttons */}
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowRestoreModal(false);
+                  setPendingRestoreData(null);
+                  setPendingRestoreRaw('');
+                  setPendingFileName('');
+                }}
+                className="px-4 py-2.5 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmRestore}
+                className="px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs shadow-md transition cursor-pointer flex items-center gap-1.5 active:scale-98"
+              >
+                <Check className="w-4 h-4 stroke-[2.5]" />
+                <span>ยืนยันกู้คืนข้อมูลทั้งหมด</span>
+              </button>
+            </div>
+          </div>
+        </Modal>
       )}
     </div>
   );

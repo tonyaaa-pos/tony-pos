@@ -1568,35 +1568,112 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const exportDataJson = useCallback(() => {
     const backup = {
-      version: '2.0.0',
+      system: 'KinD Restaurant POS',
+      version: '2.5.0',
       exportedAt: new Date().toISOString(),
-      users,
+      summary: {
+        menuItemsCount: menuItems.length,
+        categoriesCount: categories.length,
+        optionPresetsCount: optionPresets.length,
+        tablesCount: tables.length,
+        billsCount: bills.length,
+        membersCount: members.length,
+        qrImagesCount: qrImages.length,
+        usersCount: users.length,
+      },
       settings,
-      tables,
       categories,
-      menuItems,
-      bills,
-      members,
-      qrImages,
+      menuItems, // complete with food images (base64/URL), prices, costs, variants, and optionGroups
+      optionPresets, // complete sub-menu sets (หมวด set เมนูย่อย)
+      tables, // complete floor plan, positions, chair sizes & styles
+      bills, // complete order history & payments
+      members, // customer loyalty points
+      qrImages, // QR payment images
+      users: users.filter((u: any) => u.role !== 'kitchen'),
       currentShift,
     };
     return JSON.stringify(backup, null, 2);
-  }, [users, settings, tables, categories, menuItems, bills, members, qrImages, currentShift]);
+  }, [
+    users,
+    settings,
+    tables,
+    categories,
+    menuItems,
+    optionPresets,
+    bills,
+    members,
+    qrImages,
+    currentShift,
+  ]);
 
   const importDataJson = useCallback((jsonStr: string): boolean => {
     try {
       const data = JSON.parse(jsonStr);
-      if (data.users && Array.isArray(data.users)) setUsers(data.users.filter((u: any) => u.role !== 'kitchen'));
-      if (data.settings) setSettings(data.settings);
-      if (data.tables && Array.isArray(data.tables)) setTables(autoPositionTables(data.tables));
-      if (data.categories && Array.isArray(data.categories)) setCategories(data.categories);
-      if (data.menuItems && Array.isArray(data.menuItems)) setMenuItems(data.menuItems);
-      if (data.bills && Array.isArray(data.bills)) setBills(data.bills);
-      if (data.members && Array.isArray(data.members)) setMembers(data.members);
-      if (data.qrImages && Array.isArray(data.qrImages)) setQrImages(data.qrImages);
-      if (data.currentShift) setCurrentShift(data.currentShift);
+      if (!data || typeof data !== 'object') return false;
+
+      // Validate that it looks like a valid KinD POS backup file
+      const hasValidSection =
+        Boolean(data.menuItems && Array.isArray(data.menuItems)) ||
+        Boolean(data.tables && Array.isArray(data.tables)) ||
+        Boolean(data.categories && Array.isArray(data.categories)) ||
+        Boolean(data.settings && typeof data.settings === 'object');
+
+      if (!hasValidSection) return false;
+
+      if (data.users && Array.isArray(data.users)) {
+        const filteredUsers = data.users.filter((u: any) => u.role !== 'kitchen');
+        setUsers(filteredUsers);
+        localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(filteredUsers));
+      }
+
+      if (data.settings && typeof data.settings === 'object') {
+        setSettings(data.settings);
+        localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(data.settings));
+      }
+
+      if (data.categories && Array.isArray(data.categories)) {
+        setCategories(data.categories);
+        localStorage.setItem(STORAGE_KEYS.CATEGORIES, JSON.stringify(data.categories));
+      }
+
+      if (data.menuItems && Array.isArray(data.menuItems)) {
+        setMenuItems(data.menuItems);
+        localStorage.setItem(STORAGE_KEYS.MENU, JSON.stringify(data.menuItems));
+      }
+
+      if (data.optionPresets && Array.isArray(data.optionPresets)) {
+        setOptionPresets(data.optionPresets);
+        localStorage.setItem(STORAGE_KEYS.OPTION_PRESETS, JSON.stringify(data.optionPresets));
+      }
+
+      if (data.tables && Array.isArray(data.tables)) {
+        const positionedTables = autoPositionTables(data.tables);
+        setTables(positionedTables);
+        localStorage.setItem(STORAGE_KEYS.TABLES, JSON.stringify(positionedTables));
+      }
+
+      if (data.bills && Array.isArray(data.bills)) {
+        setBills(data.bills);
+        localStorage.setItem(STORAGE_KEYS.BILLS, JSON.stringify(data.bills));
+      }
+
+      if (data.members && Array.isArray(data.members)) {
+        setMembers(data.members);
+        localStorage.setItem(STORAGE_KEYS.MEMBERS, JSON.stringify(data.members));
+      }
+
+      if (data.qrImages && Array.isArray(data.qrImages)) {
+        setQrImages(data.qrImages);
+        localStorage.setItem(STORAGE_KEYS.QR_IMAGES, JSON.stringify(data.qrImages));
+      }
+
+      if (data.currentShift) {
+        setCurrentShift(data.currentShift);
+        localStorage.setItem(STORAGE_KEYS.SHIFT, JSON.stringify(data.currentShift));
+      }
 
       syncService.broadcast('DATA_RELOAD');
+      syncService.broadcast('TABLE_UPDATED');
       return true;
     } catch {
       return false;
