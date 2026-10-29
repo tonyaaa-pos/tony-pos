@@ -17,6 +17,8 @@ import {
   Search,
   GripVertical,
   RotateCcw,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { INITIAL_CATEGORIES, INITIAL_MENU_ITEMS } from '../../data/seedData';
 import { formatBaht } from '../../utils/formatters';
@@ -303,6 +305,152 @@ export const POSView: React.FC = () => {
               className="w-full pl-9 pr-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-amber-500 text-slate-900 dark:text-white"
             />
           </div>
+        </div>
+
+        {/* Category Pills Bar with Drag & Drop and Left/Right Arrow Buttons */}
+        <div className="shrink-0 px-3 py-2 bg-slate-100/90 dark:bg-slate-900/90 border-b border-slate-200 dark:border-slate-800 flex items-center gap-1.5 overflow-x-auto no-scrollbar scroll-smooth">
+          {/* All Dishes Button */}
+          <button
+            type="button"
+            onClick={() => {
+              setActiveCategory('all');
+              soundService.playTap();
+            }}
+            className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-bold whitespace-nowrap transition cursor-pointer shadow-2xs ${
+              activeCategory === 'all'
+                ? 'bg-amber-500 text-slate-950 border-amber-600 ring-2 ring-amber-400/50 font-extrabold'
+                : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-amber-400'
+            }`}
+          >
+            <span>✨</span>
+            <span>{t('all')}</span>
+            <span className="text-[10px] opacity-75">({totalAvailableDishes})</span>
+          </button>
+
+          {/* Draggable Category Pills with Left / Right Arrows */}
+          {categories.map((cat, index) => {
+            const isSelected = activeCategory === cat.id;
+            const isDragging = draggedCatIndex === index;
+            const isDragOver = dragOverCatIndex === index;
+            const catItemCount = menuItems.filter(
+              (m) => isDishInCategory(m, cat.id, categories) && m.isAvailable !== false
+            ).length;
+
+            return (
+              <div
+                key={cat.id}
+                draggable
+                onDragStart={(e) => {
+                  setDraggedCatIndex(index);
+                  e.dataTransfer.effectAllowed = 'move';
+                  e.dataTransfer.setData('text/plain', String(index));
+                }}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = 'move';
+                  if (dragOverCatIndex !== index) {
+                    setDragOverCatIndex(index);
+                  }
+                }}
+                onDragLeave={() => {
+                  if (dragOverCatIndex === index) {
+                    setDragOverCatIndex(null);
+                  }
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  if (draggedCatIndex !== null && draggedCatIndex !== index) {
+                    reorderCategories(draggedCatIndex, index);
+                    soundService.playTap();
+                  }
+                  setDraggedCatIndex(null);
+                  setDragOverCatIndex(null);
+                }}
+                onDragEnd={() => {
+                  setDraggedCatIndex(null);
+                  setDragOverCatIndex(null);
+                }}
+                title="คลิกค้างแล้วลากเพื่อย้ายตำแหน่ง หรือกดลูกศร ◀ ▶ เพื่อสลับตำแหน่ง"
+                className={`relative shrink-0 flex items-center rounded-xl border transition-all select-none shadow-2xs ${
+                  isSelected
+                    ? 'bg-amber-500 text-slate-950 border-amber-600 ring-2 ring-amber-400/50 font-bold'
+                    : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:border-amber-400'
+                } ${
+                  isDragging ? 'opacity-40 scale-95 border-dashed border-2 border-amber-500' : ''
+                } ${
+                  isDragOver ? 'ring-2 ring-amber-500 scale-105 shadow-md' : ''
+                }`}
+              >
+                {/* Left Arrow Button */}
+                <button
+                  type="button"
+                  disabled={index === 0}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (index > 0) {
+                      reorderCategories(index, index - 1);
+                      soundService.playTap();
+                    }
+                  }}
+                  className={`h-full px-1.5 py-1.5 flex items-center justify-center transition rounded-l-xl ${
+                    index === 0
+                      ? 'opacity-20 cursor-not-allowed text-slate-400'
+                      : isSelected
+                      ? 'hover:bg-slate-950/20 text-slate-950 cursor-pointer'
+                      : 'hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-400 hover:text-amber-600 dark:hover:text-amber-400 cursor-pointer'
+                  }`}
+                  title="ย้ายตำแหน่งไปทางซ้าย"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                </button>
+
+                {/* Category Button (Draggable & Clickable) */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveCategory(cat.id);
+                    soundService.playTap();
+                  }}
+                  className="flex items-center gap-1.5 px-2 py-1.5 text-xs font-semibold whitespace-nowrap cursor-grab active:cursor-grabbing"
+                >
+                  <span className="text-sm leading-none">{cat.icon || '🍽️'}</span>
+                  <span>{getName(cat)}</span>
+                  <span
+                    className={`text-[10px] px-1.5 py-0.2 rounded-md ${
+                      isSelected
+                        ? 'bg-slate-950/20 text-slate-950 font-black'
+                        : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400'
+                    }`}
+                  >
+                    {catItemCount}
+                  </span>
+                </button>
+
+                {/* Right Arrow Button */}
+                <button
+                  type="button"
+                  disabled={index === categories.length - 1}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (index < categories.length - 1) {
+                      reorderCategories(index, index + 1);
+                      soundService.playTap();
+                    }
+                  }}
+                  className={`h-full px-1.5 py-1.5 flex items-center justify-center transition rounded-r-xl ${
+                    index === categories.length - 1
+                      ? 'opacity-20 cursor-not-allowed text-slate-400'
+                      : isSelected
+                      ? 'hover:bg-slate-950/20 text-slate-950 cursor-pointer'
+                      : 'hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-400 hover:text-amber-600 dark:hover:text-amber-400 cursor-pointer'
+                  }`}
+                  title="ย้ายตำแหน่งไปทางขวา"
+                >
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            );
+          })}
         </div>
 
         {/* Menu Items Grid */}

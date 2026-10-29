@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { usePOS } from '../../context/POSContext';
 import { useLanguage } from '../../context/LanguageContext';
-import { Receipt, Plus, X, Tag } from 'lucide-react';
+import { Receipt, Plus, X, Tag, ChevronLeft, ChevronRight } from 'lucide-react';
 import { formatBaht } from '../../utils/formatters';
+import { soundService } from '../../utils/audio';
 import { Modal } from '../common/Modal';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import { MenuCategory } from '../../types';
@@ -78,6 +79,13 @@ export const BottomBar: React.FC = () => {
     '#64748b', // slate
   ];
 
+  const handleMoveCategory = (idx: number, direction: 'left' | 'right') => {
+    const targetIdx = direction === 'left' ? idx - 1 : idx + 1;
+    if (targetIdx < 0 || targetIdx >= categories.length) return;
+    reorderCategories(idx, targetIdx);
+    soundService.playTap();
+  };
+
   if (!currentUser) return null;
 
   return (
@@ -121,7 +129,7 @@ export const BottomBar: React.FC = () => {
 
           <div className="h-7 w-px bg-slate-200 dark:bg-slate-800 shrink-0 mx-1" />
 
-          {/* Category Cards with Drag-and-Drop Reordering */}
+          {/* Category Cards with Drag-and-Drop and Left/Right Arrow Reordering */}
           {categories.map((cat, index) => {
             const isSelected = activeCategory === cat.id;
             const isDragging = draggedCatIndex === index;
@@ -155,6 +163,7 @@ export const BottomBar: React.FC = () => {
                   e.preventDefault();
                   if (draggedCatIndex !== null && draggedCatIndex !== index) {
                     reorderCategories(draggedCatIndex, index);
+                    soundService.playTap();
                   }
                   setDraggedCatIndex(null);
                   setDragOverCatIndex(null);
@@ -163,26 +172,65 @@ export const BottomBar: React.FC = () => {
                   setDraggedCatIndex(null);
                   setDragOverCatIndex(null);
                 }}
-                title={isEditMode ? undefined : 'คลิกค้างแล้วลากเพื่อย้ายตำแหน่งหมวดหมู่'}
-                className={`relative shrink-0 group transition-all ${
-                  isDragging ? 'opacity-40 scale-95 border-dashed border-2 border-amber-500 rounded-2xl' : ''
+                title="คลิกค้างแล้วลากเพื่อย้ายตำแหน่ง หรือกดลูกศร ◀ ▶ เพื่อสลับตำแหน่ง"
+                className={`relative shrink-0 flex items-center rounded-2xl border transition-all shadow-2xs ${
+                  isSelected
+                    ? 'bg-amber-500 text-slate-950 border-amber-600 ring-2 ring-amber-400/50 font-bold'
+                    : 'bg-slate-100 dark:bg-slate-800/90 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:border-amber-400'
                 } ${
-                  isDragOver ? 'ring-2 ring-amber-500 scale-105 rounded-2xl shadow-md' : ''
+                  isDragging ? 'opacity-40 scale-95 border-dashed border-2 border-amber-500' : ''
+                } ${
+                  isDragOver ? 'ring-2 ring-amber-500 scale-105 shadow-md' : ''
                 }`}
               >
+                {/* Left Arrow Button */}
+                <button
+                  type="button"
+                  disabled={index === 0}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleMoveCategory(index, 'left');
+                  }}
+                  className={`h-full px-1.5 py-2 flex items-center justify-center transition rounded-l-2xl ${
+                    index === 0
+                      ? 'opacity-20 cursor-not-allowed text-slate-400'
+                      : isSelected
+                      ? 'hover:bg-slate-950/20 text-slate-950 cursor-pointer'
+                      : 'hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-400 hover:text-amber-600 dark:hover:text-amber-400 cursor-pointer'
+                  }`}
+                  title="ย้ายตำแหน่งไปทางซ้าย"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                </button>
+
+                {/* Category Button (Draggable & Clickable) */}
                 <button
                   type="button"
                   onClick={() => handleSelectCategory(cat.id)}
-                  className={`flex items-center gap-2 px-3.5 py-2.5 rounded-2xl border text-xs font-semibold whitespace-nowrap transition shadow-2xs ${
-                    isEditMode ? 'cursor-pointer' : 'cursor-grab active:cursor-grabbing'
-                  } ${
-                    isSelected
-                      ? 'bg-amber-500 text-slate-950 border-amber-600 ring-2 ring-amber-400/50 font-bold'
-                      : 'bg-slate-100 dark:bg-slate-800/90 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:border-amber-400'
-                  }`}
+                  className="flex items-center gap-1.5 px-2 py-2 text-xs font-semibold whitespace-nowrap cursor-grab active:cursor-grabbing select-none"
                 >
                   <span className="text-base leading-none">{cat.icon || '🍽️'}</span>
                   <span>{getName(cat)}</span>
+                </button>
+
+                {/* Right Arrow Button */}
+                <button
+                  type="button"
+                  disabled={index === categories.length - 1}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleMoveCategory(index, 'right');
+                  }}
+                  className={`h-full px-1.5 py-2 flex items-center justify-center transition rounded-r-2xl ${
+                    index === categories.length - 1
+                      ? 'opacity-20 cursor-not-allowed text-slate-400'
+                      : isSelected
+                      ? 'hover:bg-slate-950/20 text-slate-950 cursor-pointer'
+                      : 'hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-400 hover:text-amber-600 dark:hover:text-amber-400 cursor-pointer'
+                  }`}
+                  title="ย้ายตำแหน่งไปทางขวา"
+                >
+                  <ChevronRight className="w-3.5 h-3.5" />
                 </button>
 
                 {/* Delete button shown when in edit mode */}

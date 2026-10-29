@@ -24,8 +24,11 @@ import {
   Check,
   Copy,
   PlusCircle,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { formatBaht } from '../../utils/formatters';
+import { soundService } from '../../utils/audio';
 import { Modal } from '../common/Modal';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import { compressImageFile } from '../../utils/imageCompressor';
@@ -42,6 +45,7 @@ export const MenuManagementView: React.FC = () => {
     addCategory,
     updateCategory,
     deleteCategory,
+    reorderCategories,
     activeCategory,
     setActiveCategory,
     optionPresets,
@@ -55,6 +59,30 @@ export const MenuManagementView: React.FC = () => {
 
   const currentCategory = activeCategory || 'all';
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Category Pills Bar drag-and-drop state
+  const [draggedCatIndex, setDraggedCatIndex] = useState<number | null>(null);
+  const [dragOverCatIndex, setDragOverCatIndex] = useState<number | null>(null);
+
+  // Category Modal drag-and-drop state
+  const [draggedModalCatIndex, setDraggedModalCatIndex] = useState<number | null>(null);
+  const [dragOverModalCatIndex, setDragOverModalCatIndex] = useState<number | null>(null);
+
+  // Category movement helper for horizontal pills bar
+  const handleMoveCategoryHorizontal = (idx: number, direction: 'left' | 'right') => {
+    const targetIdx = direction === 'left' ? idx - 1 : idx + 1;
+    if (targetIdx < 0 || targetIdx >= categories.length) return;
+    reorderCategories(idx, targetIdx);
+    soundService.playTap();
+  };
+
+  // Category movement helper for modal list
+  const handleMoveCategoryVertical = (idx: number, direction: 'up' | 'down') => {
+    const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
+    if (targetIdx < 0 || targetIdx >= categories.length) return;
+    reorderCategories(idx, targetIdx);
+    soundService.playTap();
+  };
 
   // Modals
   const [editingItem, setEditingItem] = useState<Partial<MenuItem> | null>(null);
@@ -656,12 +684,15 @@ export const MenuManagementView: React.FC = () => {
           />
         </div>
 
-        {/* Categories Pills */}
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+        {/* Categories Pills with Drag & Drop and Left/Right Arrow Reordering */}
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scroll-smooth">
           <button
             type="button"
-            onClick={() => setActiveCategory('all')}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer ${
+            onClick={() => {
+              setActiveCategory('all');
+              soundService.playTap();
+            }}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer shadow-2xs shrink-0 ${
               currentCategory === 'all'
                 ? 'bg-amber-500 text-slate-950 shadow-2xs font-extrabold'
                 : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
@@ -669,31 +700,120 @@ export const MenuManagementView: React.FC = () => {
           >
             {t('all')} ({menuItems.length})
           </button>
-          {categories.map((c) => {
+
+          {categories.map((c, index) => {
             const count = menuItems.filter((m) => isDishInCategory(m, c.id, categories)).length;
+            const isSelected = currentCategory === c.id;
+            const isDragging = draggedCatIndex === index;
+            const isDragOver = dragOverCatIndex === index;
+
             return (
-              <button
+              <div
                 key={c.id}
-                type="button"
-                onClick={() => setActiveCategory(c.id)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer flex items-center gap-1.5 ${
-                  currentCategory === c.id
-                    ? 'bg-amber-500 text-slate-950 shadow-2xs font-extrabold'
-                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+                draggable
+                onDragStart={(e) => {
+                  setDraggedCatIndex(index);
+                  e.dataTransfer.effectAllowed = 'move';
+                  e.dataTransfer.setData('text/plain', String(index));
+                }}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = 'move';
+                  if (dragOverCatIndex !== index) {
+                    setDragOverCatIndex(index);
+                  }
+                }}
+                onDragLeave={() => {
+                  if (dragOverCatIndex === index) {
+                    setDragOverCatIndex(null);
+                  }
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  if (draggedCatIndex !== null && draggedCatIndex !== index) {
+                    reorderCategories(draggedCatIndex, index);
+                    soundService.playTap();
+                  }
+                  setDraggedCatIndex(null);
+                  setDragOverCatIndex(null);
+                }}
+                onDragEnd={() => {
+                  setDraggedCatIndex(null);
+                  setDragOverCatIndex(null);
+                }}
+                title="คลิกค้างแล้วลากเพื่อย้ายตำแหน่ง หรือกดลูกศร ◀ ▶ เพื่อสลับตำแหน่ง"
+                className={`relative shrink-0 flex items-center rounded-xl border transition-all select-none shadow-2xs ${
+                  isSelected
+                    ? 'bg-amber-500 text-slate-950 border-amber-600 ring-2 ring-amber-400/50 font-bold'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-amber-400'
+                } ${
+                  isDragging ? 'opacity-40 scale-95 border-dashed border-2 border-amber-500' : ''
+                } ${
+                  isDragOver ? 'ring-2 ring-amber-500 scale-105 shadow-md' : ''
                 }`}
               >
-                <span>{c.icon}</span>
-                <span>{getName(c)}</span>
-                <span
-                  className={`text-[10px] px-1.5 py-0.2 rounded-md ${
-                    currentCategory === c.id
-                      ? 'bg-slate-950/20 text-slate-950 font-black'
-                      : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-400'
+                {/* Left Arrow Button */}
+                <button
+                  type="button"
+                  disabled={index === 0}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleMoveCategoryHorizontal(index, 'left');
+                  }}
+                  className={`h-full px-1.5 py-1.5 flex items-center justify-center transition rounded-l-xl ${
+                    index === 0
+                      ? 'opacity-20 cursor-not-allowed text-slate-400'
+                      : isSelected
+                      ? 'hover:bg-slate-950/20 text-slate-950 cursor-pointer'
+                      : 'hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-400 hover:text-amber-600 dark:hover:text-amber-400 cursor-pointer'
                   }`}
+                  title="ย้ายตำแหน่งไปทางซ้าย"
                 >
-                  {count}
-                </span>
-              </button>
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                </button>
+
+                {/* Category Button (Draggable & Clickable) */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveCategory(c.id);
+                    soundService.playTap();
+                  }}
+                  className="flex items-center gap-1.5 px-2 py-1.5 text-xs font-semibold whitespace-nowrap cursor-grab active:cursor-grabbing"
+                >
+                  <span className="text-sm leading-none">{c.icon || '🍽️'}</span>
+                  <span>{getName(c)}</span>
+                  <span
+                    className={`text-[10px] px-1.5 py-0.2 rounded-md ${
+                      isSelected
+                        ? 'bg-slate-950/20 text-slate-950 font-black'
+                        : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-400'
+                    }`}
+                  >
+                    {count}
+                  </span>
+                </button>
+
+                {/* Right Arrow Button */}
+                <button
+                  type="button"
+                  disabled={index === categories.length - 1}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleMoveCategoryHorizontal(index, 'right');
+                  }}
+                  className={`h-full px-1.5 py-1.5 flex items-center justify-center transition rounded-r-xl ${
+                    index === categories.length - 1
+                      ? 'opacity-20 cursor-not-allowed text-slate-400'
+                      : isSelected
+                      ? 'hover:bg-slate-950/20 text-slate-950 cursor-pointer'
+                      : 'hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-400 hover:text-amber-600 dark:hover:text-amber-400 cursor-pointer'
+                  }`}
+                  title="ย้ายตำแหน่งไปทางขวา"
+                >
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
             );
           })}
         </div>
@@ -1442,45 +1562,137 @@ export const MenuManagementView: React.FC = () => {
               </button>
             </div>
 
-            <div className="space-y-2 pt-3 border-t border-slate-200 dark:border-slate-800 max-h-60 overflow-y-auto">
-              {categories.map((c) => (
-                <div
-                  key={c.id}
-                  className="flex items-center justify-between p-2 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700"
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="text-base">{c.icon}</span>
-                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                      {getName(c)}
-                    </span>
-                    {c.nameEn && (
-                      <span className="text-[10px] text-slate-400">({c.nameEn})</span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEditingCategory(c);
-                        setCategoryNameInput(c.name);
-                        setCategoryNameEnInput(c.nameEn || '');
+            <div className="pt-3 border-t border-slate-200 dark:border-slate-800 space-y-2">
+              <div className="flex items-center justify-between text-[11px] text-slate-400">
+                <span>ลำดับหมวดหมู่อาหาร ({categories.length} หมวดหมู่)</span>
+                <span>คลิกค้างแล้วลาก หรือกดลูกศรขึ้น-ลงเพื่อสลับตำแหน่ง</span>
+              </div>
+
+              <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
+                {categories.map((c, idx) => {
+                  const isDragging = draggedModalCatIndex === idx;
+                  const isOver = dragOverModalCatIndex === idx;
+
+                  return (
+                    <div
+                      key={c.id}
+                      draggable
+                      onDragStart={(e) => {
+                        setDraggedModalCatIndex(idx);
+                        e.dataTransfer.effectAllowed = 'move';
+                        e.dataTransfer.setData('text/plain', String(idx));
                       }}
-                      className="p-1 text-slate-500 hover:text-amber-500 cursor-pointer"
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = 'move';
+                        if (dragOverModalCatIndex !== idx) {
+                          setDragOverModalCatIndex(idx);
+                        }
+                      }}
+                      onDragLeave={() => {
+                        if (dragOverModalCatIndex === idx) {
+                          setDragOverModalCatIndex(null);
+                        }
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        if (draggedModalCatIndex !== null && draggedModalCatIndex !== idx) {
+                          reorderCategories(draggedModalCatIndex, idx);
+                          soundService.playTap();
+                        }
+                        setDraggedModalCatIndex(null);
+                        setDragOverModalCatIndex(null);
+                      }}
+                      onDragEnd={() => {
+                        setDraggedModalCatIndex(null);
+                        setDragOverModalCatIndex(null);
+                      }}
+                      className={`flex items-center justify-between p-2 rounded-xl border transition-all ${
+                        isDragging
+                          ? 'opacity-40 border-dashed border-amber-500 scale-[0.99] bg-amber-50 dark:bg-amber-950/20'
+                          : isOver
+                          ? 'border-amber-500 ring-2 ring-amber-400/30 bg-white dark:bg-slate-900 shadow-sm'
+                          : 'bg-slate-50 dark:bg-slate-800/80 border-slate-200 dark:border-slate-700'
+                      }`}
                     >
-                      <Edit className="w-3.5 h-3.5" />
-                    </button>
-                    {categories.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => deleteCategory(c.id)}
-                        className="p-1 text-slate-500 hover:text-rose-500 cursor-pointer"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))}
+                      <div className="flex items-center gap-2 min-w-0">
+                        {/* Drag Handle */}
+                        <div
+                          className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-grab active:cursor-grabbing shrink-0"
+                          title="คลิกค้างแล้วลากเพื่อย้ายลำดับ"
+                        >
+                          <GripVertical className="w-4 h-4" />
+                        </div>
+
+                        {/* Up / Down Arrow Buttons */}
+                        <div className="flex items-center gap-0.5 shrink-0">
+                          <button
+                            type="button"
+                            disabled={idx === 0}
+                            onClick={() => handleMoveCategoryVertical(idx, 'up')}
+                            className={`p-1 rounded text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700 ${
+                              idx === 0
+                                ? 'opacity-25 cursor-not-allowed'
+                                : 'cursor-pointer hover:text-amber-600'
+                            }`}
+                            title="เลื่อนขึ้น"
+                          >
+                            <ArrowUp className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            disabled={idx === categories.length - 1}
+                            onClick={() => handleMoveCategoryVertical(idx, 'down')}
+                            className={`p-1 rounded text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700 ${
+                              idx === categories.length - 1
+                                ? 'opacity-25 cursor-not-allowed'
+                                : 'cursor-pointer hover:text-amber-600'
+                            }`}
+                            title="เลื่อนลง"
+                          >
+                            <ArrowDown className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+
+                        <span className="text-base leading-none">{c.icon}</span>
+                        <span className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate">
+                          {getName(c)}
+                        </span>
+                        {c.nameEn && (
+                          <span className="text-[10px] text-slate-400 truncate hidden sm:inline">
+                            ({c.nameEn})
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-1 shrink-0 ml-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingCategory(c);
+                            setCategoryNameInput(c.name);
+                            setCategoryNameEnInput(c.nameEn || '');
+                          }}
+                          className="p-1.5 text-slate-500 hover:text-amber-500 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg cursor-pointer"
+                          title="แก้ไขชื่อหมวดหมู่"
+                        >
+                          <Edit className="w-3.5 h-3.5" />
+                        </button>
+                        {categories.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => deleteCategory(c.id)}
+                            className="p-1.5 text-slate-500 hover:text-rose-500 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg cursor-pointer"
+                            title="ลบหมวดหมู่นี้"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </div>
         </Modal>
