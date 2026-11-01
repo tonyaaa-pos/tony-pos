@@ -47,14 +47,21 @@ import {
   ChevronRight,
   Bike,
   Package,
+  Scale,
+  Download,
+  FileText,
+  Target,
+  ShieldCheck,
+  Award,
 } from 'lucide-react';
 import { formatBaht, formatNumber, formatThaiDateTime, formatThaiTimeOnly } from '../../utils/formatters';
 import { Modal } from '../common/Modal';
 import { ReceiptPrint } from '../pos/ReceiptPrint';
 import { soundService } from '../../utils/audio';
+import { FinancialReportModal } from './FinancialReportModal';
 
 export type TimeFilterPeriod = 'today' | 'week' | 'month' | 'year' | 'custom';
-export type DashboardTab = 'overview' | 'menu_profit' | 'shifts' | 'bills';
+export type DashboardTab = 'overview' | 'breakeven' | 'menu_profit' | 'shifts' | 'bills';
 export type ChannelFilter = 'all' | 'dine_in' | 'delivery' | 'grab' | 'lineman' | 'shopeefood';
 
 interface OpExSettings {
@@ -64,9 +71,12 @@ interface OpExSettings {
   defaultGrabGpRate: number; // e.g. 30% GP
   defaultLinemanGpRate: number; // e.g. 30% GP
   defaultPackagingCost: number; // e.g. 10 Baht per delivery order
+  monthlyRent: number; // e.g. 25000 Baht/month
+  monthlyFixedSalaries: number; // e.g. 35000 Baht/month
+  monthlyUtilitiesFixed: number; // e.g. 10000 Baht/month
 }
 
-const OPEX_STORAGE_KEY = 'kind_pos_opex_settings_v3';
+const OPEX_STORAGE_KEY = 'kind_pos_opex_settings_v4';
 
 const DEFAULT_OPEX: OpExSettings = {
   laborPct: 20,
@@ -75,6 +85,9 @@ const DEFAULT_OPEX: OpExSettings = {
   defaultGrabGpRate: 30,
   defaultLinemanGpRate: 30,
   defaultPackagingCost: 10,
+  monthlyRent: 25000,
+  monthlyFixedSalaries: 35000,
+  monthlyUtilitiesFixed: 10000,
 };
 
 interface DashboardViewProps {
@@ -129,6 +142,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ defaultTab = 'over
   });
   const [showOpExModal, setShowOpExModal] = useState(false);
   const [tempOpEx, setTempOpEx] = useState<OpExSettings>(opExSettings);
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [simulatedTargetProfit, setSimulatedTargetProfit] = useState<number>(30000);
 
   // Shift Modals
   const [showOpenShiftModal, setShowOpenShiftModal] = useState(false);
@@ -417,6 +432,91 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ defaultTab = 'over
 
     return Object.values(channels);
   }, [allPeriodPaidBills, menuItems, opExSettings]);
+
+  // Break-Even Analysis (การวิเคราะห์จุดคุ้มทุนตามหลักสากล F&B)
+  const breakEvenData = useMemo(() => {
+    const rent = opExSettings.monthlyRent ?? 25000;
+    const salaries = opExSettings.monthlyFixedSalaries ?? 35000;
+    const utilities = opExSettings.monthlyUtilitiesFixed ?? 10000;
+    const extraFixed = opExSettings.customFixedExpense || 0;
+    const totalMonthlyFixedCost = rent + salaries + utilities + extraFixed;
+
+    // Period scaling
+    let periodFixedCost = totalMonthlyFixedCost;
+    if (period === 'today') {
+      periodFixedCost = totalMonthlyFixedCost / 30;
+    } else if (period === 'week') {
+      periodFixedCost = (totalMonthlyFixedCost * 7) / 30;
+    } else if (period === 'month') {
+      periodFixedCost = totalMonthlyFixedCost;
+    } else if (period === 'year') {
+      periodFixedCost = totalMonthlyFixedCost * 12;
+    } else if (period === 'custom') {
+      const start = new Date(customStartDate).getTime();
+      const end = new Date(customEndDate).getTime();
+      const days = Math.max(1, Math.round((end - start) / (24 * 3600 * 1000)) + 1);
+      periodFixedCost = (totalMonthlyFixedCost / 30) * days;
+    }
+
+    const actualRevenue = pnl.netRealizedRevenue;
+    // Contribution Margin Ratio (CMR) = Gross Profit / Net Realized Revenue (fallback 65%)
+    const cmRatio =
+      actualRevenue > 0 && pnl.grossProfit > 0
+        ? pnl.grossProfit / actualRevenue
+        : 0.65;
+
+    // Break-Even Sales Target = Period Fixed Cost / CMR
+    const breakEvenSales = cmRatio > 0 ? periodFixedCost / cmRatio : 0;
+
+    // Average Ticket Price (fallback to 350 Baht if no bills)
+    const avgTicket = pnl.avgTicket > 0 ? pnl.avgTicket : 350;
+    const breakEvenBills = avgTicket > 0 ? breakEvenSales / avgTicket : 0;
+
+    // Progress %
+    const progressPct = breakEvenSales > 0 ? (actualRevenue / breakEvenSales) * 100 : 0;
+    const isBreakevenAchieved = actualRevenue >= breakEvenSales && breakEvenSales > 0;
+    const surplusOrDeficit = actualRevenue - breakEvenSales;
+
+    // Margin of Safety (%)
+    const marginOfSafetyPct =
+      actualRevenue > breakEvenSales && actualRevenue > 0
+        ? ((actualRevenue - breakEvenSales) / actualRevenue) * 100
+        : actualRevenue > 0
+        ? ((actualRevenue - breakEvenSales) / breakEvenSales) * 100
+        : 0;
+
+    // Simulated Target Profit
+    const targetSales = cmRatio > 0 ? (periodFixedCost + simulatedTargetProfit) / cmRatio : 0;
+    const targetBills = avgTicket > 0 ? targetSales / avgTicket : 0;
+
+    return {
+      periodFixedCost,
+      monthlyFixedCost: totalMonthlyFixedCost,
+      cmRatio,
+      breakEvenSales,
+      breakEvenBills,
+      actualRevenue,
+      progressPct,
+      isBreakevenAchieved,
+      surplusOrDeficit,
+      marginOfSafetyPct,
+      avgTicket,
+      rentCost: rent,
+      salariesCost: salaries,
+      utilitiesCost: utilities,
+      targetSales,
+      targetBills,
+    };
+  }, [
+    opExSettings,
+    period,
+    customStartDate,
+    customEndDate,
+    pnl.netRealizedRevenue,
+    pnl.grossProfit,
+    pnl.avgTicket,
+    simulatedTargetProfit,
+  ]);
 
   // Payment methods breakdown
   const paymentChartData = useMemo(() => {
@@ -734,7 +834,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ defaultTab = 'over
             </div>
           )}
 
-          {/* OpEx Cost Settings Button */}
+          {/* OpEx & Break-Even Cost Settings Button */}
           <button
             type="button"
             onClick={() => {
@@ -742,10 +842,21 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ defaultTab = 'over
               setShowOpExModal(true);
             }}
             className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold transition cursor-pointer border border-slate-200 dark:border-slate-700"
-            title="ตั้งค่าต้นทุนค่าใช้จ่ายดำเนินงาน (ค่าแรง, ค่าเช่า, GP เดลิเวอรี, ค่ากล่อง) เพื่อคำนวณกำไรสุทธิ"
+            title="ตั้งค่าต้นทุนค่าใช้จ่ายดำเนินงาน (ค่าแรง, ค่าเช่า, จุดคุ้มทุน, GP เดลิเวอรี, ค่ากล่อง) เพื่อคำนวณกำไรสุทธิ"
           >
-            <Sliders className="w-3.5 h-3.5" />
-            <span>ปรับต้นทุน OpEx & GP</span>
+            <Sliders className="w-3.5 h-3.5 text-amber-500" />
+            <span>ปรับต้นทุน OpEx & จุดคุ้มทุน</span>
+          </button>
+
+          {/* Official Financial Report & Print Button */}
+          <button
+            type="button"
+            onClick={() => setShowReportModal(true)}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold transition shadow-xs cursor-pointer ring-2 ring-amber-400/40"
+            title="ดูและพิมพ์รายงานงบกำไรขาดทุน จุดคุ้มทุน และรายงานกะมาตรฐานสากล หรือส่งออกเป็น CSV / PDF"
+          >
+            <Printer className="w-3.5 h-3.5" />
+            <span>ออกรายงานงบการเงิน & กะ (Report)</span>
           </button>
         </div>
 
@@ -798,6 +909,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ defaultTab = 'over
       <div className="flex items-center gap-2 border-b border-slate-200 dark:border-slate-800 pb-2 overflow-x-auto no-scrollbar">
         {[
           { id: 'overview', label: '📊 ภาพรวม & งบกำไร/ขาดทุน (P&L)', badge: undefined },
+          {
+            id: 'breakeven',
+            label: '⚖️ วิเคราะห์จุดคุ้มทุน (Break-Even)',
+            badge: breakEvenData.isBreakevenAchieved
+              ? '🎉 คุ้มทุนแล้ว'
+              : `${breakEvenData.progressPct.toFixed(0)}%`,
+          },
           { id: 'menu_profit', label: '🍲 เมนูขายดี & วิเคราะห์ความคุ้มค่า', badge: `${menuProfitabilityList.length}` },
           { id: 'shifts', label: '🏪 จัดการกะ & ตรวจสอบเงินสด', badge: shiftIsOpen ? 'เปิดอยู่' : 'ปิดอยู่' },
           { id: 'bills', label: '🧾 ประวัติและตรวจสอบบิล', badge: `${filteredBills.length}` },
@@ -1008,6 +1126,77 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ defaultTab = 'over
                   กำไรแท้จริงหลังหักต้นทุนทุกหมวด
                 </div>
               </div>
+            </div>
+          </div>
+
+          {/* Quick Break-Even Progress Bar & Widget */}
+          <div className="p-4 sm:p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex items-center gap-3.5">
+              <div
+                className={`p-3 rounded-2xl ${
+                  breakEvenData.isBreakevenAchieved
+                    ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                    : 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
+                }`}
+              >
+                <Scale className="w-5 h-5" />
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="font-bold text-sm text-slate-900 dark:text-white">
+                    สถานะจุดคุ้มทุนรอบนี้ (Break-Even Status):
+                  </h3>
+                  <span
+                    className={`text-xs px-2.5 py-0.5 rounded-full font-bold ${
+                      breakEvenData.isBreakevenAchieved
+                        ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300'
+                        : 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300'
+                    }`}
+                  >
+                    {breakEvenData.isBreakevenAchieved
+                      ? `🎉 คุ้มทุนแล้ว (+${formatBaht(breakEvenData.surplusOrDeficit)})`
+                      : `⚡ ทำได้ ${breakEvenData.progressPct.toFixed(1)}% ของจุดคุ้มทุน`}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  {breakEvenData.isBreakevenAchieved
+                    ? `ยอดขายจริง ${formatBaht(breakEvenData.actualRevenue)} เกินจุดคุ้มทุนเป้าหมาย ${formatBaht(breakEvenData.breakEvenSales)} ส่วนเกินคือกำไรสุทธิล้วนๆ (Margin of Safety: +${breakEvenData.marginOfSafetyPct.toFixed(1)}%)`
+                    : `ยอดขายจริง ${formatBaht(breakEvenData.actualRevenue)} / เป้าหมายคุ้มทุน ${formatBaht(breakEvenData.breakEvenSales)} (ยังขาดอีก ${formatBaht(Math.abs(breakEvenData.surplusOrDeficit))} หรือราว ${Math.max(1, Math.ceil(Math.abs(breakEvenData.surplusOrDeficit) / (breakEvenData.avgTicket || 350)))} บิล)`}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-4 shrink-0">
+              <div className="w-40 sm:w-48">
+                <div className="flex justify-between text-[11px] font-semibold text-slate-500 mb-1">
+                  <span>ความคืบหน้า</span>
+                  <span className="font-mono font-bold text-slate-900 dark:text-white">
+                    {breakEvenData.progressPct.toFixed(0)}%
+                  </span>
+                </div>
+                <div className="w-full h-2.5 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all duration-500 ${
+                      breakEvenData.isBreakevenAchieved
+                        ? 'bg-gradient-to-r from-emerald-500 to-teal-400'
+                        : 'bg-gradient-to-r from-amber-500 to-orange-400'
+                    }`}
+                    style={{ width: `${Math.min(100, breakEvenData.progressPct)}%` }}
+                  />
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('breakeven');
+                  soundService.playTap();
+                }}
+                className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold transition flex items-center gap-1 cursor-pointer whitespace-nowrap"
+              >
+                <span>ดูวิเคราะห์จุดคุ้มทุน</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
             </div>
           </div>
 
@@ -1497,6 +1686,380 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ defaultTab = 'over
         </div>
       )}
 
+      {/* TAB: BREAK-EVEN ANALYSIS (วิเคราะห์จุดคุ้มทุนตามหลักสากล F&B) */}
+      {activeTab === 'breakeven' && (
+        <div className="space-y-6">
+          {/* Header Banner */}
+          <div className="p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <span className="p-2 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                  <Scale className="w-5 h-5" />
+                </span>
+                <h2 className="font-black text-lg text-slate-900 dark:text-white">
+                  การวิเคราะห์จุดคุ้มทุนร้านอาหาร (F&B Break-Even Analysis)
+                </h2>
+                <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 font-bold">
+                  มาตรฐานสากล
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 dark:text-slate-400 max-w-2xl">
+                คำนวณยอดขายขั้นต่ำที่ร้านต้องทำได้เพื่อให้ครอบคลุมต้นทุนคงที่ (ค่าเช่า เงินเดือน ค่าน้ำไฟ) และต้นทุนแปรผัน (วัตถุดิบ GP เดลิเวอรี) ยอดขายหลังจากจุดนี้คือ <strong>"กำไรสุทธิแท้จริงเข้ากระเป๋า"</strong>
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setTempOpEx(opExSettings);
+                  setShowOpExModal(true);
+                }}
+                className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold transition cursor-pointer flex items-center gap-1.5 border border-slate-200 dark:border-slate-700"
+              >
+                <Sliders className="w-3.5 h-3.5 text-amber-500" />
+                <span>ปรับตั้งต้นทุนคงที่ (Fixed Costs)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowReportModal(true)}
+                className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold transition shadow-xs cursor-pointer flex items-center gap-1.5"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span>พิมพ์รายงานจุดคุ้มทุน</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Status Result Callout Banner */}
+          <div
+            className={`p-5 rounded-3xl border shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4 ${
+              breakEvenData.isBreakevenAchieved
+                ? 'bg-gradient-to-r from-emerald-500/10 via-teal-500/10 to-emerald-500/5 border-emerald-500/40'
+                : 'bg-gradient-to-r from-amber-500/10 via-orange-500/10 to-amber-500/5 border-amber-500/40'
+            }`}
+          >
+            <div className="flex items-start gap-3.5">
+              <div
+                className={`p-3 rounded-2xl shrink-0 ${
+                  breakEvenData.isBreakevenAchieved
+                    ? 'bg-emerald-500 text-slate-950 font-black'
+                    : 'bg-amber-500 text-slate-950 font-black'
+                }`}
+              >
+                {breakEvenData.isBreakevenAchieved ? (
+                  <CheckCircle2 className="w-6 h-6" />
+                ) : (
+                  <AlertCircle className="w-6 h-6" />
+                )}
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <h3 className="font-black text-base text-slate-900 dark:text-white">
+                    {breakEvenData.isBreakevenAchieved
+                      ? '🎉 ยอดขายผ่านจุดคุ้มทุนแล้ว (In the Profit Zone!)'
+                      : '⚡ ยังไม่ถึงจุดคุ้มทุนสำหรับรอบเวลานี้'}
+                  </h3>
+                  <span
+                    className={`text-xs px-2.5 py-0.5 rounded-full font-bold ${
+                      breakEvenData.isBreakevenAchieved
+                        ? 'bg-emerald-500 text-slate-950'
+                        : 'bg-amber-500 text-slate-950'
+                    }`}
+                  >
+                    {breakEvenData.progressPct.toFixed(1)}% ของจุดคุ้มทุน
+                  </span>
+                </div>
+                <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                  {breakEvenData.isBreakevenAchieved
+                    ? `ยอดเงินรับจริง ${formatBaht(breakEvenData.actualRevenue)} สูงกว่าจุดคุ้มทุน ${formatBaht(breakEvenData.breakEvenSales)} ส่วนต่างที่เกิน ${formatBaht(breakEvenData.surplusOrDeficit)} คือกำไรที่ร้านได้รับอย่างแท้จริง ส่วนเผื่อเพื่อความปลอดภัย (Margin of Safety) อยู่ที่ +${breakEvenData.marginOfSafetyPct.toFixed(1)}%`
+                    : `ยอดเงินรับจริงปัจจุบันอยู่ที่ ${formatBaht(breakEvenData.actualRevenue)} จากเป้าหมายจุดคุ้มทุน ${formatBaht(breakEvenData.breakEvenSales)} ยังขาดอีก ${formatBaht(Math.abs(breakEvenData.surplusOrDeficit))} (ประมาณ ${Math.max(1, Math.ceil(Math.abs(breakEvenData.surplusOrDeficit) / (breakEvenData.avgTicket || 350)))} บิลลูกค้า) เพื่อคุ้มทุนคงที่ทั้งหมด`}
+                </p>
+              </div>
+            </div>
+
+            <div className="w-full md:w-56 shrink-0 bg-white/70 dark:bg-slate-900/70 p-3.5 rounded-2xl border border-slate-200/60 dark:border-slate-800">
+              <div className="flex justify-between text-xs font-semibold mb-1.5">
+                <span className="text-slate-500">ความคืบหน้าสู่จุดคุ้มทุน</span>
+                <span className="font-mono font-bold text-slate-900 dark:text-white">
+                  {breakEvenData.progressPct.toFixed(1)}%
+                </span>
+              </div>
+              <div className="w-full h-3 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all duration-700 ${
+                    breakEvenData.isBreakevenAchieved
+                      ? 'bg-gradient-to-r from-emerald-500 to-teal-400'
+                      : 'bg-gradient-to-r from-amber-500 to-orange-400'
+                  }`}
+                  style={{ width: `${Math.min(100, breakEvenData.progressPct)}%` }}
+                />
+              </div>
+              <div className="flex justify-between text-[10px] text-slate-400 mt-1 font-mono">
+                <span>0฿</span>
+                <span>จุดคุ้มทุน {formatBaht(breakEvenData.breakEvenSales)}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* 4 Break-Even Core KPI Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* 1. Break-Even Sales */}
+            <div className="p-4 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-xs flex flex-col justify-between">
+              <div className="flex items-center justify-between text-slate-500 mb-1">
+                <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                  ยอดขายจุดคุ้มทุน (BEP Target)
+                </span>
+                <span className="p-1.5 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                  <Target className="w-4 h-4" />
+                </span>
+              </div>
+              <div className="text-2xl font-black font-mono text-amber-600 dark:text-amber-400">
+                {formatBaht(breakEvenData.breakEvenSales)}
+              </div>
+              <div className="text-[11px] text-slate-400 mt-2">
+                ยอดขายขั้นต่ำที่ร้านต้องทำได้ในรอบ {period === 'today' ? '1 วัน' : period === 'week' ? '1 สัปดาห์' : period === 'month' ? '1 เดือน' : '1 ปี'} เพื่อไม่ขาดทุน
+              </div>
+            </div>
+
+            {/* 2. Fixed Costs */}
+            <div className="p-4 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-xs flex flex-col justify-between">
+              <div className="flex items-center justify-between text-slate-500 mb-1">
+                <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                  ต้นทุนคงที่รอบนี้ (Fixed Costs)
+                </span>
+                <span className="p-1.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400">
+                  <Building className="w-4 h-4" />
+                </span>
+              </div>
+              <div className="text-2xl font-black font-mono text-rose-600 dark:text-rose-400">
+                {formatBaht(breakEvenData.periodFixedCost)}
+              </div>
+              <div className="text-[11px] text-slate-400 mt-2 space-y-0.5">
+                <div>ค่าเช่า: {formatBaht(period === 'today' ? breakEvenData.rentCost / 30 : breakEvenData.rentCost)}</div>
+                <div>เงินเดือน: {formatBaht(period === 'today' ? breakEvenData.salariesCost / 30 : breakEvenData.salariesCost)}</div>
+              </div>
+            </div>
+
+            {/* 3. Contribution Margin Ratio (CMR) */}
+            <div className="p-4 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-xs flex flex-col justify-between">
+              <div className="flex items-center justify-between text-slate-500 mb-1">
+                <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                  อัตรากำไรส่วนเกิน (CMR %)
+                </span>
+                <span className="p-1.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400">
+                  <Percent className="w-4 h-4" />
+                </span>
+              </div>
+              <div className="text-2xl font-black font-mono text-emerald-600 dark:text-emerald-400">
+                {(breakEvenData.cmRatio * 100).toFixed(1)}%
+              </div>
+              <div className="text-[11px] text-slate-400 mt-2">
+                ทุกๆ 100 บาทที่ขายได้ จะเหลือกำไรส่วนเกิน <span className="font-bold text-emerald-600">{(breakEvenData.cmRatio * 100).toFixed(1)} บาท</span> เพื่อไปตัดค่าใช้จ่ายคงที่
+              </div>
+            </div>
+
+            {/* 4. Break-Even Order Count */}
+            <div className="p-4 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-xs flex flex-col justify-between">
+              <div className="flex items-center justify-between text-slate-500 mb-1">
+                <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                  จำนวนบิลที่ต้องขาย (Orders)
+                </span>
+                <span className="p-1.5 rounded-xl bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400">
+                  <Receipt className="w-4 h-4" />
+                </span>
+              </div>
+              <div className="text-2xl font-black font-mono text-blue-600 dark:text-blue-400">
+                {Math.ceil(breakEvenData.breakEvenBills)} <span className="text-sm font-normal">บิล</span>
+              </div>
+              <div className="text-[11px] text-slate-400 mt-2">
+                คำนวณจากยอดเฉลี่ย {formatBaht(breakEvenData.avgTicket)}/บิล (ปัจจุบันขายได้แล้ว {pnl.paidBillsCount} บิล)
+              </div>
+            </div>
+          </div>
+
+          {/* Interactive Target Profit Simulator (เครื่องคำนวณกำไรเป้าหมาย) */}
+          <div className="p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div>
+                <h3 className="font-bold text-base text-slate-900 dark:text-white flex items-center gap-2">
+                  <span className="p-1.5 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                    <Calculator className="w-4 h-4" />
+                  </span>
+                  <span>เครื่องมือจำลองเป้าหมายกำไร (Target Profit Calculator)</span>
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  สูตรคำนวณ: ยอดขายเป้าหมาย = (ต้นทุนคงที่ + กำไรที่ต้องการ) ÷ อัตรากำไรส่วนเกิน (CMR)
+                </p>
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                {[10000, 30000, 50000, 100000].map((amt) => (
+                  <button
+                    key={amt}
+                    type="button"
+                    onClick={() => {
+                      setSimulatedTargetProfit(amt);
+                      soundService.playTap();
+                    }}
+                    className={`px-2.5 py-1 rounded-xl text-xs font-bold transition cursor-pointer ${
+                      simulatedTargetProfit === amt
+                        ? 'bg-amber-500 text-slate-950 font-black'
+                        : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
+                    }`}
+                  >
+                    +{formatNumber(amt)}฿
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
+                  ระบุกำไรสุทธิที่คุณต้องการในรอบนี้ (บาท):
+                </label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    min={0}
+                    step={1000}
+                    value={simulatedTargetProfit}
+                    onChange={(e) => setSimulatedTargetProfit(Math.max(0, Number(e.target.value)))}
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 font-mono font-bold text-base text-slate-900 dark:text-white"
+                  />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
+                    บาท
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400 mt-2">
+                  ปรับตัวเลขเพื่อดูว่าต้องตั้งเป้าทำยอดขายและลูกค้าเท่าไร
+                </p>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex flex-col justify-between">
+                <div>
+                  <span className="text-xs font-bold text-amber-900 dark:text-amber-300 block mb-1">
+                    ยอดขายที่ต้องทำได้เพื่อให้ได้กำไรนี้
+                  </span>
+                  <div className="text-2xl font-black font-mono text-amber-600 dark:text-amber-400">
+                    {formatBaht(breakEvenData.targetSales)}
+                  </div>
+                </div>
+                <div className="text-[11px] text-amber-800 dark:text-amber-300/80 mt-2">
+                  (ต้นทุนคงที่ {formatBaht(breakEvenData.periodFixedCost)} + กำไร {formatBaht(simulatedTargetProfit)}) ÷ {((breakEvenData.cmRatio || 0.65) * 100).toFixed(1)}%
+                </div>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/40 flex flex-col justify-between">
+                <div>
+                  <span className="text-xs font-bold text-blue-900 dark:text-blue-300 block mb-1">
+                    จำนวนบิลลูกค้าที่ต้องรับ
+                  </span>
+                  <div className="text-2xl font-black font-mono text-blue-600 dark:text-blue-400">
+                    {Math.ceil(breakEvenData.targetBills)} <span className="text-sm font-normal">บิล</span>
+                  </div>
+                </div>
+                <div className="text-[11px] text-blue-700 dark:text-blue-300/80 mt-2">
+                  เฉลี่ย {Math.max(1, Math.ceil(breakEvenData.targetBills / (period === 'month' ? 30 : period === 'week' ? 7 : 1)))} บิล/วัน (อิง {formatBaht(breakEvenData.avgTicket)}/บิล)
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Cost Structure Breakdown (Fixed vs Variable) */}
+          <div className="p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-4">
+            <h3 className="font-bold text-base text-slate-900 dark:text-white flex items-center gap-2">
+              <span className="p-1.5 rounded-xl bg-purple-500/10 text-purple-600 dark:text-purple-400">
+                <Layers className="w-4 h-4" />
+              </span>
+              <span>โครงสร้างต้นทุนร้านอาหาร (Fixed Costs vs Variable Costs)</span>
+            </h3>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+              {/* Fixed Costs Breakdown */}
+              <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700 space-y-2.5">
+                <div className="flex items-center justify-between font-bold text-slate-900 dark:text-white border-b border-slate-200 dark:border-slate-700 pb-2">
+                  <span>🏢 ต้นทุนคงที่ (Fixed Costs - จ่ายเท่าเดิมแม้ไม่มียอดขาย)</span>
+                  <span className="font-mono text-rose-600">{formatBaht(breakEvenData.periodFixedCost)}</span>
+                </div>
+                <div className="space-y-1.5 font-medium">
+                  <div className="flex justify-between">
+                    <span className="text-slate-600 dark:text-slate-400">• ค่าเช่าสถานที่และพื้นที่ร้าน</span>
+                    <span className="font-mono">{formatBaht(period === 'today' ? breakEvenData.rentCost / 30 : breakEvenData.rentCost)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-600 dark:text-slate-400">• เงินเดือนพนักงานประจำ / ผู้จัดการ</span>
+                    <span className="font-mono">{formatBaht(period === 'today' ? breakEvenData.salariesCost / 30 : breakEvenData.salariesCost)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-600 dark:text-slate-400">• สาธารณูปโภค ค่าเน็ต ค่าระบบ POS</span>
+                    <span className="font-mono">{formatBaht(period === 'today' ? breakEvenData.utilitiesCost / 30 : breakEvenData.utilitiesCost)}</span>
+                  </div>
+                  {opExSettings.customFixedExpense > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-slate-600 dark:text-slate-400">• ค่าใช้จ่ายคงที่อื่นๆ ที่ระบุ</span>
+                      <span className="font-mono">{formatBaht(opExSettings.customFixedExpense)}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Variable Costs Breakdown */}
+              <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700 space-y-2.5">
+                <div className="flex items-center justify-between font-bold text-slate-900 dark:text-white border-b border-slate-200 dark:border-slate-700 pb-2">
+                  <span>🍲 ต้นทุนแปรผัน (Variable Costs - ผันแปรตามยอดขาย)</span>
+                  <span className="font-mono text-amber-600">{formatBaht(pnl.totalCogs + pnl.totalGpFee + pnl.totalPackagingCost)}</span>
+                </div>
+                <div className="space-y-1.5 font-medium">
+                  <div className="flex justify-between">
+                    <span className="text-slate-600 dark:text-slate-400">• ต้นทุนวัตถุดิบอาหารและเครื่องดื่ม (COGS)</span>
+                    <span className="font-mono">{formatBaht(pnl.totalCogs)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-600 dark:text-slate-400">• ค่าคอมมิชชั่น GP แพลตฟอร์มเดลิเวอรี</span>
+                    <span className="font-mono">{formatBaht(pnl.totalGpFee)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-600 dark:text-slate-400">• ค่ากล่องและบรรจุภัณฑ์เดลิเวอรี</span>
+                    <span className="font-mono">{formatBaht(pnl.totalPackagingCost)}</span>
+                  </div>
+                  <div className="flex justify-between pt-1 border-t border-slate-200 dark:border-slate-700 font-bold">
+                    <span className="text-slate-800 dark:text-slate-200">สัดส่วนต้นทุนแปรผันต่อยอดขาย</span>
+                    <span className="font-mono">{pnl.netRealizedRevenue > 0 ? (((pnl.totalCogs + pnl.totalGpFee + pnl.totalPackagingCost) / pnl.netRealizedRevenue) * 100).toFixed(1) : 0}%</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Strategy Guidelines to Lower Break-Even Point */}
+          <div className="p-5 rounded-3xl bg-amber-500/10 border border-amber-500/30 flex items-start gap-3 text-xs text-amber-950 dark:text-amber-200">
+            <Sparkles className="w-5 h-5 shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" />
+            <div className="space-y-1.5">
+              <span className="font-bold text-sm text-amber-900 dark:text-amber-300">
+                4 กลยุทธ์ลดจุดคุ้มทุนเพื่อทำกำไรเร็วขึ้น (F&B Break-Even Optimization Playbook):
+              </span>
+              <ul className="list-disc pl-4 space-y-1 text-slate-700 dark:text-slate-300 leading-relaxed">
+                <li>
+                  <strong>เพิ่ม Contribution Margin Ratio (CMR):</strong> ควบคุม Yield วัตถุดิบและลด Waste การเพิ่ม CMR จาก 60% เป็น 70% จะช่วยลดจุดคุ้มทุนลงได้ทันที 14%
+                </li>
+                <li>
+                  <strong>เพิ่ม Average Ticket Size (ยอดเฉลี่ยต่อบิล):</strong> ฝึกพนักงาน Up-selling แนะนำเซ็ตคู่เครื่องดื่มและเมนูทานเล่น จะช่วยลดจำนวนบิลที่ต้องขายให้ถึงจุดคุ้มทุน
+                </li>
+                <li>
+                  <strong>ปรับราคาเดลิเวอรีชดเชย GP:</strong> ตั้งราคาบน Grab/LINE MAN ให้ครอบคลุม GP 30% และค่ากล่อง เพื่อไม่ให้ยอดขายเดลิเวอรีมาดึง Margin รวมของร้านให้ต่ำลง
+                </li>
+                <li>
+                  <strong>คุม Prime Cost ต่ำกว่า 60%:</strong> รักษายอดรวม (COGS + ค่าแรง) ให้อยู่ในกรอบ 55-60% ของยอดขาย จะการันตีว่าร้านจะมีกำไรสุทธิเหลือเข้ากระเป๋าแน่นอน
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* TAB 2: MENU PROFITABILITY & MENU ENGINEERING */}
       {activeTab === 'menu_profit' && (
         <div className="space-y-6">
@@ -1960,6 +2523,60 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ defaultTab = 'over
                   </div>
                 </div>
               </div>
+
+              {/* Break-Even Fixed Costs Settings */}
+              <div className="pt-2 border-t border-slate-200 dark:border-slate-700">
+                <span className="font-bold text-amber-600 dark:text-amber-400 block mb-2 flex items-center gap-1.5">
+                  <Building className="w-3.5 h-3.5" />
+                  <span>ต้นทุนคงที่สำหรับวิเคราะห์จุดคุ้มทุน (Fixed Costs for Break-Even)</span>
+                </span>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      ค่าเช่าร้านต่อเดือน (บาท)
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      step={1000}
+                      value={tempOpEx.monthlyRent}
+                      onChange={(e) => setTempOpEx({ ...tempOpEx, monthlyRent: Number(e.target.value) })}
+                      className="w-full px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 font-mono font-bold text-xs"
+                      placeholder="25000"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      เงินเดือนพนักงานประจำต่อเดือน (บาท)
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      step={1000}
+                      value={tempOpEx.monthlyFixedSalaries}
+                      onChange={(e) => setTempOpEx({ ...tempOpEx, monthlyFixedSalaries: Number(e.target.value) })}
+                      className="w-full px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 font-mono font-bold text-xs"
+                      placeholder="35000"
+                    />
+                  </div>
+
+                  <div className="col-span-2">
+                    <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      ค่าน้ำไฟ เน็ต และระบบ POS ต่อเดือน (บาท)
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      step={1000}
+                      value={tempOpEx.monthlyUtilitiesFixed}
+                      onChange={(e) => setTempOpEx({ ...tempOpEx, monthlyUtilitiesFixed: Number(e.target.value) })}
+                      className="w-full px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 font-mono font-bold text-xs"
+                      placeholder="10000"
+                    />
+                  </div>
+                </div>
+              </div>
             </div>
 
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
@@ -2159,6 +2776,33 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ defaultTab = 'over
             </div>
           </div>
         </Modal>
+      )}
+
+      {/* MODAL: Official F&B Financial Report & Statement */}
+      {showReportModal && (
+        <FinancialReportModal
+          isOpen={true}
+          onClose={() => setShowReportModal(false)}
+          period={period}
+          selectedDate={selectedDate}
+          customStartDate={customStartDate}
+          customEndDate={customEndDate}
+          pnl={pnl}
+          channelComparison={channelComparison}
+          breakEvenData={breakEvenData}
+          currentShift={currentShift}
+          paidBills={paidBills}
+          topProfitableDishes={menuProfitabilityList.map((m) => ({
+            name: m.name,
+            qty: m.qty,
+            revenue: m.revenue,
+            cogs: m.cogs,
+            profit: m.profit,
+            marginPct: m.revenue > 0 ? (m.profit / m.revenue) * 100 : 0,
+          }))}
+          settings={settings}
+          currentUser={currentUser}
+        />
       )}
     </div>
   );
