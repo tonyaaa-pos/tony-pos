@@ -884,7 +884,7 @@ export const MenuManagementView: React.FC = () => {
                 </div>
 
                 {/* Variants preview & prices */}
-                <div className="pt-2 border-t border-slate-100 dark:border-slate-800 text-xs">
+                <div className="pt-2 border-t border-slate-100 dark:border-slate-800 text-xs space-y-1.5">
                   <div className="flex items-center justify-between">
                     <span className="text-slate-400">
                       {variantCount} {t('food_detail_options_title')}:
@@ -903,6 +903,41 @@ export const MenuManagementView: React.FC = () => {
                       )}
                     </span>
                   </div>
+
+                  {/* Financial Breakdown per dish (Cost, Profit, Margin) */}
+                  {(() => {
+                    const primaryPrice = item.variants?.[0]?.price ?? item.price ?? 0;
+                    const primaryCost = item.variants?.[0]?.cost ?? item.cost ?? 0;
+                    const profit = Math.max(0, primaryPrice - primaryCost);
+                    const marginPct = primaryPrice > 0 ? (profit / primaryPrice) * 100 : 0;
+
+                    return (
+                      <div className="grid grid-cols-3 gap-1 p-1.5 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-100 dark:border-slate-800 text-[10px]">
+                        <div>
+                          <span className="text-slate-400 block text-[9px]">ต้นทุน/จาน</span>
+                          <span className="font-mono font-bold text-rose-500">
+                            {primaryCost > 0 ? formatBaht(primaryCost) : '฿0'}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-slate-400 block text-[9px]">กำไร/จาน</span>
+                          <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                            +{formatBaht(profit)}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-slate-400 block text-[9px]">% Margin</span>
+                          <span
+                            className={`font-mono font-bold ${
+                              marginPct >= 65 ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600'
+                            }`}
+                          >
+                            {marginPct.toFixed(0)}%
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 {/* Actions */}
@@ -1142,107 +1177,155 @@ export const MenuManagementView: React.FC = () => {
               </div>
 
               <div className="space-y-2">
-                {(editingItem.variants || []).map((variant, idx) => (
-                  <div
-                    key={variant.id || idx}
-                    className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row items-stretch sm:items-center gap-2"
-                  >
-                    <div className="flex items-center gap-1 shrink-0">
-                      <button
-                        type="button"
-                        disabled={idx === 0}
-                        onClick={() => handleMoveVariant(idx, 'up')}
-                        className={`p-1 rounded text-slate-400 hover:text-slate-600 ${
-                          idx === 0 ? 'opacity-30 cursor-not-allowed' : 'cursor-pointer'
-                        }`}
-                        title="เลื่อนขึ้น"
-                      >
-                        <ArrowUp className="w-3 h-3" />
-                      </button>
-                      <button
-                        type="button"
-                        disabled={idx === (editingItem.variants?.length || 1) - 1}
-                        onClick={() => handleMoveVariant(idx, 'down')}
-                        className={`p-1 rounded text-slate-400 hover:text-slate-600 ${
-                          idx === (editingItem.variants?.length || 1) - 1
-                            ? 'opacity-30 cursor-not-allowed'
-                            : 'cursor-pointer'
-                        }`}
-                        title="เลื่อนลง"
-                      >
-                        <ArrowDown className="w-3 h-3" />
-                      </button>
-                    </div>
+                <div className="hidden sm:flex items-center text-[11px] font-bold text-slate-500 pl-8 pr-2 gap-2">
+                  <div className="flex-1">ชื่อตัวเลือกย่อย (ไทย / อังกฤษ)</div>
+                  <div className="w-20 text-center">ราคาขาย (฿)</div>
+                  <div className="w-16 text-center">ต้นทุน (฿)</div>
+                  <div className="w-24 text-center">หมด/พร้อมขาย</div>
+                  <div className="w-8"></div>
+                </div>
 
-                    <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      <input
-                        type="text"
-                        required
-                        placeholder={t('menu_form_option_name_th')}
-                        value={variant.name}
-                        onChange={(e) => handleUpdateVariant(idx, { name: e.target.value })}
-                        className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs bg-slate-50 dark:bg-slate-800"
-                      />
-                      <input
-                        type="text"
-                        placeholder={t('menu_form_option_name_en')}
-                        value={variant.nameEn || ''}
-                        onChange={(e) => handleUpdateVariant(idx, { nameEn: e.target.value })}
-                        className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs bg-slate-50 dark:bg-slate-800"
-                      />
-                    </div>
+                {(editingItem.variants || []).map((variant, idx) => {
+                  const varPrice = Number(variant.price) || 0;
+                  const varCost = Number(variant.cost) || 0;
+                  const varProfit = Math.max(0, varPrice - varCost);
+                  const varMarginPct = varPrice > 0 ? (varProfit / varPrice) * 100 : 0;
+                  const varFoodCostPct = varPrice > 0 ? (varCost / varPrice) * 100 : 0;
 
-                    <div className="flex items-center gap-2 shrink-0">
-                      <div className="w-20">
-                        <input
-                          type="number"
-                          required
-                          min={0}
-                          placeholder={t('price')}
-                          value={variant.price}
-                          onChange={(e) =>
-                            handleUpdateVariant(idx, { price: Number(e.target.value) })
-                          }
-                          className="w-full px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-mono font-bold bg-slate-50 dark:bg-slate-800 text-amber-600 dark:text-amber-400"
-                        />
+                  return (
+                    <div
+                      key={variant.id || idx}
+                      className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 flex flex-col gap-2"
+                    >
+                      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            disabled={idx === 0}
+                            onClick={() => handleMoveVariant(idx, 'up')}
+                            className={`p-1 rounded text-slate-400 hover:text-slate-600 ${
+                              idx === 0 ? 'opacity-30 cursor-not-allowed' : 'cursor-pointer'
+                            }`}
+                            title="เลื่อนขึ้น"
+                          >
+                            <ArrowUp className="w-3 h-3" />
+                          </button>
+                          <button
+                            type="button"
+                            disabled={idx === (editingItem.variants?.length || 1) - 1}
+                            onClick={() => handleMoveVariant(idx, 'down')}
+                            className={`p-1 rounded text-slate-400 hover:text-slate-600 ${
+                              idx === (editingItem.variants?.length || 1) - 1
+                                ? 'opacity-30 cursor-not-allowed'
+                                : 'cursor-pointer'
+                            }`}
+                            title="เลื่อนลง"
+                          >
+                            <ArrowDown className="w-3 h-3" />
+                          </button>
+                        </div>
+
+                        <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          <input
+                            type="text"
+                            required
+                            placeholder={t('menu_form_option_name_th')}
+                            value={variant.name}
+                            onChange={(e) => handleUpdateVariant(idx, { name: e.target.value })}
+                            className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs bg-slate-50 dark:bg-slate-800"
+                          />
+                          <input
+                            type="text"
+                            placeholder={t('menu_form_option_name_en')}
+                            value={variant.nameEn || ''}
+                            onChange={(e) => handleUpdateVariant(idx, { nameEn: e.target.value })}
+                            className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs bg-slate-50 dark:bg-slate-800"
+                          />
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          <div className="w-20">
+                            <input
+                              type="number"
+                              required
+                              min={0}
+                              placeholder={t('price')}
+                              value={variant.price}
+                              onChange={(e) =>
+                                handleUpdateVariant(idx, { price: Number(e.target.value) })
+                              }
+                              className="w-full px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-mono font-bold bg-slate-50 dark:bg-slate-800 text-amber-600 dark:text-amber-400"
+                            />
+                          </div>
+
+                          <div className="w-16">
+                            <input
+                              type="number"
+                              min={0}
+                              placeholder={t('cost')}
+                              value={variant.cost}
+                              onChange={(e) =>
+                                handleUpdateVariant(idx, { cost: Number(e.target.value) })
+                              }
+                              className="w-full px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-mono bg-slate-50 dark:bg-slate-800 text-slate-500"
+                            />
+                          </div>
+
+                          <label className="flex items-center gap-1 cursor-pointer text-[11px] text-slate-600 dark:text-slate-400">
+                            <input
+                              type="checkbox"
+                              checked={variant.isSoldOut || false}
+                              onChange={(e) =>
+                                handleUpdateVariant(idx, { isSoldOut: e.target.checked })
+                              }
+                              className="w-3.5 h-3.5 rounded text-rose-500"
+                            />
+                            <span>{t('menu_form_option_sold_out')}</span>
+                          </label>
+
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteVariant(idx)}
+                            className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition cursor-pointer"
+                            title={t('delete')}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
 
-                      <div className="w-16">
-                        <input
-                          type="number"
-                          min={0}
-                          placeholder={t('cost')}
-                          value={variant.cost}
-                          onChange={(e) =>
-                            handleUpdateVariant(idx, { cost: Number(e.target.value) })
-                          }
-                          className="w-full px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-mono bg-slate-50 dark:bg-slate-800 text-slate-500"
-                        />
-                      </div>
-
-                      <label className="flex items-center gap-1 cursor-pointer text-[11px] text-slate-600 dark:text-slate-400">
-                        <input
-                          type="checkbox"
-                          checked={variant.isSoldOut || false}
-                          onChange={(e) =>
-                            handleUpdateVariant(idx, { isSoldOut: e.target.checked })
-                          }
-                          className="w-3.5 h-3.5 rounded text-rose-500"
-                        />
-                        <span>{t('menu_form_option_sold_out')}</span>
-                      </label>
-
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteVariant(idx)}
-                        className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition cursor-pointer"
-                        title={t('delete')}
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      {/* Live Profit and Food Cost percentage indicators */}
+                      {varPrice > 0 && (
+                        <div className="flex items-center justify-between text-[11px] pt-1.5 border-t border-slate-100 dark:border-slate-800 text-slate-500 pl-7 pr-2">
+                          <div className="flex items-center gap-1.5">
+                            <span>กำไรขั้นต้น/จาน:</span>
+                            <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                              +{formatBaht(varProfit)}
+                            </span>
+                            <span className="text-slate-400 text-[10px]">
+                              (Margin: {varMarginPct.toFixed(0)}%)
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <span>Food Cost:</span>
+                            <span
+                              className={`font-mono font-bold ${
+                                varFoodCostPct <= 35
+                                  ? 'text-emerald-600 dark:text-emerald-400'
+                                  : 'text-amber-600'
+                              }`}
+                            >
+                              {varFoodCostPct.toFixed(1)}%
+                            </span>
+                            <span className="text-[10px] text-slate-400">
+                              {varFoodCostPct <= 35 ? '(✅ อยู่ในเกณฑ์ 28-35%)' : '(⚠️ สูงกว่าเกณฑ์สากล)'}
+                            </span>
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
 
