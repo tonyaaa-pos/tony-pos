@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { Bill, ShopSettings, User, Shift } from '../../types';
 import { TimeFilterPeriod } from './DashboardView';
 import { formatBaht, formatThaiDateTime } from '../../utils/formatters';
@@ -116,6 +116,7 @@ export const FinancialReportModal: React.FC<FinancialReportModalProps> = ({
   currentUser,
 }) => {
   const printAreaRef = useRef<HTMLDivElement>(null);
+  const [printBlobUrl, setPrintBlobUrl] = useState<string>('');
 
   if (!isOpen) return null;
 
@@ -156,9 +157,161 @@ export const FinancialReportModal: React.FC<FinancialReportModalProps> = ({
       ? 'รายงานงบการเงินประจำปี (Annual Financial Statement & P&L)'
       : 'รายงานสรุปผลประกอบการและจุดคุ้มทุน (Financial & Break-Even Statement)';
 
-  // Print function
+  // Build fully standalone, un-sandboxed HTML document for printing
+  const buildPrintableHtml = (contentHtml: string) => {
+    return `<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${settings.shopName} - ${reportTypeTitle}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Sarabun:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    * { box-sizing: border-box; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+    body {
+      font-family: 'Sarabun', 'Noto Sans Thai', sans-serif;
+      background-color: #ffffff;
+      color: #0f172a;
+      padding: 24px;
+      margin: 0;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    @page {
+      size: A4 portrait;
+      margin: 8mm 10mm;
+    }
+    @media print {
+      .no-print { display: none !important; }
+      body { padding: 0 !important; background: #ffffff !important; }
+    }
+    .no-print-bar {
+      background: #0f172a;
+      color: #ffffff;
+      padding: 14px 24px;
+      margin: -24px -24px 24px -24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 3px solid #f59e0b;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.15);
+    }
+    .print-btn {
+      background: #f59e0b;
+      color: #020617;
+      border: none;
+      padding: 10px 24px;
+      font-size: 14px;
+      font-weight: 900;
+      border-radius: 12px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      box-shadow: 0 2px 8px rgba(245,158,11,0.4);
+    }
+    .print-btn:hover { background: #d97706; }
+    .close-btn {
+      background: #334155;
+      color: #ffffff;
+      border: none;
+      padding: 10px 18px;
+      font-size: 13px;
+      font-weight: 700;
+      border-radius: 12px;
+      cursor: pointer;
+    }
+    .close-btn:hover { background: #475569; }
+  </style>
+</head>
+<body>
+  <div class="no-print no-print-bar">
+    <div>
+      <div style="font-weight: 900; font-size: 16px;">🖨️ หน้าต่างสั่งพิมพ์รายงานงบการเงิน (${settings.shopName})</div>
+      <div style="font-size: 11px; color: #94a3b8; margin-top: 2px;">
+        ระบบกำลังส่งคำสั่งพิมพ์ไปยังเครื่องพิมพ์ (Printer) ที่ต่ออยู่กับเครื่องคอมพิวเตอร์ของคุณอัตโนมัติ
+      </div>
+    </div>
+    <div style="display: flex; gap: 10px;">
+      <button class="print-btn" onclick="window.focus(); window.print();">
+        🖨️ สั่งพิมพ์เอกสารออกเครื่องปริ้น (Print Now)
+      </button>
+      <button class="close-btn" onclick="window.close();">
+        ✕ ปิดหน้าต่างนี้
+      </button>
+    </div>
+  </div>
+
+  <div class="report-content max-w-4xl mx-auto">
+    ${contentHtml}
+  </div>
+
+  <script>
+    window.addEventListener('load', function() {
+      setTimeout(function() {
+        window.focus();
+        window.print();
+      }, 400);
+    });
+  </script>
+</body>
+</html>`;
+  };
+
+  // Pre-generate blob URL whenever modal is opened
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const timer = setTimeout(() => {
+      const content = printAreaRef.current?.innerHTML || '';
+      if (!content) return;
+      const html = buildPrintableHtml(content);
+      const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      setPrintBlobUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return url;
+      });
+    }, 60);
+
+    return () => clearTimeout(timer);
+  }, [isOpen, pnl, breakEvenData, channelComparison, period, selectedDate, settings]);
+
+  // Direct print function that opens un-sandboxed tab and auto-launches system printer dialog
   const handlePrint = () => {
-    window.print();
+    // 1. Try opening the prepared blob URL in a new un-sandboxed window/tab
+    if (printBlobUrl) {
+      const win = window.open(printBlobUrl, '_blank');
+      if (win) {
+        win.focus();
+        return;
+      }
+    }
+
+    // 2. On-the-fly generation if clicked before timer finished
+    const content = printAreaRef.current?.innerHTML || '';
+    if (content) {
+      const html = buildPrintableHtml(content);
+      const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      setPrintBlobUrl(url);
+      const win = window.open(url, '_blank');
+      if (win) {
+        win.focus();
+        return;
+      }
+    }
+
+    // 3. Fallback: native window.print() if outside sandbox
+    try {
+      window.focus();
+      window.print();
+    } catch (err) {
+      console.warn('Native window.print() suppressed by sandbox', err);
+    }
   };
 
   // Export to CSV function (with Thai UTF-8 BOM)
@@ -253,8 +406,8 @@ export const FinancialReportModal: React.FC<FinancialReportModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 print:p-0 print:bg-white print:static">
-      <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-4xl w-full border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden flex flex-col max-h-[95vh] print:max-h-none print:shadow-none print:border-none print:w-full print:rounded-none">
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 print:p-0 print:bg-white print:static print:overflow-visible print:block">
+      <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-4xl w-full border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden flex flex-col max-h-[95vh] print:max-h-none print:shadow-none print:border-none print:w-full print:rounded-none print:overflow-visible print:static print:block">
         {/* Modal Toolbar (hidden on print) */}
         <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50 dark:bg-slate-800/60 print:hidden">
           <div className="flex items-center gap-2.5">
@@ -279,14 +432,29 @@ export const FinancialReportModal: React.FC<FinancialReportModalProps> = ({
               <span>ส่งออก CSV (Excel)</span>
             </button>
 
-            <button
-              type="button"
-              onClick={handlePrint}
-              className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold shadow-xs transition flex items-center gap-1.5 cursor-pointer"
+            <a
+              href={printBlobUrl || '#'}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => {
+                if (!printBlobUrl) {
+                  e.preventDefault();
+                  handlePrint();
+                }
+              }}
+              onMouseEnter={() => {
+                if (!printBlobUrl && printAreaRef.current?.innerHTML) {
+                  const html = buildPrintableHtml(printAreaRef.current.innerHTML);
+                  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+                  setPrintBlobUrl(URL.createObjectURL(blob));
+                }
+              }}
+              className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black shadow-md transition flex items-center gap-1.5 cursor-pointer active:scale-95 no-underline select-none"
+              title="สั่งพิมพ์รายงานออกเครื่องปริ้นที่เชื่อมต่อกับคอมพิวเตอร์ทันที"
             >
               <Printer className="w-4 h-4" />
-              <span>สั่งพิมพ์ / บันทึก PDF</span>
-            </button>
+              <span>พิมพ์ออกเครื่องปริ้น (Print)</span>
+            </a>
 
             <button
               type="button"
@@ -301,7 +469,8 @@ export const FinancialReportModal: React.FC<FinancialReportModalProps> = ({
         {/* Printable Paper Content */}
         <div
           ref={printAreaRef}
-          className="p-6 sm:p-8 overflow-y-auto space-y-6 text-slate-800 dark:text-slate-100 print:text-black print:p-0 print:space-y-4"
+          id="printable-financial-report"
+          className="p-6 sm:p-8 overflow-y-auto space-y-6 text-slate-800 dark:text-slate-100 print:text-black print:p-0 print:space-y-4 print:overflow-visible print:block"
         >
           {/* Header & Restaurant Info */}
           <div className="border-b-2 border-slate-800 dark:border-slate-300 pb-4 flex flex-col sm:flex-row sm:items-start justify-between gap-4">
@@ -711,13 +880,38 @@ export const FinancialReportModal: React.FC<FinancialReportModalProps> = ({
             รายงานนี้ถูกรับรองตามมาตรฐานการเงินร้านอาหารสากล (F&B Operations Framework)
           </span>
 
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-5 py-2 rounded-xl bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-200 font-bold transition cursor-pointer"
-          >
-            ปิดหน้าต่าง
-          </button>
+          <div className="flex items-center gap-2">
+            <a
+              href={printBlobUrl || '#'}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => {
+                if (!printBlobUrl) {
+                  e.preventDefault();
+                  handlePrint();
+                }
+              }}
+              onMouseEnter={() => {
+                if (!printBlobUrl && printAreaRef.current?.innerHTML) {
+                  const html = buildPrintableHtml(printAreaRef.current.innerHTML);
+                  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+                  setPrintBlobUrl(URL.createObjectURL(blob));
+                }
+              }}
+              className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black shadow-xs transition flex items-center gap-1.5 cursor-pointer active:scale-95 no-underline select-none"
+              title="สั่งพิมพ์รายงานออกเครื่องปริ้นที่เชื่อมต่อกับคอมพิวเตอร์ทันที"
+            >
+              <Printer className="w-4 h-4" />
+              <span>พิมพ์ออกเครื่องปริ้น (Print)</span>
+            </a>
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-5 py-2 rounded-xl bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-200 font-bold transition cursor-pointer"
+            >
+              ปิดหน้าต่าง
+            </button>
+          </div>
         </div>
       </div>
     </div>

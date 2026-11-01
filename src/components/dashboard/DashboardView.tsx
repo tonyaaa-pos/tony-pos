@@ -1727,7 +1727,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ defaultTab = 'over
                 className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold transition shadow-xs cursor-pointer flex items-center gap-1.5"
               >
                 <Printer className="w-3.5 h-3.5" />
-                <span>พิมพ์รายงานจุดคุ้มทุน</span>
+                <span>พิมพ์รายงานออกเครื่องปริ้น</span>
               </button>
             </div>
           </div>
