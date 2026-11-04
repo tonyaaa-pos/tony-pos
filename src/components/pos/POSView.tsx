@@ -22,6 +22,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Edit,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { INITIAL_CATEGORIES, INITIAL_MENU_ITEMS } from '../../data/seedData';
 import { formatBaht } from '../../utils/formatters';
@@ -105,6 +106,7 @@ export const POSView: React.FC = () => {
     updateBillDeliveryInfo,
     assignTableToBill,
     addItemsToBill,
+    updateBillItemQuantity,
     removeUnsentItemFromBill,
     confirmOrder,
     voidOrderItem,
@@ -131,6 +133,8 @@ export const POSView: React.FC = () => {
   const holdIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const isLongPressTriggeredRef = useRef<boolean>(false);
   const startPosRef = useRef<{ x: number; y: number } | null>(null);
+  const pressStartTimeRef = useRef<number>(0);
+  const lastOrderTimestampRef = useRef<number>(0);
 
   // Blocked payment and table selection modals
   const [showBlockedDialog, setShowBlockedDialog] = useState(false);
@@ -251,6 +255,64 @@ export const POSView: React.FC = () => {
     soundService.playSuccessTap();
   };
 
+  // Direct single-click / single-tap order handler: immediately adds dish to bill!
+  const orderFoodItem = (menuItem: MenuItem) => {
+    if (menuItem.isSoldOut) {
+      soundService.playTap();
+      return;
+    }
+
+    // Ensure we have an active bill. If not, auto-select first open bill or create a new one!
+    let targetBill = activeBill;
+    if (!targetBill) {
+      const openBill = bills.find((b) => b.status === 'open');
+      if (openBill) {
+        targetBill = openBill;
+        setActiveBillId(openBill.id);
+      } else {
+        targetBill = createBillForOrder('dine_in');
+      }
+    }
+
+    // Default variant (first available variant) or base dish price
+    const defaultVariant =
+      menuItem.variants?.find((v) => !v.isSoldOut && v.isAvailable !== false) ||
+      menuItem.variants?.[0];
+    const price = defaultVariant?.price ?? menuItem.price ?? 0;
+    const cost = defaultVariant?.cost ?? menuItem.cost ?? 0;
+
+    // Check if there is already an unsent item for this exact dish and variant without extra options
+    const existingUnsent = targetBill.items.find(
+      (it) =>
+        it.menuItemId === menuItem.id &&
+        it.isNewUnsent &&
+        (it.variantId || '') === (defaultVariant?.id || '') &&
+        (!it.selectedOptions || it.selectedOptions.length === 0)
+    );
+
+    if (existingUnsent) {
+      updateBillItemQuantity(targetBill.id, existingUnsent.id, existingUnsent.quantity + 1);
+    } else {
+      const orderItem: OrderItem = {
+        id: 'ord_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+        menuItemId: menuItem.id,
+        variantId: defaultVariant?.id,
+        variantName: defaultVariant?.name,
+        variantNameEn: defaultVariant?.nameEn,
+        name: menuItem.name,
+        nameEn: menuItem.nameEn,
+        price: price,
+        cost: cost,
+        quantity: 1,
+        selectedOptions: [],
+        note: '',
+        isNewUnsent: true,
+      };
+      addItemsToBill(targetBill.id, [orderItem]);
+    }
+    soundService.playSuccessTap();
+  };
+
   // 2-Second Hold-to-Edit handlers
   const handleHoldStart = (e: React.MouseEvent | React.TouchEvent, item: MenuItem) => {
     // Only primary mouse button or single touch
@@ -259,19 +321,22 @@ export const POSView: React.FC = () => {
     const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
     const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
     startPosRef.current = { x: clientX, y: clientY };
+    pressStartTimeRef.current = Date.now();
     isLongPressTriggeredRef.current = false;
 
     if (holdTimerRef.current) clearTimeout(holdTimerRef.current);
     if (holdIntervalRef.current) clearInterval(holdIntervalRef.current);
 
-    setHoldingDishId(item.id);
-    setHoldProgress(0);
-
     const startTime = Date.now();
+
+    // Show hold progress ring ONLY after 500ms so quick clicks/taps never show any overlay or re-render
     holdIntervalRef.current = setInterval(() => {
       const elapsed = Date.now() - startTime;
-      const pct = Math.min(100, (elapsed / 2000) * 100);
-      setHoldProgress(pct);
+      if (elapsed >= 500) {
+        setHoldingDishId(item.id);
+        const pct = Math.min(100, ((elapsed - 500) / 1500) * 100);
+        setHoldProgress(pct);
+      }
     }, 40);
 
     holdTimerRef.current = setTimeout(() => {
@@ -284,7 +349,7 @@ export const POSView: React.FC = () => {
     }, 2000);
   };
 
-  const handleHoldEnd = () => {
+  const handleHoldEnd = (e?: React.MouseEvent | React.TouchEvent, item?: MenuItem) => {
     if (holdTimerRef.current) {
       clearTimeout(holdTimerRef.current);
       holdTimerRef.current = null;
@@ -295,10 +360,22 @@ export const POSView: React.FC = () => {
     }
     setHoldingDishId(null);
     setHoldProgress(0);
+
+    // If it was a touch event on mobile/tablet and duration was quick (< 450ms) and not long press, order directly!
+    if (e && 'changedTouches' in e && item) {
+      const touchDuration = Date.now() - (pressStartTimeRef.current || 0);
+      if (!isLongPressTriggeredRef.current && touchDuration < 450) {
+        const now = Date.now();
+        if (now - lastOrderTimestampRef.current >= 350) {
+          lastOrderTimestampRef.current = now;
+          orderFoodItem(item);
+        }
+      }
+    }
   };
 
   const handleHoldMove = (e: React.MouseEvent | React.TouchEvent) => {
-    if (!startPosRef.current || !holdingDishId) return;
+    if (!startPosRef.current) return;
     const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
     const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
     const dx = Math.abs(clientX - startPosRef.current.x);
@@ -309,22 +386,21 @@ export const POSView: React.FC = () => {
     }
   };
 
-  // Card click: opens food-type detail modal directly (skips if 2-second hold triggered)
+  // Single tap / click: immediately adds food to bill!
   const handleItemCardClick = (menuItem: MenuItem) => {
     if (isLongPressTriggeredRef.current) {
       isLongPressTriggeredRef.current = false;
       return;
     }
 
-    if (menuItem.isSoldOut) return;
-
-    // Ensure we have an active bill. If not, auto-create one
-    if (!activeBill) {
-      createBillForOrder('dine_in');
+    // Debounce fast duplicate clicks (e.g. touch + synthetic click)
+    const now = Date.now();
+    if (now - lastOrderTimestampRef.current < 350) {
+      return;
     }
+    lastOrderTimestampRef.current = now;
 
-    soundService.playTap();
-    setCustomizingItem(menuItem);
+    orderFoodItem(menuItem);
   };
 
   const handleAddToCart = (item: OrderItem) => {
@@ -432,11 +508,11 @@ export const POSView: React.FC = () => {
                   key={item.id}
                   onClick={() => handleItemCardClick(item)}
                   onMouseDown={(e) => handleHoldStart(e, item)}
-                  onMouseUp={handleHoldEnd}
-                  onMouseLeave={handleHoldEnd}
+                  onMouseUp={(e) => handleHoldEnd(e, item)}
+                  onMouseLeave={() => handleHoldEnd()}
                   onTouchStart={(e) => handleHoldStart(e, item)}
-                  onTouchEnd={handleHoldEnd}
-                  onTouchCancel={handleHoldEnd}
+                  onTouchEnd={(e) => handleHoldEnd(e, item)}
+                  onTouchCancel={() => handleHoldEnd()}
                   onTouchMove={handleHoldMove}
                   onMouseMove={handleHoldMove}
                   title="คลิกเพื่อสั่งอาหาร หรือกดค้างไว้ 2 วินาทีเพื่อแก้ไขเมนูนี้ทันที"
@@ -452,7 +528,7 @@ export const POSView: React.FC = () => {
                       src={item.image}
                       alt={getName(item)}
                       referrerPolicy="no-referrer"
-                      className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
+                      className="w-full h-full object-cover group-hover:scale-105 transition duration-300 pointer-events-none"
                       loading="lazy"
                       onError={(e) => {
                         (e.target as HTMLImageElement).src =
@@ -460,9 +536,23 @@ export const POSView: React.FC = () => {
                       }}
                     />
 
-                    {/* 2-Second Hold-to-Edit Countdown & Progress Ring */}
+                    {/* Quick Edit Pencil Button (Top-Right) */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        soundService.playTap();
+                        setQuickEditItem(item);
+                      }}
+                      className="absolute top-2 right-2 z-10 w-7 h-7 rounded-full bg-slate-900/60 hover:bg-amber-500 text-white hover:text-slate-950 flex items-center justify-center shadow-md backdrop-blur-xs transition cursor-pointer"
+                      title="แก้ไขเมนูนี้ (หรือกดค้างไว้ 2 วินาที)"
+                    >
+                      <Edit className="w-3.5 h-3.5" />
+                    </button>
+
+                    {/* 2-Second Hold-to-Edit Countdown & Progress Ring (pointer-events-none ensures clicks/taps are NEVER blocked) */}
                     {holdingDishId === item.id && (
-                      <div className="absolute inset-0 z-20 bg-slate-950/80 backdrop-blur-xs flex flex-col items-center justify-center p-2 text-center transition-all animate-in fade-in">
+                      <div className="absolute inset-0 z-20 pointer-events-none bg-slate-950/80 backdrop-blur-xs flex flex-col items-center justify-center p-2 text-center transition-all animate-in fade-in">
                         <div className="relative w-14 h-14 flex items-center justify-center mb-1">
                           <svg className="w-14 h-14 -rotate-90" viewBox="0 0 36 36">
                             <path
@@ -495,7 +585,7 @@ export const POSView: React.FC = () => {
 
                     {/* Sold out overlay */}
                     {item.isSoldOut && (
-                      <div className="absolute inset-0 bg-slate-950/75 flex items-center justify-center p-2 text-center">
+                      <div className="absolute inset-0 bg-slate-950/75 flex items-center justify-center p-2 text-center pointer-events-none">
                         <span className="px-3 py-1 bg-rose-600 text-white font-extrabold text-xs rounded-lg uppercase tracking-wider shadow-md">
                           {t('sold_out_overlay')}
                         </span>
@@ -504,15 +594,32 @@ export const POSView: React.FC = () => {
 
                     {/* Small unobtrusive recommended badge on photo corner */}
                     {item.isRecommended && !item.isSoldOut && (
-                      <div className="absolute top-2 left-2 px-2 py-0.5 rounded-lg bg-amber-500 text-slate-950 font-bold text-[10px] shadow-xs flex items-center gap-1">
+                      <div className="absolute top-2 left-2 px-2 py-0.5 rounded-lg bg-amber-500 text-slate-950 font-bold text-[10px] shadow-xs flex items-center gap-1 pointer-events-none">
                         <Sparkles className="w-3 h-3" />
                         <span>{t('recommended_badge')}</span>
                       </div>
                     )}
+
+                    {/* Optional Quick Customize Button (for multi-variant dishes if desired) */}
+                    {((item.variants && item.variants.length > 1) || (item.optionGroups && item.optionGroups.length > 0)) && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          soundService.playTap();
+                          setCustomizingItem(item);
+                        }}
+                        className="absolute bottom-2 right-2 z-10 px-2 py-0.5 rounded-lg bg-slate-900/80 hover:bg-amber-500 text-white hover:text-slate-950 font-semibold text-[10px] flex items-center gap-1 shadow-xs backdrop-blur-xs transition cursor-pointer"
+                        title="เลือกขนาดหรือท็อปปิ้งเพิ่มเติม"
+                      >
+                        <SlidersHorizontal className="w-3 h-3" />
+                        <span>ตัวเลือก</span>
+                      </button>
+                    )}
                   </div>
 
                   {/* Card ONLY shows food-type name below photo */}
-                  <div className="p-3 sm:p-3.5 flex items-center justify-center min-h-[48px] sm:min-h-[54px] text-center">
+                  <div className="p-3 sm:p-3.5 flex items-center justify-center min-h-[48px] sm:min-h-[54px] text-center pointer-events-none">
                     <h4 className="font-bold text-xs sm:text-sm text-slate-900 dark:text-white leading-snug line-clamp-2">
                       {getName(item)}
                     </h4>
