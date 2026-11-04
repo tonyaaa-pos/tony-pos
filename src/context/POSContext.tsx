@@ -18,6 +18,7 @@ import {
   ReservationInfo,
   DeliveryInfo,
   OptionGroup,
+  TableZoneConfig,
 } from '../types';
 import {
   INITIAL_USERS,
@@ -30,6 +31,7 @@ import {
   INITIAL_QR_IMAGES,
   INITIAL_SHIFT,
   DEFAULT_OPTION_GROUP_PRESETS,
+  INITIAL_ZONES,
 } from '../data/seedData';
 import { syncService, SyncMessage } from '../services/syncService';
 import { soundService } from '../utils/audio';
@@ -59,6 +61,10 @@ interface POSContextType {
   // Selected Table Zone (for shared ZoneBar filtering across Tables and POS)
   selectedZone: string;
   setSelectedZone: (zone: string) => void;
+  zones: TableZoneConfig[];
+  addZone: (name: string, nameEn?: string, color?: string) => TableZoneConfig;
+  updateZone: (id: string, name: string, nameEn?: string, color?: string) => void;
+  deleteZone: (id: string, reassignToZoneId?: string) => { success: boolean; message?: string };
 
   // Tables & Layout
   tables: Table[];
@@ -162,6 +168,7 @@ const STORAGE_KEYS = {
   SHIFT: 'kind_pos_shift_v2',
   NOTIFICATIONS: 'kind_pos_notifications_v2',
   OPTION_PRESETS: 'kind_pos_option_presets_v2',
+  ZONES: 'kind_pos_zones_v2',
 };
 
 // Safe storage loader with automatic migration for tables and users
@@ -306,6 +313,72 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Selected Zone for Table Layout & POS Table Dropdown ('all' = all zones)
   const [selectedZone, setSelectedZone] = useState<string>('all');
+
+  // Table Zones configuration with persistence
+  const [zones, setZones] = useState<TableZoneConfig[]>(() => {
+    const loaded = loadState<TableZoneConfig[]>(STORAGE_KEYS.ZONES, INITIAL_ZONES);
+    return Array.isArray(loaded) && loaded.length > 0 ? loaded : INITIAL_ZONES;
+  });
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.ZONES, JSON.stringify(zones));
+  }, [zones]);
+
+  const addZone = useCallback((name: string, nameEn?: string, color?: string): TableZoneConfig => {
+    const cleanName = name.trim();
+    const newZone: TableZoneConfig = {
+      id: 'zone_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+      name: cleanName,
+      nameEn: nameEn?.trim() || '',
+      color: color || '#f59e0b',
+    };
+    setZones((prev) => [...prev, newZone]);
+    soundService.playTap();
+    return newZone;
+  }, []);
+
+  const updateZone = useCallback((id: string, name: string, nameEn?: string, color?: string) => {
+    const cleanName = name.trim();
+    if (!cleanName) return;
+    setZones((prev) =>
+      prev.map((z) =>
+        z.id === id
+          ? {
+              ...z,
+              name: cleanName,
+              nameEn: typeof nameEn === 'string' ? nameEn.trim() : z.nameEn,
+              color: color || z.color,
+            }
+          : z
+      )
+    );
+    soundService.playTap();
+  }, []);
+
+  const deleteZone = useCallback(
+    (id: string, reassignToZoneId?: string): { success: boolean; message?: string } => {
+      if (zones.length <= 1) {
+        return { success: false, message: 'ไม่สามารถลบได้ เนื่องจากต้องมีโซนโต๊ะอย่างน้อย 1 โซน' };
+      }
+
+      const remainingZones = zones.filter((z) => z.id !== id);
+      const targetZoneId =
+        reassignToZoneId && remainingZones.some((z) => z.id === reassignToZoneId)
+          ? reassignToZoneId
+          : remainingZones[0]?.id || 'indoor';
+
+      // Reassign tables in the deleted zone
+      setTables((prev) =>
+        prev.map((t) => (t.zone === id ? { ...t, zone: targetZoneId } : t))
+      );
+
+      setSelectedZone((prev) => (prev === id ? 'all' : prev));
+      setZones(remainingZones);
+      soundService.playTap();
+      return { success: true };
+    },
+    [zones]
+  );
 
   // Users (filter out obsolete 'kitchen' role)
   const [users, setUsers] = useState<User[]>(() => {
@@ -1581,6 +1654,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setNotifications([]);
     setActiveCategory(null);
     setSelectedZone('all');
+    setZones(INITIAL_ZONES);
     setActiveNav('tables');
 
     localStorage.removeItem(STORAGE_KEYS.USERS);
@@ -1594,6 +1668,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.removeItem(STORAGE_KEYS.QR_IMAGES);
     localStorage.removeItem(STORAGE_KEYS.SHIFT);
     localStorage.removeItem(STORAGE_KEYS.NOTIFICATIONS);
+    localStorage.removeItem(STORAGE_KEYS.ZONES);
 
     syncService.broadcast('DATA_RELOAD');
   }, []);
@@ -1608,12 +1683,14 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         categoriesCount: categories.length,
         optionPresetsCount: optionPresets.length,
         tablesCount: tables.length,
+        zonesCount: zones.length,
         billsCount: bills.length,
         membersCount: members.length,
         qrImagesCount: qrImages.length,
         usersCount: users.length,
       },
       settings,
+      zones,
       categories,
       menuItems, // complete with food images (base64/URL), prices, costs, variants, and optionGroups
       optionPresets, // complete sub-menu sets (หมวด set เมนูย่อย)
@@ -1628,6 +1705,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [
     users,
     settings,
+    zones,
     tables,
     categories,
     menuItems,
@@ -1661,6 +1739,11 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (data.settings && typeof data.settings === 'object') {
         setSettings(data.settings);
         localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(data.settings));
+      }
+
+      if (data.zones && Array.isArray(data.zones)) {
+        setZones(data.zones);
+        localStorage.setItem(STORAGE_KEYS.ZONES, JSON.stringify(data.zones));
       }
 
       if (data.categories && Array.isArray(data.categories)) {
@@ -1731,6 +1814,10 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setActiveCategory,
     selectedZone,
     setSelectedZone,
+    zones,
+    addZone,
+    updateZone,
+    deleteZone,
 
     tables,
     openTable,

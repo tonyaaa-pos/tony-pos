@@ -14,6 +14,7 @@ import {
   PaymentQrImage,
   Shift,
   OptionGroup,
+  TableZoneConfig,
 } from '../types';
 
 export const INITIAL_USERS: User[] = [
@@ -1574,3 +1575,10 @@ export const DEFAULT_OPTION_GROUP_PRESETS: OptionGroup[] = [
     ],
   },
 ];
+
+export const INITIAL_ZONES: TableZoneConfig[] = [
+  { id: 'indoor', name: 'ในห้องแอร์ (Indoor)', nameEn: 'Indoor', color: '#f59e0b' },
+  { id: 'outdoor', name: 'รับลมด้านนอก (Outdoor)', nameEn: 'Outdoor', color: '#10b981' },
+  { id: 'vip', name: 'ห้องพิเศษ (VIP)', nameEn: 'VIP Room', color: '#8b5cf6' },
+];
+

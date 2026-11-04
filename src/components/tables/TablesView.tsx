@@ -79,6 +79,7 @@ export const TablesView: React.FC = () => {
     deleteTable,
     selectedZone,
     setSelectedZone,
+    zones,
     confirmOrder,
     setActiveCategory,
   } = usePOS();
@@ -397,7 +398,7 @@ export const TablesView: React.FC = () => {
       setTableFormWidth(defaults.width);
       setTableFormHeight(defaults.height);
     }
-    setTableFormZone(selectedZone === 'all' ? 'indoor' : selectedZone);
+    setTableFormZone(selectedZone === 'all' ? (zones[0]?.id || 'indoor') : selectedZone);
     setIsTableModalOpen(true);
   };
 
@@ -1242,9 +1243,11 @@ export const TablesView: React.FC = () => {
                   onChange={(e) => setTableFormZone(e.target.value)}
                   className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-semibold"
                 >
-                  <option value="indoor">ในห้องแอร์ (Indoor)</option>
-                  <option value="outdoor">รับลมด้านนอก (Outdoor)</option>
-                  <option value="vip">ห้องพิเศษ (VIP)</option>
+                  {zones.map((z) => (
+                    <option key={z.id} value={z.id}>
+                      {z.name}
+                    </option>
+                  ))}
                 </select>
               </div>
             </div>
