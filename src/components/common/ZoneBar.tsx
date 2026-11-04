@@ -113,19 +113,20 @@ export const ZoneBar: React.FC<ZoneBarProps> = ({ className = '', showManageButt
                 <ChevronLeft className="w-3.5 h-3.5" />
               </button>
 
-              {/* Main Zone Button */}
-              <button
-                type="button"
+              {/* Main Zone Button (Draggable & Clickable) */}
+              <div
+                role="button"
+                tabIndex={0}
                 onClick={() => setSelectedZone(zone.id)}
-                className="flex items-center gap-1.5 px-2 py-1.5 text-xs font-bold whitespace-nowrap cursor-grab active:cursor-grabbing select-none"
+                className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-bold whitespace-nowrap cursor-grab active:cursor-grabbing select-none"
               >
                 <span
-                  className="w-2.5 h-2.5 rounded-full shrink-0"
+                  className="w-2.5 h-2.5 rounded-full shrink-0 pointer-events-none"
                   style={{ backgroundColor: isSelected ? '#020617' : zone.color || '#f59e0b' }}
                 />
-                <span>{displayName}</span>
-                <span className="text-[11px] opacity-80 font-mono">({count})</span>
-              </button>
+                <span className="pointer-events-none">{displayName}</span>
+                <span className="text-[11px] opacity-80 font-mono pointer-events-none">({count})</span>
+              </div>
 
               {/* Right Arrow Button */}
               <button

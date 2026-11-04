@@ -773,18 +773,19 @@ export const MenuManagementView: React.FC = () => {
                 </button>
 
                 {/* Category Button (Draggable & Clickable) */}
-                <button
-                  type="button"
+                <div
+                  role="button"
+                  tabIndex={0}
                   onClick={() => {
                     setActiveCategory(c.id);
                     soundService.playTap();
                   }}
-                  className="flex items-center gap-1.5 px-2 py-1.5 text-xs font-semibold whitespace-nowrap cursor-grab active:cursor-grabbing"
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold whitespace-nowrap cursor-grab active:cursor-grabbing select-none"
                 >
-                  <span className="text-sm leading-none">{c.icon || '🍽️'}</span>
-                  <span>{getName(c)}</span>
+                  <span className="text-sm leading-none pointer-events-none">{c.icon || '🍽️'}</span>
+                  <span className="pointer-events-none">{getName(c)}</span>
                   <span
-                    className={`text-[10px] px-1.5 py-0.2 rounded-md ${
+                    className={`text-[10px] px-1.5 py-0.2 rounded-md pointer-events-none ${
                       isSelected
                         ? 'bg-slate-950/20 text-slate-950 font-black'
                         : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-400'
@@ -792,7 +793,7 @@ export const MenuManagementView: React.FC = () => {
                   >
                     {count}
                   </span>
-                </button>
+                </div>
 
                 {/* Right Arrow Button */}
                 <button

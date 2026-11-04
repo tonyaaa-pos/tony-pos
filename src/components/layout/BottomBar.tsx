@@ -86,7 +86,7 @@ export const BottomBar: React.FC = () => {
     soundService.playTap();
   };
 
-  if (!currentUser || activeNav === 'tables') return null;
+  if (!currentUser) return null;
 
   return (
     <>
@@ -204,14 +204,15 @@ export const BottomBar: React.FC = () => {
                 </button>
 
                 {/* Category Button (Draggable & Clickable) */}
-                <button
-                  type="button"
+                <div
+                  role="button"
+                  tabIndex={0}
                   onClick={() => handleSelectCategory(cat.id)}
-                  className="flex items-center gap-1.5 px-2 py-2 text-xs font-semibold whitespace-nowrap cursor-grab active:cursor-grabbing select-none"
+                  className="flex items-center gap-1.5 px-2.5 py-2 text-xs font-semibold whitespace-nowrap cursor-grab active:cursor-grabbing select-none"
                 >
-                  <span className="text-base leading-none">{cat.icon || '🍽️'}</span>
-                  <span>{getName(cat)}</span>
-                </button>
+                  <span className="text-base leading-none pointer-events-none">{cat.icon || '🍽️'}</span>
+                  <span className="pointer-events-none">{getName(cat)}</span>
+                </div>
 
                 {/* Right Arrow Button */}
                 <button

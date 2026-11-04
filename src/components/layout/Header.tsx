@@ -6,8 +6,6 @@ import {
   Sun,
   Moon,
   LogOut,
-  UserCheck,
-  Receipt,
   Store,
   Menu as MenuIcon,
   Globe,
@@ -28,15 +26,11 @@ export const Header: React.FC<HeaderProps> = ({ onOpenMenu }) => {
     notifications,
     activeNav,
     currentShift,
-    callWaiterAlert,
-    requestBillAlert,
-    tables,
   } = usePOS();
 
   const { t, language, toggleLanguage, getName } = useLanguage();
 
   const [isNotifOpen, setIsNotifOpen] = useState(false);
-  const [showTableSelectModal, setShowTableSelectModal] = useState<'waiter' | 'bill' | null>(null);
 
   const unreadCount = notifications.filter((n) => !n.read).length;
 
@@ -115,7 +109,7 @@ export const Header: React.FC<HeaderProps> = ({ onOpenMenu }) => {
           </div>
         </div>
 
-        {/* Zone 2: Shift status + Fast Table Simulation triggers */}
+        {/* Zone 2: Shift status */}
         <div className="hidden md:flex items-center gap-2">
           {currentShift && currentShift.status === 'open' && (
             <div className="hidden xl:flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-900/60">
@@ -129,26 +123,6 @@ export const Header: React.FC<HeaderProps> = ({ onOpenMenu }) => {
               </span>
             </div>
           )}
-
-          <button
-            type="button"
-            onClick={() => setShowTableSelectModal('waiter')}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/30 hover:bg-amber-100 dark:hover:bg-amber-900/40 border border-amber-200 dark:border-amber-800/60 rounded-xl transition cursor-pointer"
-            title="จำลองลูกค้ากดเรียกพนักงานบริการ"
-          >
-            <UserCheck className="w-3.5 h-3.5" />
-            <span className="whitespace-nowrap">{t('header_sim_waiter')}</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setShowTableSelectModal('bill')}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-purple-700 dark:text-purple-300 bg-purple-50 dark:bg-purple-950/30 hover:bg-purple-100 dark:hover:bg-purple-900/40 border border-purple-200 dark:border-purple-800/60 rounded-xl transition cursor-pointer"
-            title="จำลองลูกค้ากดขอเช็คบิล"
-          >
-            <Receipt className="w-3.5 h-3.5" />
-            <span className="whitespace-nowrap">{t('header_sim_bill')}</span>
-          </button>
         </div>
 
         {/* Zone 3: Language Toggle, Notifications, Theme, User Profile */}
@@ -238,50 +212,6 @@ export const Header: React.FC<HeaderProps> = ({ onOpenMenu }) => {
 
       {/* Notifications Drawer */}
       <NotificationCenter isOpen={isNotifOpen} onClose={() => setIsNotifOpen(false)} />
-
-      {/* Fast Table Simulation Selector Modal */}
-      {showTableSelectModal && (
-        <div className="fixed inset-0 z-50 bg-slate-950/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl max-w-sm w-full p-5 shadow-2xl border border-slate-200 dark:border-slate-800 space-y-4">
-            <div>
-              <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                {showTableSelectModal === 'waiter'
-                  ? t('header_sim_waiter')
-                  : t('header_sim_bill')}
-              </h3>
-              <p className="text-xs text-slate-400 mt-1">เลือกโต๊ะที่ต้องการจำลองการแจ้งเตือน</p>
-            </div>
-
-            <div className="grid grid-cols-3 gap-2 max-h-56 overflow-y-auto p-1">
-              {tables.map((tbl) => (
-                <button
-                  key={tbl.id}
-                  type="button"
-                  onClick={() => {
-                    if (showTableSelectModal === 'waiter') {
-                      callWaiterAlert(tbl.number);
-                    } else {
-                      requestBillAlert(tbl.number);
-                    }
-                    setShowTableSelectModal(null);
-                  }}
-                  className="py-2.5 px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-800 dark:text-slate-200 hover:bg-amber-500 hover:text-slate-950 dark:hover:bg-amber-500 dark:hover:text-slate-950 transition cursor-pointer"
-                >
-                  โต๊ะ {tbl.number}
-                </button>
-              ))}
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setShowTableSelectModal(null)}
-              className="w-full py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-xs font-medium hover:bg-slate-200 transition cursor-pointer"
-            >
-              {t('cancel')}
-            </button>
-          </div>
-        </div>
-      )}
     </>
   );
 };

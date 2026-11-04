@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { usePOS } from '../../context/POSContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { MenuItem, OrderItem, OrderType, DeliveryInfo, DeliveryPlatform } from '../../types';
@@ -21,6 +21,7 @@ import {
   RotateCcw,
   ChevronLeft,
   ChevronRight,
+  Edit,
 } from 'lucide-react';
 import { INITIAL_CATEGORIES, INITIAL_MENU_ITEMS } from '../../data/seedData';
 import { formatBaht } from '../../utils/formatters';
@@ -32,6 +33,7 @@ import { ZoneBar } from '../common/ZoneBar';
 import { canPay, PayBlockReason } from '../../utils/orderRules';
 import { UnsavedItemsPaymentDialog } from './UnsavedItemsPaymentDialog';
 import { Modal } from '../common/Modal';
+import { EditMenuItemModal } from '../menu/EditMenuItemModal';
 
 // Robust matching function so dishes always appear in their category
 export const isDishInCategory = (
@@ -120,6 +122,15 @@ export const POSView: React.FC = () => {
   const [customizingItem, setCustomizingItem] = useState<MenuItem | null>(null);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [voidingItem, setVoidingItem] = useState<OrderItem | null>(null);
+  const [quickEditItem, setQuickEditItem] = useState<MenuItem | null>(null);
+
+  // 2-Second Long-Press state for editing dishes directly
+  const [holdingDishId, setHoldingDishId] = useState<string | null>(null);
+  const [holdProgress, setHoldProgress] = useState<number>(0);
+  const holdTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const holdIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const isLongPressTriggeredRef = useRef<boolean>(false);
+  const startPosRef = useRef<{ x: number; y: number } | null>(null);
 
   // Blocked payment and table selection modals
   const [showBlockedDialog, setShowBlockedDialog] = useState(false);
@@ -240,8 +251,71 @@ export const POSView: React.FC = () => {
     soundService.playSuccessTap();
   };
 
-  // Card click: opens food-type detail modal directly
+  // 2-Second Hold-to-Edit handlers
+  const handleHoldStart = (e: React.MouseEvent | React.TouchEvent, item: MenuItem) => {
+    // Only primary mouse button or single touch
+    if ('button' in e && e.button !== 0) return;
+
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+    startPosRef.current = { x: clientX, y: clientY };
+    isLongPressTriggeredRef.current = false;
+
+    if (holdTimerRef.current) clearTimeout(holdTimerRef.current);
+    if (holdIntervalRef.current) clearInterval(holdIntervalRef.current);
+
+    setHoldingDishId(item.id);
+    setHoldProgress(0);
+
+    const startTime = Date.now();
+    holdIntervalRef.current = setInterval(() => {
+      const elapsed = Date.now() - startTime;
+      const pct = Math.min(100, (elapsed / 2000) * 100);
+      setHoldProgress(pct);
+    }, 40);
+
+    holdTimerRef.current = setTimeout(() => {
+      isLongPressTriggeredRef.current = true;
+      if (holdIntervalRef.current) clearInterval(holdIntervalRef.current);
+      setHoldingDishId(null);
+      setHoldProgress(0);
+      soundService.playReadyChime();
+      setQuickEditItem(item);
+    }, 2000);
+  };
+
+  const handleHoldEnd = () => {
+    if (holdTimerRef.current) {
+      clearTimeout(holdTimerRef.current);
+      holdTimerRef.current = null;
+    }
+    if (holdIntervalRef.current) {
+      clearInterval(holdIntervalRef.current);
+      holdIntervalRef.current = null;
+    }
+    setHoldingDishId(null);
+    setHoldProgress(0);
+  };
+
+  const handleHoldMove = (e: React.MouseEvent | React.TouchEvent) => {
+    if (!startPosRef.current || !holdingDishId) return;
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+    const dx = Math.abs(clientX - startPosRef.current.x);
+    const dy = Math.abs(clientY - startPosRef.current.y);
+
+    if (dx > 15 || dy > 15) {
+      handleHoldEnd();
+    }
+  };
+
+  // Card click: opens food-type detail modal directly (skips if 2-second hold triggered)
   const handleItemCardClick = (menuItem: MenuItem) => {
+    if (isLongPressTriggeredRef.current) {
+      isLongPressTriggeredRef.current = false;
+      return;
+    }
+
     if (menuItem.isSoldOut) return;
 
     // Ensure we have an active bill. If not, auto-create one
@@ -357,6 +431,15 @@ export const POSView: React.FC = () => {
                 <div
                   key={item.id}
                   onClick={() => handleItemCardClick(item)}
+                  onMouseDown={(e) => handleHoldStart(e, item)}
+                  onMouseUp={handleHoldEnd}
+                  onMouseLeave={handleHoldEnd}
+                  onTouchStart={(e) => handleHoldStart(e, item)}
+                  onTouchEnd={handleHoldEnd}
+                  onTouchCancel={handleHoldEnd}
+                  onTouchMove={handleHoldMove}
+                  onMouseMove={handleHoldMove}
+                  title="คลิกเพื่อสั่งอาหาร หรือกดค้างไว้ 2 วินาทีเพื่อแก้ไขเมนูนี้ทันที"
                   className={`relative rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800/80 shadow-xs overflow-hidden flex flex-col justify-between transition group select-none ${
                     item.isSoldOut
                       ? 'opacity-60 cursor-not-allowed'
@@ -376,6 +459,39 @@ export const POSView: React.FC = () => {
                           'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="200" height="150" fill="%23cbd5e1"><rect width="200" height="150"/><text x="100" y="80" font-family="sans-serif" font-size="16" fill="%23475569" text-anchor="middle">Food</text></svg>';
                       }}
                     />
+
+                    {/* 2-Second Hold-to-Edit Countdown & Progress Ring */}
+                    {holdingDishId === item.id && (
+                      <div className="absolute inset-0 z-20 bg-slate-950/80 backdrop-blur-xs flex flex-col items-center justify-center p-2 text-center transition-all animate-in fade-in">
+                        <div className="relative w-14 h-14 flex items-center justify-center mb-1">
+                          <svg className="w-14 h-14 -rotate-90" viewBox="0 0 36 36">
+                            <path
+                              className="text-slate-700"
+                              strokeWidth="3.5"
+                              stroke="currentColor"
+                              fill="none"
+                              d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                            />
+                            <path
+                              className="text-amber-400 transition-all duration-75"
+                              strokeDasharray={`${holdProgress}, 100`}
+                              strokeWidth="3.5"
+                              strokeLinecap="round"
+                              stroke="currentColor"
+                              fill="none"
+                              d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                            />
+                          </svg>
+                          <Edit className="w-5 h-5 text-amber-400 absolute" />
+                        </div>
+                        <span className="text-[11px] font-bold text-white leading-tight">
+                          เข้าสู่โหมดแก้ไข
+                        </span>
+                        <span className="text-[10px] font-mono text-amber-300 mt-0.5">
+                          {Math.min(2.0, holdProgress * 0.02).toFixed(1)}s / 2.0s
+                        </span>
+                      </div>
+                    )}
 
                     {/* Sold out overlay */}
                     {item.isSoldOut && (
@@ -970,6 +1086,13 @@ export const POSView: React.FC = () => {
           </form>
         </Modal>
       )}
+
+      {/* Quick Edit Menu Item Modal (Opened via 2-Second Hold-to-Edit) */}
+      <EditMenuItemModal
+        isOpen={!!quickEditItem}
+        onClose={() => setQuickEditItem(null)}
+        item={quickEditItem}
+      />
     </div>
   );
 };
