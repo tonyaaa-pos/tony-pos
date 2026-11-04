@@ -86,7 +86,7 @@ export const BottomBar: React.FC = () => {
     soundService.playTap();
   };
 
-  if (!currentUser) return null;
+  if (!currentUser || activeNav === 'tables') return null;
 
   return (
     <>

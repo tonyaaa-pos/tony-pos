@@ -65,6 +65,7 @@ interface POSContextType {
   addZone: (name: string, nameEn?: string, color?: string) => TableZoneConfig;
   updateZone: (id: string, name: string, nameEn?: string, color?: string) => void;
   deleteZone: (id: string, reassignToZoneId?: string) => { success: boolean; message?: string };
+  reorderZones: (startIndex: number, endIndex: number) => void;
 
   // Tables & Layout
   tables: Table[];
@@ -379,6 +380,19 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     },
     [zones]
   );
+
+  const reorderZones = useCallback((startIndex: number, endIndex: number) => {
+    if (startIndex === endIndex) return;
+    setZones((prev) => {
+      const next = [...prev];
+      const [moved] = next.splice(startIndex, 1);
+      next.splice(endIndex, 0, moved);
+      localStorage.setItem(STORAGE_KEYS.ZONES, JSON.stringify(next));
+      syncService.broadcast('DATA_RELOAD');
+      return next;
+    });
+    soundService.playTap();
+  }, []);
 
   // Users (filter out obsolete 'kitchen' role)
   const [users, setUsers] = useState<User[]>(() => {
@@ -1818,6 +1832,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     addZone,
     updateZone,
     deleteZone,
+    reorderZones,
 
     tables,
     openTable,

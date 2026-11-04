@@ -53,7 +53,11 @@ const MainLayout: React.FC = () => {
       <Header onOpenMenu={() => setIsMenuOpen(true)} />
 
       {/* Main Full-Width Content View */}
-      <main className="flex-1 min-h-0 overflow-y-auto relative no-scrollbar pb-16">
+      <main
+        className={`flex-1 min-h-0 overflow-y-auto relative no-scrollbar ${
+          activeNav === 'tables' ? 'pb-2' : 'pb-16'
+        }`}
+      >
         {renderActiveView()}
       </main>
 
