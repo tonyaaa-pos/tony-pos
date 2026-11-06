@@ -35,6 +35,7 @@ import { canPay, PayBlockReason } from '../../utils/orderRules';
 import { UnsavedItemsPaymentDialog } from './UnsavedItemsPaymentDialog';
 import { Modal } from '../common/Modal';
 import { EditMenuItemModal } from '../menu/EditMenuItemModal';
+import { customerDisplayService } from '../../services/customerDisplayService';
 
 // Robust matching function so dishes always appear in their category
 export const isDishInCategory = (
@@ -172,6 +173,11 @@ export const POSView: React.FC = () => {
       restoreDefaultMenu();
     }
   }, [activeCategory, categories, menuItems, restoreDefaultMenu, setActiveCategory]);
+
+  // Real-time synchronization with secondary customer-facing display
+  useEffect(() => {
+    customerDisplayService.setOrdering(activeBill);
+  }, [activeBill]);
 
   // Filtered menu items based on active food category and optional search query
   const filteredMenuItems = useMemo(() => {

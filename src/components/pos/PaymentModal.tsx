@@ -22,6 +22,7 @@ import {
 import { ReceiptPrint } from './ReceiptPrint';
 import { soundService } from '../../utils/audio';
 import { bluetoothPrinterService, BluetoothState } from '../../services/bluetoothPrinterService';
+import { customerDisplayService } from '../../services/customerDisplayService';
 
 const formatAmount = (amount: number, showDecimals = true): string => {
   if (isNaN(amount) || amount === null || amount === undefined) {
@@ -201,6 +202,9 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
 
     const result = completeBillPayment(activeBill.id, finalPayments);
     if (result.success) {
+      // Notify customer-facing display of payment completion
+      customerDisplayService.setCompleted(result.bill);
+
       // Auto-print to Bluetooth printer if enabled
       if (btState.isConnected && btState.autoPrintEnabled) {
         bluetoothPrinterService.printReceipt(result.bill, settings).catch(() => {});
@@ -210,6 +214,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
       onClose();
     }
   };
+
 
   // Print receipt only: prints 80mm thermal receipt via Bluetooth ESC/POS or window.print(), does NOT record payment, and stays on payment screen
   const handlePrintReceipt = async () => {
@@ -347,6 +352,38 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
 
   // Selected QR image object
   const activeQrImage = qrImages.find((q) => q.id === selectedQrId) || qrImages[0];
+
+  // Synchronize payment details (QR code, cash, change, method) with customer display in real time
+  useEffect(() => {
+    if (isOpen && activeBill) {
+      const cashVal = parseFloat(cashReceived) || undefined;
+      const changeVal =
+        cashVal !== undefined && cashVal >= remainingDue
+          ? Math.max(0, cashVal - remainingDue)
+          : undefined;
+
+      customerDisplayService.setPayment(
+        activeBill,
+        activeMethod,
+        activeMethod === 'qr' && activeQrImage ? { imageData: activeQrImage.imageData, label: activeQrImage.label } : undefined,
+        cashVal,
+        changeVal
+      );
+    }
+    return () => {
+      // Revert to ordering when closing without paying
+      if (isOpen && activeBill) {
+        customerDisplayService.setOrdering(activeBill);
+      }
+    };
+  }, [
+    isOpen,
+    activeBill,
+    activeMethod,
+    activeQrImage,
+    cashReceived,
+    remainingDue,
+  ]);
 
   return (
     <Modal

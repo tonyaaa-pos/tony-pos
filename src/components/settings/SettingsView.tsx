@@ -27,6 +27,9 @@ import {
   Bluetooth,
   Printer,
   RefreshCw,
+  Monitor,
+  ExternalLink,
+  Eye,
 } from 'lucide-react';
 import { formatBaht } from '../../utils/formatters';
 import { compressImageFile } from '../../utils/imageCompressor';
@@ -35,6 +38,7 @@ import { ConfirmDialog } from '../common/ConfirmDialog';
 import { Table, User, TableShape, ChairStyle } from '../../types';
 import { soundService } from '../../utils/audio';
 import { bluetoothPrinterService, BluetoothState } from '../../services/bluetoothPrinterService';
+import { CustomerDisplayView } from '../customer/CustomerDisplayView';
 
 export const SettingsView: React.FC = () => {
   const {
@@ -63,8 +67,9 @@ export const SettingsView: React.FC = () => {
   } = usePOS();
 
   const [activeTab, setActiveTab] = useState<
-    'shop' | 'bluetooth' | 'qr' | 'tables' | 'staff' | 'membership' | 'backup'
+    'shop' | 'bluetooth' | 'dualscreen' | 'qr' | 'tables' | 'staff' | 'membership' | 'backup'
   >('shop');
+  const [showSettingsCfdPreview, setShowSettingsCfdPreview] = useState(false);
 
   // Bluetooth Printer states
   const [btState, setBtState] = useState<BluetoothState>(bluetoothPrinterService.getState());
@@ -323,6 +328,7 @@ export const SettingsView: React.FC = () => {
         {[
           { id: 'shop', label: 'ข้อมูลร้าน & ภาษี', icon: Store },
           { id: 'bluetooth', label: 'เครื่องพิมพ์ & Bluetooth', icon: Bluetooth },
+          { id: 'dualscreen', label: 'จอลูกค้า (2 จอ)', icon: Monitor },
           { id: 'qr', label: 'QR ชำระเงิน', icon: QrCode },
           { id: 'tables', label: 'จัดการโต๊ะ & โซน', icon: Grid3X3 },
           { id: 'staff', label: 'พนักงาน & PIN', icon: Users },
@@ -807,6 +813,111 @@ export const SettingsView: React.FC = () => {
                   <li>กดปุ่ม &quot;ค้นหา & เชื่อมต่อ&quot; แล้วเลือกชื่อเครื่องพิมพ์จากหน้าต่างป๊อปอัป</li>
                   <li>หากไม่มีเครื่องพิมพ์จริง สามารถใช้ปุ่ม &quot;จำลองเชื่อมต่อ (Demo)&quot; เพื่อทดสอบระบบได้</li>
                 </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Tab: Dual-Screen Customer Display (CFD) */}
+      {activeTab === 'dualscreen' && (
+        <div className="space-y-6">
+          <div className="p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-4">
+              <div>
+                <h3 className="font-bold text-base text-slate-900 dark:text-white flex items-center gap-2">
+                  <Monitor className="w-5 h-5 text-amber-500" />
+                  <span>ระบบเครื่อง POS 2 หน้าจอ (Dual-Screen Customer Facing Display)</span>
+                </h3>
+                <p className="text-xs text-slate-500 mt-1">
+                  สำหรับเครื่อง POS ที่มี 2 หน้าจอ (เช่น Sunmi D2s Plus, เครื่อง POS Windows/Android จอหน้า-จอหลัง) จอหลังหันหน้าหาลูกค้าเพื่อแสดงบิลและสแกนจ่ายเงิน
+                </p>
+              </div>
+            </div>
+
+            {/* Launch Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="p-5 rounded-2xl border-2 border-amber-500 bg-amber-50/40 dark:bg-amber-950/20 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="w-10 h-10 rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center font-bold">
+                    <ExternalLink className="w-5 h-5" />
+                  </div>
+                  <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300">
+                    หน้าจอที่ 2 จริง (Second Monitor)
+                  </span>
+                </div>
+                <div>
+                  <h4 className="font-extrabold text-sm text-slate-900 dark:text-white">
+                    เปิดหน้าจอลูกค้าในหน้าต่างใหม่
+                  </h4>
+                  <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
+                    ระบบจะเปิดหน้าต่าง Customer Display (URL: <code>/?view=customer</code>) นำหน้าต่างนี้ลากไปแสดงที่จอหลังของเครื่อง POS และกดขยายเต็มจอ
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const url = `${window.location.origin}${window.location.pathname}?view=customer`;
+                    window.open(url, 'kind_pos_customer_display', 'width=1024,height=768,menubar=no,toolbar=no,location=no,status=no,resizable=yes');
+                  }}
+                  className="w-full py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold text-xs shadow-xs transition flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <ExternalLink className="w-4 h-4" />
+                  <span>เปิดหน้าจอลูกค้า (New Window)</span>
+                </button>
+              </div>
+
+              <div className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="w-10 h-10 rounded-xl bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 flex items-center justify-center font-bold">
+                    <Eye className="w-5 h-5" />
+                  </div>
+                  <span className="text-xs font-medium text-slate-500">
+                    ทดสอบจำลองมุมมองลูกค้า
+                  </span>
+                </div>
+                <div>
+                  <h4 className="font-extrabold text-sm text-slate-900 dark:text-white">
+                    ดูตัวอย่างหน้าจอลูกค้า (Live Preview)
+                  </h4>
+                  <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
+                    จำลองหน้าจอลูกค้าขนาดเต็มบนหน้าจอหลักนี้ทันที เพื่อตรวจสอบหน้าตาบิล สไลด์เมนูแนะนำ และ QR พร้อมเพย์
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowSettingsCfdPreview(true)}
+                  className="w-full py-2.5 rounded-xl bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-800 dark:text-white font-bold text-xs transition flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <Eye className="w-4 h-4" />
+                  <span>ดูตัวอย่างหน้าจอ (Preview)</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Feature Highlights Card */}
+            <div className="p-5 rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 space-y-3">
+              <h4 className="font-bold text-xs text-slate-900 dark:text-white flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                <span>คุณสมบัติการทำงานของระบบ 2 หน้าจอ KinD POS</span>
+              </h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs text-slate-600 dark:text-slate-400">
+                <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+                  <span className="font-bold text-slate-900 dark:text-white block mb-0.5">⚡ ซิงค์ข้อมูล Real-time</span>
+                  <span>เชื่อมต่ออัตโนมัติความเร็วระดับมิลลิวินาทีระหว่างจอแคชเชียร์และจอลูกค้าโดยไม่ต้องติดตั้งเซิร์ฟเวอร์แยก</span>
+                </div>
+                <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+                  <span className="font-bold text-slate-900 dark:text-white block mb-0.5">📱 QR พร้อมเพย์คมชัด</span>
+                  <span>เมื่อแคชเชียร์เปิดหน้าชำระเงิน จะแสดงรูปภาพ QR Code พร้อมยอดเงินรวมสุทธิให้ลูกค้าสแกนจ่ายได้ทันที</span>
+                </div>
+                <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+                  <span className="font-bold text-slate-900 dark:text-white block mb-0.5">🥗 สไลด์แนะนำเมนูอาหาร (Digital Signage)</span>
+                  <span>ขณะที่ยังไม่มีการสั่งอาหาร จอลูกค้าจะเปลี่ยนเป็นสไลด์โชว์โปรโมชันและเมนูแนะนำยอดนิยมของทางร้านโดยอัตโนมัติ</span>
+                </div>
+                <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+                  <span className="font-bold text-slate-900 dark:text-white block mb-0.5">🎉 หน้าจอแสดงความขอบคุณ & เงินทอน</span>
+                  <span>เมื่อยืนยันชำระเงิน จอจะแสดงยอดเงินรับ ยอดเงินทอน และข้อความขอบคุณลูกค้าอย่างสวยงาม</span>
+                </div>
               </div>
             </div>
           </div>
@@ -1714,6 +1825,16 @@ export const SettingsView: React.FC = () => {
           </div>
         </Modal>
       )}
+
+      {/* In-App Customer Display Preview Modal */}
+      {showSettingsCfdPreview && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="relative w-full max-w-5xl h-[85vh] max-h-[750px] bg-slate-950 rounded-3xl shadow-2xl overflow-hidden border border-slate-800 flex flex-col">
+            <CustomerDisplayView isPreview onClosePreview={() => setShowSettingsCfdPreview(false)} />
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+

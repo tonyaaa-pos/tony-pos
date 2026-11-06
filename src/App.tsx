@@ -15,9 +15,21 @@ import { DashboardView } from './components/dashboard/DashboardView';
 import { ReportsView } from './components/reports/ReportsView';
 import { SettingsView } from './components/settings/SettingsView';
 
+import { CustomerDisplayView } from './components/customer/CustomerDisplayView';
+
 const MainLayout: React.FC = () => {
   const { currentUser, activeNav } = usePOS();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+
+  // Check if current window was opened as a dedicated Customer Display (CFD on second monitor)
+  const isCustomerWindow =
+    typeof window !== 'undefined' &&
+    (new URLSearchParams(window.location.search).get('view') === 'customer' ||
+      window.location.hash.toLowerCase().includes('customer'));
+
+  if (isCustomerWindow) {
+    return <CustomerDisplayView />;
+  }
 
   if (!currentUser) {
     return <LoginScreen />;
@@ -72,3 +84,4 @@ export default function App() {
     </LanguageProvider>
   );
 }
+
