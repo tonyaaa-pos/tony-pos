@@ -24,6 +24,9 @@ import {
   Package,
   Layers,
   Info,
+  Bluetooth,
+  Printer,
+  RefreshCw,
 } from 'lucide-react';
 import { formatBaht } from '../../utils/formatters';
 import { compressImageFile } from '../../utils/imageCompressor';
@@ -31,6 +34,7 @@ import { Modal } from '../common/Modal';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import { Table, User, TableShape, ChairStyle } from '../../types';
 import { soundService } from '../../utils/audio';
+import { bluetoothPrinterService, BluetoothState } from '../../services/bluetoothPrinterService';
 
 export const SettingsView: React.FC = () => {
   const {
@@ -59,8 +63,20 @@ export const SettingsView: React.FC = () => {
   } = usePOS();
 
   const [activeTab, setActiveTab] = useState<
-    'shop' | 'qr' | 'tables' | 'staff' | 'membership' | 'backup'
+    'shop' | 'bluetooth' | 'qr' | 'tables' | 'staff' | 'membership' | 'backup'
   >('shop');
+
+  // Bluetooth Printer states
+  const [btState, setBtState] = useState<BluetoothState>(bluetoothPrinterService.getState());
+  const [btConnecting, setBtConnecting] = useState(false);
+  const [btTestPrinting, setBtTestPrinting] = useState(false);
+  const [btMessage, setBtMessage] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
+
+  React.useEffect(() => {
+    return bluetoothPrinterService.subscribe((state) => {
+      setBtState(state);
+    });
+  }, []);
 
   // Form states for Shop info
   const [shopName, setShopName] = useState(settings.shopName);
@@ -306,6 +322,7 @@ export const SettingsView: React.FC = () => {
       <div className="flex items-center gap-1.5 p-1 bg-slate-100 dark:bg-slate-800 rounded-2xl overflow-x-auto pb-1">
         {[
           { id: 'shop', label: 'ข้อมูลร้าน & ภาษี', icon: Store },
+          { id: 'bluetooth', label: 'เครื่องพิมพ์ & Bluetooth', icon: Bluetooth },
           { id: 'qr', label: 'QR ชำระเงิน', icon: QrCode },
           { id: 'tables', label: 'จัดการโต๊ะ & โซน', icon: Grid3X3 },
           { id: 'staff', label: 'พนักงาน & PIN', icon: Users },
@@ -514,6 +531,286 @@ export const SettingsView: React.FC = () => {
             </button>
           </div>
         </form>
+      )}
+
+      {/* Tab: Bluetooth & Thermal Printer Management */}
+      {activeTab === 'bluetooth' && (
+        <div className="space-y-6">
+          {/* Status & Connection Card */}
+          <div className="p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-4">
+              <div>
+                <h3 className="font-bold text-base text-slate-900 dark:text-white flex items-center gap-2">
+                  <Bluetooth className="w-5 h-5 text-sky-500" />
+                  <span>จัดการเครื่องพิมพ์ & อุปกรณ์ Bluetooth (Thermal Printer)</span>
+                </h3>
+                <p className="text-xs text-slate-500 mt-1">
+                  เชื่อมต่อเครื่องพิมพ์ใบเสร็จความร้อนบลูทูธ (ESC/POS 80mm / 58mm) ผ่าน Web Bluetooth โดยตรง ไม่ต้องลงไดรเวอร์เพิ่มเติม
+                </p>
+              </div>
+
+              {/* Status Badge */}
+              <div className="shrink-0 flex items-center gap-2">
+                {btState.isConnected ? (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                    <span>เชื่อมต่อแล้ว: {btState.deviceName}</span>
+                    {btState.isSimulated && <span className="opacity-75 text-[10px]">(จำลอง)</span>}
+                  </span>
+                ) : btConnecting ? (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800">
+                    <RefreshCw className="w-3 h-3 animate-spin" />
+                    <span>กำลังค้นหาอุปกรณ์...</span>
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700">
+                    <span className="w-2 h-2 rounded-full bg-slate-400" />
+                    <span>ยังไม่ได้เชื่อมต่อ</span>
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Notification / Feedback Banner */}
+            {btMessage && (
+              <div
+                className={`p-3 rounded-2xl text-xs font-semibold flex items-center justify-between gap-2 ${
+                  btMessage.type === 'success'
+                    ? 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+                    : btMessage.type === 'error'
+                    ? 'bg-rose-50 dark:bg-rose-950/50 text-rose-800 dark:text-rose-300 border border-rose-200 dark:border-rose-800'
+                    : 'bg-sky-50 dark:bg-sky-950/50 text-sky-800 dark:text-sky-300 border border-sky-200 dark:border-sky-800'
+                }`}
+              >
+                <span>{btMessage.text}</span>
+                <button
+                  type="button"
+                  onClick={() => setBtMessage(null)}
+                  className="p-1 hover:opacity-75 cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
+            {/* Connection Actions */}
+            <div className="flex flex-wrap items-center gap-3">
+              {!btState.isConnected ? (
+                <>
+                  <button
+                    type="button"
+                    disabled={btConnecting}
+                    onClick={async () => {
+                      setBtConnecting(true);
+                      setBtMessage(null);
+                      soundService.playTap();
+                      const res = await bluetoothPrinterService.connect();
+                      setBtConnecting(false);
+                      if (res.success) {
+                        soundService.playReadyChime();
+                        setBtMessage({
+                          type: 'success',
+                          text: `เชื่อมต่อกับ "${res.deviceName}" เรียบร้อยแล้ว พร้อมสั่งพิมพ์ใบเสร็จผ่าน Bluetooth`,
+                        });
+                      } else {
+                        setBtMessage({
+                          type: 'error',
+                          text: res.error || 'ไม่สามารถเชื่อมต่ออุปกรณ์ Bluetooth ได้',
+                        });
+                      }
+                    }}
+                    className="px-5 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs shadow-xs transition flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                  >
+                    <Bluetooth className="w-4 h-4" />
+                    <span>{btConnecting ? 'กำลังค้นหา Bluetooth...' : 'ค้นหา & เชื่อมต่อเครื่องพิมพ์ Bluetooth'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      soundService.playReadyChime();
+                      bluetoothPrinterService.simulateConnection();
+                      setBtMessage({
+                        type: 'success',
+                        text: 'เปิดใช้งานโหมดจำลองเครื่องพิมพ์ Bluetooth (Demo) สำเร็จแล้ว สามารถทดสอบพิมพ์ได้ทันที',
+                      });
+                    }}
+                    className="px-4 py-2.5 rounded-xl border border-dashed border-sky-400/80 hover:border-sky-500 bg-sky-50 hover:bg-sky-100 dark:bg-sky-950/40 text-sky-700 dark:text-sky-300 font-semibold text-xs transition flex items-center gap-1.5 cursor-pointer"
+                    title="ทดสอบระบบจำลอง Bluetooth สำหรับอุปกรณ์ที่ไม่มีฮาร์ดแวร์บลูทูธจริง"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>จำลองเชื่อมต่อ (Demo Simulator)</span>
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    disabled={btTestPrinting}
+                    onClick={async () => {
+                      setBtTestPrinting(true);
+                      setBtMessage(null);
+                      soundService.playTap();
+                      const res = await bluetoothPrinterService.printTestReceipt(settings);
+                      setBtTestPrinting(false);
+                      if (res.success) {
+                        soundService.playSuccessTap();
+                        setBtMessage({
+                          type: 'success',
+                          text: 'ส่งคำสั่งพิมพ์ใบเสร็จทดสอบไปยังเครื่องพิมพ์ Bluetooth เรียบร้อยแล้ว',
+                        });
+                      } else {
+                        setBtMessage({
+                          type: 'error',
+                          text: res.error || 'เกิดข้อผิดพลาดในการพิมพ์ทดสอบ',
+                        });
+                      }
+                    }}
+                    className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-xs transition flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                  >
+                    <Printer className="w-4 h-4" />
+                    <span>{btTestPrinting ? 'กำลังพิมพ์ทดสอบ...' : 'พิมพ์ใบเสร็จทดสอบ (Test Print)'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      soundService.playTap();
+                      bluetoothPrinterService.disconnect();
+                      setBtMessage({ type: 'info', text: 'ตัดการเชื่อมต่ออุปกรณ์ Bluetooth แล้ว' });
+                    }}
+                    className="px-4 py-2.5 rounded-xl border border-rose-200 dark:border-rose-800 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/50 font-semibold text-xs transition flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>ตัดการเชื่อมต่อ</span>
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* Configuration Options Card */}
+          <div className="p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-5">
+            <h4 className="font-bold text-sm text-slate-900 dark:text-white border-b border-slate-100 dark:border-slate-800 pb-3 flex items-center gap-2">
+              <Printer className="w-4 h-4 text-amber-500" />
+              <span>การตั้งค่าการพิมพ์ใบเสร็จบลูทูธ (Thermal ESC/POS Config)</span>
+            </h4>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Paper Width Selection */}
+              <div className="space-y-2">
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  ขนาดหน้ากว้างกระดาษใบเสร็จ (Paper Width):
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      bluetoothPrinterService.setPaperWidth('80mm');
+                      soundService.playTap();
+                    }}
+                    className={`p-3 rounded-2xl border text-left transition cursor-pointer ${
+                      btState.paperWidth === '80mm'
+                        ? 'bg-amber-500/10 border-amber-500 text-amber-900 dark:text-amber-300 ring-2 ring-amber-400/40'
+                        : 'border-slate-200 dark:border-slate-700 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="font-bold text-xs">80 มม. (มาตรฐานร้านอาหาร)</div>
+                    <div className="text-[10px] text-slate-500 mt-0.5">
+                      ความกว้าง 48 ตัวอักษร/บรรทัด พิมพ์รายละเอียดครบถ้วน
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      bluetoothPrinterService.setPaperWidth('58mm');
+                      soundService.playTap();
+                    }}
+                    className={`p-3 rounded-2xl border text-left transition cursor-pointer ${
+                      btState.paperWidth === '58mm'
+                        ? 'bg-amber-500/10 border-amber-500 text-amber-900 dark:text-amber-300 ring-2 ring-amber-400/40'
+                        : 'border-slate-200 dark:border-slate-700 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="font-bold text-xs">58 มม. (ขนาดพกพา / มินิ)</div>
+                    <div className="text-[10px] text-slate-500 mt-0.5">
+                      ความกว้าง 32 ตัวอักษร/บรรทัด กะทัดรัด ประหยัดกระดาษ
+                    </div>
+                  </button>
+                </div>
+              </div>
+
+              {/* Auto Print Toggle */}
+              <div className="space-y-2">
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  การพิมพ์ใบเสร็จอัตโนมัติ:
+                </label>
+                <div
+                  onClick={() => {
+                    bluetoothPrinterService.setAutoPrint(!btState.autoPrintEnabled);
+                    soundService.playTap();
+                  }}
+                  className={`p-3.5 rounded-2xl border flex items-center justify-between cursor-pointer transition select-none ${
+                    btState.autoPrintEnabled
+                      ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-400 text-emerald-900 dark:text-emerald-300'
+                      : 'border-slate-200 dark:border-slate-700 hover:border-slate-300'
+                  }`}
+                >
+                  <div>
+                    <div className="font-bold text-xs">พิมพ์ใบเสร็จอัตโนมัติเมื่อกดชำระเงิน</div>
+                    <div className="text-[10px] text-slate-500 mt-0.5">
+                      ส่งคำสั่งพิมพ์ไปยังเครื่องพิมพ์ Bluetooth ทันทีเมื่อกดยืนยันการชำระเงิน
+                    </div>
+                  </div>
+                  <div
+                    className={`w-11 h-6 rounded-full transition-colors relative flex items-center px-0.5 ${
+                      btState.autoPrintEnabled ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-700'
+                    }`}
+                  >
+                    <div
+                      className={`w-5 h-5 rounded-full bg-white shadow-md transform transition-transform ${
+                        btState.autoPrintEnabled ? 'translate-x-5' : 'translate-x-0'
+                      }`}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Compatibility & Instructions Card */}
+          <div className="p-6 rounded-3xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 space-y-4">
+            <h4 className="font-bold text-xs text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+              <Info className="w-4 h-4 text-sky-500" />
+              <span>คำแนะนำการเชื่อมต่อและรุ่นเครื่องพิมพ์ที่รองรับ</span>
+            </h4>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs text-slate-600 dark:text-slate-400">
+              <div className="space-y-1.5">
+                <p className="font-semibold text-slate-800 dark:text-slate-200">
+                  รุ่นเครื่องพิมพ์บลูทูธที่รองรับ:
+                </p>
+                <ul className="list-disc pl-4 space-y-1 text-[11px]">
+                  <li>Xprinter (XP-58, XP-80, XP-N160II BT ฯลฯ)</li>
+                  <li>GOOJPRT, PeriPage, Paperang, Sunmi POS</li>
+                  <li>Epson TM-T20 / TM-T88 Bluetooth</li>
+                  <li>เครื่องพิมพ์ใบเสร็จความร้อน ESC/POS ไร้สายทุกยี่ห้อ</li>
+                </ul>
+              </div>
+              <div className="space-y-1.5">
+                <p className="font-semibold text-slate-800 dark:text-slate-200">
+                  ข้อกำหนดของอุปกรณ์และเบราว์เซอร์:
+                </p>
+                <ul className="list-disc pl-4 space-y-1 text-[11px]">
+                  <li>เปิด Bluetooth บนคอมพิวเตอร์ แท็บเล็ต หรือสมาร์ทโฟน</li>
+                  <li>ใช้งานผ่าน Google Chrome หรือ Microsoft Edge (HTTPS)</li>
+                  <li>กดปุ่ม &quot;ค้นหา & เชื่อมต่อ&quot; แล้วเลือกชื่อเครื่องพิมพ์จากหน้าต่างป๊อปอัป</li>
+                  <li>หากไม่มีเครื่องพิมพ์จริง สามารถใช้ปุ่ม &quot;จำลองเชื่อมต่อ (Demo)&quot; เพื่อทดสอบระบบได้</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Tab 2: Payment QR Management */}

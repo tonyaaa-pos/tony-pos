@@ -9,9 +9,11 @@ import {
   Store,
   Menu as MenuIcon,
   Globe,
+  Bluetooth,
 } from 'lucide-react';
 import { NotificationCenter } from './NotificationCenter';
 import { formatBaht } from '../../utils/formatters';
+import { bluetoothPrinterService, BluetoothState } from '../../services/bluetoothPrinterService';
 
 interface HeaderProps {
   onOpenMenu: () => void;
@@ -26,11 +28,19 @@ export const Header: React.FC<HeaderProps> = ({ onOpenMenu }) => {
     notifications,
     activeNav,
     currentShift,
+    setActiveNav,
   } = usePOS();
 
   const { t, language, toggleLanguage, getName } = useLanguage();
 
   const [isNotifOpen, setIsNotifOpen] = useState(false);
+  const [btState, setBtState] = useState<BluetoothState>(bluetoothPrinterService.getState());
+
+  React.useEffect(() => {
+    return bluetoothPrinterService.subscribe((state) => {
+      setBtState(state);
+    });
+  }, []);
 
   const unreadCount = notifications.filter((n) => !n.read).length;
 
@@ -127,6 +137,19 @@ export const Header: React.FC<HeaderProps> = ({ onOpenMenu }) => {
 
         {/* Zone 3: Language Toggle, Notifications, Theme, User Profile */}
         <div className="flex items-center gap-1.5 sm:gap-2">
+          {/* Bluetooth Thermal Printer Indicator */}
+          {btState.isConnected && (
+            <button
+              type="button"
+              onClick={() => setActiveNav('settings')}
+              className="hidden sm:flex items-center gap-1 px-2.5 py-1.5 rounded-xl border border-sky-300 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/60 text-xs font-bold text-sky-700 dark:text-sky-300 hover:bg-sky-100 transition cursor-pointer select-none"
+              title={`เครื่องพิมพ์ Bluetooth: ${btState.deviceName} (คลิกเพื่อไปที่การตั้งค่า)`}
+            >
+              <Bluetooth className="w-3.5 h-3.5 text-sky-500 animate-pulse" />
+              <span className="max-w-[100px] truncate">{btState.deviceName}</span>
+            </button>
+          )}
+
           {/* Language Switcher Button (TH | EN) */}
           <button
             type="button"

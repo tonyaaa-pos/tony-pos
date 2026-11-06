@@ -16,9 +16,12 @@ import {
   Minus,
   Trash2,
   Check,
+  Printer,
+  Bluetooth,
 } from 'lucide-react';
 import { ReceiptPrint } from './ReceiptPrint';
 import { soundService } from '../../utils/audio';
+import { bluetoothPrinterService, BluetoothState } from '../../services/bluetoothPrinterService';
 
 const formatAmount = (amount: number, showDecimals = true): string => {
   if (isNaN(amount) || amount === null || amount === undefined) {
@@ -44,6 +47,8 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
     canPay,
     splitBill,
     bills,
+    setActiveNav,
+    setActiveCategory,
   } = usePOS();
   const { getName } = useLanguage();
 
@@ -82,8 +87,19 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
   const [splitPersons, setSplitPersons] = useState<number>(2);
   const [itemSplits, setItemSplits] = useState<Record<string, number>>({});
 
-  // Completion state
-  const [completedBill, setCompletedBill] = useState<Bill | null>(null);
+  // Printable bill state for window.print()
+  const [printableBill, setPrintableBill] = useState<Bill | null>(null);
+
+  // Bluetooth thermal printer state
+  const [btState, setBtState] = useState<BluetoothState>(bluetoothPrinterService.getState());
+  const [btPrinting, setBtPrinting] = useState<boolean>(false);
+  const [btPrintSuccess, setBtPrintSuccess] = useState<boolean>(false);
+
+  useEffect(() => {
+    return bluetoothPrinterService.subscribe((state) => {
+      setBtState(state);
+    });
+  }, []);
 
   // Calculate live amount due
   const totalPaidSoFar = payments.reduce((sum, p) => sum + p.amount, 0);
@@ -159,7 +175,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
     }
   };
 
-  // Complete entire bill
+  // Complete entire bill without receipt preview: finish task, record payment, and return to Tables floor plan directly
   const handleFinalize = () => {
     const check = canPay(activeBill);
     if (!check.allowed) {
@@ -185,7 +201,61 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
 
     const result = completeBillPayment(activeBill.id, finalPayments);
     if (result.success) {
-      setCompletedBill(result.bill);
+      // Auto-print to Bluetooth printer if enabled
+      if (btState.isConnected && btState.autoPrintEnabled) {
+        bluetoothPrinterService.printReceipt(result.bill, settings).catch(() => {});
+      }
+      setActiveCategory(null);
+      setActiveNav('tables');
+      onClose();
+    }
+  };
+
+  // Print receipt only: prints 80mm thermal receipt via Bluetooth ESC/POS or window.print(), does NOT record payment, and stays on payment screen
+  const handlePrintReceipt = async () => {
+    soundService.playTap();
+    const previewPayments: PaymentRecord[] = payments.length > 0 ? payments : [
+      {
+        method: activeMethod,
+        amount: activeBill.grandTotal,
+        receivedAmount: activeMethod === 'cash' ? (parseFloat(cashReceived) || activeBill.grandTotal) : undefined,
+        change: activeMethod === 'cash' ? Math.max(0, (parseFloat(cashReceived) || activeBill.grandTotal) - activeBill.grandTotal) : 0,
+        ref: activeMethod === 'card' ? cardRef : activeMethod === 'qr' ? 'QR-PAID' : undefined,
+        qrImageId: activeMethod === 'qr' ? selectedQrId : undefined,
+      } as PaymentRecord
+    ];
+
+    const billToPrint: Bill = {
+      ...activeBill,
+      payments: previewPayments,
+    };
+
+    // If Bluetooth thermal printer is connected, send ESC/POS directly to printer
+    if (btState.isConnected) {
+      try {
+        setBtPrinting(true);
+        const res = await bluetoothPrinterService.printReceipt(billToPrint, settings);
+        setBtPrinting(false);
+        if (res.success) {
+          setBtPrintSuccess(true);
+          soundService.playSuccessTap();
+          setTimeout(() => setBtPrintSuccess(false), 2500);
+        } else {
+          // Fallback to window.print if Bluetooth encountered an issue
+          setPrintableBill(billToPrint);
+          setTimeout(() => window.print(), 50);
+        }
+      } catch {
+        setBtPrinting(false);
+        setPrintableBill(billToPrint);
+        setTimeout(() => window.print(), 50);
+      }
+    } else {
+      // Standard printer dialog
+      setPrintableBill(billToPrint);
+      setTimeout(() => {
+        window.print();
+      }, 50);
     }
   };
 
@@ -282,42 +352,12 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title={
-        completedBill
-          ? 'ชำระเงินสำเร็จ'
-          : `ชำระเงินบิล: ${activeBill.billNumber} (${
-              activeBill.tableName ? `โต๊ะ ${activeBill.tableName}` : 'ออเดอร์'
-            })`
-      }
+      title={`ชำระเงินบิล: ${activeBill.billNumber} (${
+        activeBill.tableName ? `โต๊ะ ${activeBill.tableName}` : 'ออเดอร์'
+      })`}
       maxWidth="max-w-5xl"
     >
-      {completedBill ? (
-        <div className="space-y-6">
-          <div className="flex flex-col items-center justify-center p-6 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-center">
-            <CheckCircle2 className="w-14 h-14 text-emerald-600 dark:text-emerald-400 mb-2" />
-            <h4 className="text-xl font-bold text-slate-900 dark:text-white">
-              บันทึกการชำระเงินเรียบร้อยแล้ว
-            </h4>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-              ยอดสุทธิ: {formatAmount(completedBill.grandTotal)} · โต๊ะ {completedBill.tableName || '-'} พร้อมใช้งานใหม่
-            </p>
-          </div>
-
-          {/* Receipt Preview */}
-          <ReceiptPrint bill={completedBill} settings={settings} />
-
-          <div className="flex justify-end gap-2 pt-4 border-t border-slate-100 dark:border-slate-800">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-6 py-2.5 rounded-xl bg-slate-900 text-white dark:bg-white dark:text-slate-900 font-bold text-sm cursor-pointer"
-            >
-              เสร็จสิ้น / ปิดหน้าต่าง
-            </button>
-          </div>
-        </div>
-      ) : (
-        <div className="space-y-4">
+      <div className="space-y-4">
           {/* Multi-bill switcher tabs if multiple open bills exist for this table */}
           {tableOpenBills.length > 1 && (
             <div className="flex items-center gap-2 overflow-x-auto pb-2 border-b border-slate-200 dark:border-slate-800">
@@ -898,25 +938,58 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
                     </button>
                   )}
 
-                  {/* Complete Payment Button */}
+                  {/* Print Receipt Button (added next to confirm payment button) */}
+                  <button
+                    type="button"
+                    disabled={btPrinting}
+                    onClick={handlePrintReceipt}
+                    className={`px-4 py-2.5 rounded-xl border text-xs font-bold shadow-xs transition cursor-pointer flex items-center gap-2 ${
+                      btState.isConnected
+                        ? 'bg-sky-50 dark:bg-sky-950/40 border-sky-400 text-sky-800 dark:text-sky-300 hover:bg-sky-100'
+                        : 'border-slate-300 dark:border-slate-700 hover:border-amber-500 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-700/80'
+                    }`}
+                    title={
+                      btState.isConnected
+                        ? `พิมพ์ใบเสร็จผ่าน Bluetooth (${btState.deviceName})`
+                        : 'พิมพ์ใบเสร็จ 80 มม. ออกเครื่องพิมพ์ POS ทันที'
+                    }
+                  >
+                    {btState.isConnected ? (
+                      <Bluetooth className={`w-4 h-4 text-sky-500 ${btPrinting ? 'animate-bounce' : ''}`} />
+                    ) : (
+                      <Printer className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                    )}
+                    <span>
+                      {btPrinting
+                        ? 'กำลังพิมพ์ Bluetooth...'
+                        : btPrintSuccess
+                        ? 'พิมพ์สำเร็จ ✓'
+                        : btState.isConnected
+                        ? 'พิมพ์ใบเสร็จ (BT)'
+                        : 'พิมพ์ใบเสร็จ'}
+                    </span>
+                  </button>
+
+                  {/* Complete Payment Button: Confirms payment, saves automatically, and returns to tables */}
                   <button
                     type="button"
                     onClick={handleFinalize}
                     className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-sm shadow-md transition cursor-pointer flex items-center gap-2"
+                    title="ยืนยันการชำระเงิน บันทึกข้อมูลและกลับสู่หน้าผังโต๊ะ"
                   >
                     <CheckCircle2 className="w-4 h-4" />
-                    <span>
-                      {activeMethod === 'qr'
-                        ? 'ยืนยันรับเงินแล้ว (ปิดบิล)'
-                        : 'ยืนยันการชำระเงินและพิมพ์ใบเสร็จ'}
-                    </span>
+                    <span>ยืนยันการชำระเงิน</span>
                   </button>
                 </div>
               </div>
             </div>
           </div>
         </div>
-      )}
+
+      {/* Hidden print container for thermal receipt: only rendered during window.print() */}
+      <div className="hidden print:block">
+        <ReceiptPrint bill={printableBill || activeBill} settings={settings} />
+      </div>
     </Modal>
   );
 };
