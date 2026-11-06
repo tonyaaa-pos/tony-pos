@@ -857,8 +857,11 @@ export const SettingsView: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => {
-                    const url = `${window.location.origin}${window.location.pathname}?view=customer`;
-                    window.open(url, 'kind_pos_customer_display', 'width=1024,height=768,menubar=no,toolbar=no,location=no,status=no,resizable=yes');
+                    const url = `${window.location.origin}${window.location.pathname}?view=customer#customer`;
+                    const win = window.open(url, 'kind_pos_customer_display', 'width=1024,height=768,menubar=no,toolbar=no,location=no,status=no,resizable=yes');
+                    if (win) {
+                      try { win.focus(); } catch {}
+                    }
                   }}
                   className="w-full py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold text-xs shadow-xs transition flex items-center justify-center gap-2 cursor-pointer"
                 >
@@ -891,6 +894,38 @@ export const SettingsView: React.FC = () => {
                 >
                   <Eye className="w-4 h-4" />
                   <span>ดูตัวอย่างหน้าจอ (Preview)</span>
+                </button>
+              </div>
+
+              {/* Set this device as customer display */}
+              <div className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-3 sm:col-span-2">
+                <div className="flex items-center justify-between">
+                  <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-500 flex items-center justify-center font-bold">
+                    <Monitor className="w-5 h-5" />
+                  </div>
+                  <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                    สำหรับตั้งค่าจอที่ 2 ของ Sunmi
+                  </span>
+                </div>
+                <div>
+                  <h4 className="font-extrabold text-sm text-slate-900 dark:text-white">
+                    สลับหน้าจอนี้เป็น &quot;จอลูกค้า (Customer Display จอที่ 2)&quot; ทันที
+                  </h4>
+                  <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
+                    หากเปิดระบบนี้บนหน้าจอหลังของเครื่อง POS ให้กดปุ่มนี้เพื่อล็อคให้อุปกรณ์หรือหน้าจอนี้แสดงผลเฉพาะบิลออเดอร์และหน้าจอชำระเงินสำหรับลูกค้าเท่านั้น (สามารถสลับกลับเป็นจอพนักงานได้ตลอดเวลา)
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    localStorage.setItem('kind_pos_screen_role', 'customer');
+                    window.location.hash = '#customer';
+                    window.dispatchEvent(new Event('kind_pos_screen_role_change'));
+                  }}
+                  className="py-2.5 px-4 rounded-xl border border-amber-400 bg-amber-50 dark:bg-amber-950/40 hover:bg-amber-100 text-amber-900 dark:text-amber-300 font-extrabold text-xs transition flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <Monitor className="w-4 h-4" />
+                  <span>ตั้งค่าหน้านี้เป็นหน้าจอลูกค้า (Customer Display)</span>
                 </button>
               </div>
             </div>

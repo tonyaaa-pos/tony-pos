@@ -17,18 +17,72 @@ import { SettingsView } from './components/settings/SettingsView';
 
 import { CustomerDisplayView } from './components/customer/CustomerDisplayView';
 
+export const checkIsCustomerWindow = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  try {
+    const search = window.location.search.toLowerCase();
+    const hash = window.location.hash.toLowerCase();
+    const pathname = window.location.pathname.toLowerCase();
+    const storedRole = localStorage.getItem('kind_pos_screen_role');
+
+    if (
+      storedRole === 'customer' ||
+      search.includes('view=customer') ||
+      search.includes('screen=customer') ||
+      search.includes('view=cfd') ||
+      hash.includes('customer') ||
+      hash.includes('cfd') ||
+      pathname.includes('/customer')
+    ) {
+      return true;
+    }
+  } catch {}
+  return false;
+};
+
 const MainLayout: React.FC = () => {
   const { currentUser, activeNav } = usePOS();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [isCustomerScreen, setIsCustomerScreen] = useState<boolean>(() => checkIsCustomerWindow());
 
-  // Check if current window was opened as a dedicated Customer Display (CFD on second monitor)
-  const isCustomerWindow =
-    typeof window !== 'undefined' &&
-    (new URLSearchParams(window.location.search).get('view') === 'customer' ||
-      window.location.hash.toLowerCase().includes('customer'));
+  React.useEffect(() => {
+    const syncScreenRole = () => {
+      setIsCustomerScreen(checkIsCustomerWindow());
+    };
 
-  if (isCustomerWindow) {
-    return <CustomerDisplayView />;
+    window.addEventListener('hashchange', syncScreenRole);
+    window.addEventListener('popstate', syncScreenRole);
+    window.addEventListener('storage', syncScreenRole);
+    window.addEventListener('kind_pos_screen_role_change', syncScreenRole);
+
+    return () => {
+      window.removeEventListener('hashchange', syncScreenRole);
+      window.removeEventListener('popstate', syncScreenRole);
+      window.removeEventListener('storage', syncScreenRole);
+      window.removeEventListener('kind_pos_screen_role_change', syncScreenRole);
+    };
+  }, []);
+
+  const handleSwitchToCashier = () => {
+    try {
+      localStorage.removeItem('kind_pos_screen_role');
+      if (window.location.hash.includes('customer') || window.location.hash.includes('cfd')) {
+        window.location.hash = '';
+      }
+      if (window.location.search.includes('customer') || window.location.search.includes('cfd')) {
+        const url = new URL(window.location.href);
+        url.searchParams.delete('view');
+        url.searchParams.delete('screen');
+        window.history.replaceState({}, '', url.pathname);
+      }
+      window.dispatchEvent(new Event('kind_pos_screen_role_change'));
+    } catch {}
+    setIsCustomerScreen(false);
+  };
+
+  // Dedicated Customer Display (CFD on second monitor): ONLY renders customer bill & payment QR, NEVER staff layout!
+  if (isCustomerScreen) {
+    return <CustomerDisplayView onSwitchToCashier={handleSwitchToCashier} />;
   }
 
   if (!currentUser) {

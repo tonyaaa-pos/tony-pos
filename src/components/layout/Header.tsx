@@ -52,12 +52,17 @@ export const Header: React.FC<HeaderProps> = ({ onOpenMenu }) => {
   }, []);
 
   const handleOpenCustomerWindow = () => {
-    const url = `${window.location.origin}${window.location.pathname}?view=customer`;
-    window.open(
+    const url = `${window.location.origin}${window.location.pathname}?view=customer#customer`;
+    const win = window.open(
       url,
       'kind_pos_customer_display',
       'width=1024,height=768,menubar=no,toolbar=no,location=no,status=no,resizable=yes'
     );
+    if (win) {
+      try {
+        win.focus();
+      } catch {}
+    }
   };
 
 
@@ -338,6 +343,35 @@ export const Header: React.FC<HeaderProps> = ({ onOpenMenu }) => {
                 </h5>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                   ดูตัวอย่างมุมมองลูกค้าบนหน้าต่างจำลองทันทีโดยไม่ต้องต่อจอที่ 2
+                </p>
+              </div>
+            </button>
+
+            {/* Action 3: Convert this screen to Customer Display */}
+            <button
+              type="button"
+              onClick={() => {
+                localStorage.setItem('kind_pos_screen_role', 'customer');
+                window.location.hash = '#customer';
+                window.dispatchEvent(new Event('kind_pos_screen_role_change'));
+                setShowDualScreenModal(false);
+              }}
+              className="p-4 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-amber-400 text-left transition flex flex-col justify-between group cursor-pointer shadow-xs sm:col-span-2"
+            >
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="p-2 rounded-xl bg-amber-500/20 text-amber-500 font-bold">
+                  <Monitor className="w-4 h-4" />
+                </span>
+                <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300">
+                  สำหรับตั้งค่าจอที่ 2
+                </span>
+              </div>
+              <div>
+                <h5 className="font-extrabold text-slate-900 dark:text-white text-sm group-hover:text-amber-600 transition">
+                  สลับหน้าจอนี้เป็น &quot;จอลูกค้า (Customer Display)&quot; ทันที
+                </h5>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  หากเปิดหน้าเว็บนี้บนจอหลังของเครื่อง POS ให้กดปุ่มนี้เพื่อเปลี่ยนเป็นจอลูกค้าถาวร (มีปุ่มสลับกลับได้ตลอดเวลา)
                 </p>
               </div>
             </button>

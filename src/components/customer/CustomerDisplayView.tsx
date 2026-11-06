@@ -70,11 +70,13 @@ const PROMO_SLIDES = [
 interface CustomerDisplayViewProps {
   isPreview?: boolean;
   onClosePreview?: () => void;
+  onSwitchToCashier?: () => void;
 }
 
 export const CustomerDisplayView: React.FC<CustomerDisplayViewProps> = ({
   isPreview = false,
   onClosePreview,
+  onSwitchToCashier,
 }) => {
   const { settings, activeBill } = usePOS();
   const [displayState, setDisplayState] = useState<CustomerDisplayState>(customerDisplayService.getState());
@@ -195,6 +197,34 @@ export const CustomerDisplayView: React.FC<CustomerDisplayViewProps> = ({
             <Clock className="w-3.5 h-3.5 text-slate-400" />
             <span>{currentTime}</span>
           </div>
+
+          {/* Switch back to Cashier layout if on main device */}
+          {!isPreview && (
+            <button
+              type="button"
+              onClick={() => {
+                if (onSwitchToCashier) {
+                  onSwitchToCashier();
+                } else {
+                  try {
+                    localStorage.removeItem('kind_pos_screen_role');
+                    if (window.location.hash.includes('customer') || window.location.hash.includes('cfd')) {
+                      window.location.hash = '';
+                    }
+                    const url = new URL(window.location.href);
+                    url.searchParams.delete('view');
+                    url.searchParams.delete('screen');
+                    window.location.href = url.pathname;
+                  } catch {}
+                }
+              }}
+              className="p-1.5 sm:px-2.5 sm:py-1 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-white transition cursor-pointer flex items-center gap-1 text-xs border border-slate-700"
+              title="สลับกลับไปหน้าจอหลักสำหรับพนักงาน/แคชเชียร์"
+            >
+              <Store className="w-3.5 h-3.5 text-amber-500" />
+              <span className="hidden md:inline text-[11px]">จอแคชเชียร์</span>
+            </button>
+          )}
 
           {/* Fullscreen Button (Only when not preview) */}
           {!isPreview && (

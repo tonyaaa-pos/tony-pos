@@ -10,6 +10,7 @@ import {
   Store,
   UtensilsCrossed,
   Globe,
+  Monitor,
 } from 'lucide-react';
 import { soundService } from '../../utils/audio';
 
@@ -197,8 +198,30 @@ export const LoginScreen: React.FC = () => {
               </button>
             ))}
           </div>
+
+          {/* Quick Switch: Set this screen permanently as Customer Display */}
+          <div className="pt-3 mt-3 border-t border-slate-100 dark:border-slate-800 text-center">
+            <button
+              type="button"
+              onClick={() => {
+                soundService.playTap();
+                localStorage.setItem('kind_pos_screen_role', 'customer');
+                window.location.hash = '#customer';
+                window.dispatchEvent(new Event('kind_pos_screen_role_change'));
+              }}
+              className="w-full py-2.5 px-3 rounded-xl border border-amber-300 dark:border-amber-700/80 bg-amber-50 dark:bg-amber-950/40 hover:bg-amber-100 dark:hover:bg-amber-900/40 text-amber-900 dark:text-amber-300 font-extrabold text-xs transition flex items-center justify-center gap-2 cursor-pointer shadow-2xs active:scale-98"
+              title="ตั้งค่าให้หน้าจอนี้ทำหน้าที่เป็นหน้าจอลูกค้า (จอที่ 2) โดยจะแสดงเฉพาะบิลและ QR ชำระเงิน"
+            >
+              <Monitor className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+              <span>🖥️ ใช้งานหน้านี้เป็น &quot;หน้าจอลูกค้า (จอที่ 2)&quot;</span>
+            </button>
+            <p className="text-[10px] text-slate-400 mt-1">
+              (สำหรับจอหลังของเครื่อง POS เพื่อให้แสดงเฉพาะบิลและ QR ชำระเงิน)
+            </p>
+          </div>
         </div>
       </div>
     </div>
   );
 };
+
