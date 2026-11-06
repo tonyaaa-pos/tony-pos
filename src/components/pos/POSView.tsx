@@ -367,14 +367,17 @@ export const POSView: React.FC = () => {
     setHoldingDishId(null);
     setHoldProgress(0);
 
-    // If it was a touch event on mobile/tablet and duration was quick (< 450ms) and not long press, order directly!
+    // If it was a quick touch on mobile/tablet (< 450ms) and not long press, open option customization modal!
     if (e && 'changedTouches' in e && item) {
       const touchDuration = Date.now() - (pressStartTimeRef.current || 0);
       if (!isLongPressTriggeredRef.current && touchDuration < 450) {
         const now = Date.now();
-        if (now - lastOrderTimestampRef.current >= 350) {
+        if (now - lastOrderTimestampRef.current >= 250) {
           lastOrderTimestampRef.current = now;
-          orderFoodItem(item);
+          if (!item.isSoldOut) {
+            soundService.playTap();
+            setCustomizingItem(item);
+          }
         }
       }
     }
@@ -392,30 +395,44 @@ export const POSView: React.FC = () => {
     }
   };
 
-  // Single tap / click: immediately adds food to bill!
+  // Single tap / click: opens the option customization modal so staff can choose options before confirming!
   const handleItemCardClick = (menuItem: MenuItem) => {
     if (isLongPressTriggeredRef.current) {
       isLongPressTriggeredRef.current = false;
       return;
     }
 
+    if (menuItem.isSoldOut) {
+      soundService.playTap();
+      return;
+    }
+
     // Debounce fast duplicate clicks (e.g. touch + synthetic click)
     const now = Date.now();
-    if (now - lastOrderTimestampRef.current < 350) {
+    if (now - lastOrderTimestampRef.current < 250) {
       return;
     }
     lastOrderTimestampRef.current = now;
 
-    orderFoodItem(menuItem);
+    soundService.playTap();
+    setCustomizingItem(menuItem);
   };
 
   const handleAddToCart = (item: OrderItem) => {
     let targetBill = activeBill;
     if (!targetBill) {
-      targetBill = createBillForOrder('dine_in');
+      const openBill = bills.find((b) => b.status === 'open');
+      if (openBill) {
+        targetBill = openBill;
+        setActiveBillId(openBill.id);
+      } else {
+        targetBill = createBillForOrder('dine_in');
+      }
     }
     addItemsToBill(targetBill.id, [item]);
+    soundService.playSuccessTap();
   };
+
 
   // Unsent items in cart
   const unsentCount = activeBill?.items.filter((i) => i.isNewUnsent).length || 0;
@@ -521,7 +538,7 @@ export const POSView: React.FC = () => {
                   onTouchCancel={() => handleHoldEnd()}
                   onTouchMove={handleHoldMove}
                   onMouseMove={handleHoldMove}
-                  title="คลิกเพื่อสั่งอาหาร หรือกดค้างไว้ 2 วินาทีเพื่อแก้ไขเมนูนี้ทันที"
+                  title="คลิกเพื่อเลือกตัวเลือกย่อยและสั่งอาหาร หรือกดค้างไว้ 2 วินาทีเพื่อแก้ไขเมนูนี้ทันที"
                   className={`relative rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800/80 shadow-xs overflow-hidden flex flex-col justify-between transition group select-none ${
                     item.isSoldOut
                       ? 'opacity-60 cursor-not-allowed'
