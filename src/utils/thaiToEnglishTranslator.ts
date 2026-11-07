@@ -418,7 +418,7 @@ export function translateThaiToEnglishFast(thaiText: string): string {
       .join(' ');
   }
 
-  return clean;
+  return /[\u0E00-\u0E7F]/.test(clean) ? '' : clean;
 }
 
 /**

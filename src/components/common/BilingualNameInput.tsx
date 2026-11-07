@@ -34,52 +34,74 @@ export const BilingualNameInput: React.FC<BilingualNameInputProps> = ({
   const lastAutoTranslationRef = useRef<string>('');
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Sync / Auto-translate when Thai text changes
+  // Debounced Auto-translate when Thai text changes (never blocks Thai typing)
   const handleThaiChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newThai = e.target.value;
     onChangeTh(newThai);
 
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+
     if (!newThai.trim()) {
-      onChangeEn('');
-      lastAutoTranslationRef.current = '';
+      if (!isCustomEdited || !valueEn) {
+        onChangeEn('');
+        lastAutoTranslationRef.current = '';
+      }
       return;
     }
 
-    // Immediate fast translation from local culinary dictionary
-    const fastTranslation = translateThaiToEnglishFast(newThai);
-    if (!isCustomEdited || valueEn === lastAutoTranslationRef.current || !valueEn) {
-      if (fastTranslation) {
-        onChangeEn(fastTranslation);
-        lastAutoTranslationRef.current = fastTranslation;
-      }
-    }
-
-    // Debounced high-fidelity translation
-    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    // Debounce translation so user can type freely without keystroke drops or stutter
     debounceTimerRef.current = setTimeout(async () => {
       if (!isCustomEdited || valueEn === lastAutoTranslationRef.current || !valueEn) {
         setIsTranslating(true);
         try {
-          const refined = await translateThaiToEnglish(newThai);
-          if (refined) {
-            onChangeEn(refined);
-            lastAutoTranslationRef.current = refined;
+          // Try local fast dictionary first
+          const fast = translateThaiToEnglishFast(newThai);
+          if (fast && !/[\u0E00-\u0E7F]/.test(fast)) {
+            onChangeEn(fast);
+            lastAutoTranslationRef.current = fast;
+          } else {
+            const refined = await translateThaiToEnglish(newThai);
+            if (refined && !/[\u0E00-\u0E7F]/.test(refined)) {
+              onChangeEn(refined);
+              lastAutoTranslationRef.current = refined;
+            }
           }
+        } catch {
+          // ignore
         } finally {
           setIsTranslating(false);
         }
       }
-    }, 400);
+    }, 500);
+  };
+
+  // Immediate translation check on blur when user finishes typing Thai
+  const handleThaiBlur = async () => {
+    if (!valueTh || !valueTh.trim()) return;
+    if (!isCustomEdited || !valueEn || valueEn === lastAutoTranslationRef.current) {
+      setIsTranslating(true);
+      try {
+        const refined = await translateThaiToEnglish(valueTh);
+        if (refined && !/[\u0E00-\u0E7F]/.test(refined)) {
+          onChangeEn(refined);
+          lastAutoTranslationRef.current = refined;
+        }
+      } catch {
+        // ignore
+      } finally {
+        setIsTranslating(false);
+      }
+    }
   };
 
   // Re-translate button handler
   const handleForceTranslate = async () => {
-    if (!valueTh.trim()) return;
+    if (!valueTh || !valueTh.trim()) return;
     setIsTranslating(true);
     setIsCustomEdited(false);
     try {
       const result = await translateThaiToEnglish(valueTh);
-      if (result) {
+      if (result && !/[\u0E00-\u0E7F]/.test(result)) {
         onChangeEn(result);
         lastAutoTranslationRef.current = result;
       }
@@ -101,8 +123,9 @@ export const BilingualNameInput: React.FC<BilingualNameInputProps> = ({
             type="text"
             required={required}
             placeholder={placeholderTh}
-            value={valueTh}
+            value={valueTh ?? ''}
             onChange={handleThaiChange}
+            onBlur={handleThaiBlur}
             className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs bg-slate-50 dark:bg-slate-800 focus:ring-1 focus:ring-amber-500"
           />
         </div>
@@ -111,7 +134,7 @@ export const BilingualNameInput: React.FC<BilingualNameInputProps> = ({
           <input
             type="text"
             placeholder={placeholderEn}
-            value={valueEn}
+            value={valueEn ?? ''}
             onChange={handleEnglishChange}
             className="w-full pl-2.5 pr-8 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs bg-slate-50 dark:bg-slate-800 focus:ring-1 focus:ring-amber-500"
           />
@@ -144,8 +167,9 @@ export const BilingualNameInput: React.FC<BilingualNameInputProps> = ({
           <input
             type="text"
             required={required}
-            value={valueTh}
+            value={valueTh ?? ''}
             onChange={handleThaiChange}
+            onBlur={handleThaiBlur}
             placeholder={placeholderTh}
             className="w-full px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-900 dark:text-white focus:ring-2 focus:ring-amber-500"
           />
@@ -175,7 +199,7 @@ export const BilingualNameInput: React.FC<BilingualNameInputProps> = ({
         <div className="relative flex items-center">
           <input
             type="text"
-            value={valueEn}
+            value={valueEn ?? ''}
             onChange={handleEnglishChange}
             placeholder={placeholderEn}
             className="w-full pl-3.5 pr-9 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-900 dark:text-white focus:ring-2 focus:ring-amber-500"
