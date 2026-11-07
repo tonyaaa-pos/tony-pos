@@ -33,6 +33,7 @@ import { Modal } from '../common/Modal';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import { compressImageFile } from '../../utils/imageCompressor';
 import { isDishInCategory } from '../pos/POSView';
+import { BilingualNameInput } from '../common/BilingualNameInput';
 
 export const MenuManagementView: React.FC = () => {
   const {
@@ -1077,35 +1078,18 @@ export const MenuManagementView: React.FC = () => {
               </div>
             </div>
 
-            {/* Names (TH & EN) and Category */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  {t('menu_form_name_th')} <span className="text-rose-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={editingItem.name || ''}
-                  onChange={(e) => setEditingItem((prev) => ({ ...prev, name: e.target.value }))}
-                  placeholder="เช่น ผัดกะเพราโบราณ"
-                  className="w-full px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-900 dark:text-white"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  {t('menu_form_name_en')}
-                </label>
-                <input
-                  type="text"
-                  value={editingItem.nameEn || ''}
-                  onChange={(e) => setEditingItem((prev) => ({ ...prev, nameEn: e.target.value }))}
-                  placeholder="e.g. Traditional Basil Stir-fry"
-                  className="w-full px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-900 dark:text-white"
-                />
-              </div>
-            </div>
+            {/* Names (TH & EN) - Thai primary with auto-translation and edit button */}
+            <BilingualNameInput
+              labelTh={t('menu_form_name_th')}
+              labelEn={t('menu_form_name_en')}
+              placeholderTh="เช่น ผัดกะเพราโบราณ"
+              placeholderEn="e.g. Traditional Basil Stir-fry"
+              valueTh={editingItem.name || ''}
+              valueEn={editingItem.nameEn || ''}
+              onChangeTh={(val) => setEditingItem((prev) => ({ ...prev, name: val }))}
+              onChangeEn={(val) => setEditingItem((prev) => ({ ...prev, nameEn: val }))}
+              required
+            />
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
@@ -1226,23 +1210,16 @@ export const MenuManagementView: React.FC = () => {
                           </button>
                         </div>
 
-                        <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-2">
-                          <input
-                            type="text"
-                            required
-                            placeholder={t('menu_form_option_name_th')}
-                            value={variant.name}
-                            onChange={(e) => handleUpdateVariant(idx, { name: e.target.value })}
-                            className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs bg-slate-50 dark:bg-slate-800"
-                          />
-                          <input
-                            type="text"
-                            placeholder={t('menu_form_option_name_en')}
-                            value={variant.nameEn || ''}
-                            onChange={(e) => handleUpdateVariant(idx, { nameEn: e.target.value })}
-                            className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs bg-slate-50 dark:bg-slate-800"
-                          />
-                        </div>
+                        <BilingualNameInput
+                          compact
+                          placeholderTh={t('menu_form_option_name_th')}
+                          placeholderEn={t('menu_form_option_name_en')}
+                          valueTh={variant.name || ''}
+                          valueEn={variant.nameEn || ''}
+                          onChangeTh={(val) => handleUpdateVariant(idx, { name: val })}
+                          onChangeEn={(val) => handleUpdateVariant(idx, { nameEn: val })}
+                          required
+                        />
 
                         <div className="flex items-center gap-2 shrink-0">
                           <div className="w-20">
@@ -1596,26 +1573,18 @@ export const MenuManagementView: React.FC = () => {
           maxWidth="max-w-md"
         >
           <div className="space-y-4">
-            <div className="space-y-2">
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-                {editingCategory ? t('edit') : t('add')} {t('menu_form_cat')}
-              </label>
-              <div className="grid grid-cols-2 gap-2">
-                <input
-                  type="text"
-                  value={categoryNameInput}
-                  onChange={(e) => setCategoryNameInput(e.target.value)}
-                  placeholder={t('bottom_category_name_label')}
-                  className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs"
-                />
-                <input
-                  type="text"
-                  value={categoryNameEnInput}
-                  onChange={(e) => setCategoryNameEnInput(e.target.value)}
-                  placeholder={t('bottom_category_name_en_label')}
-                  className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs"
-                />
-              </div>
+            <div className="space-y-3">
+              <BilingualNameInput
+                labelTh={t('category_name')}
+                labelEn="ชื่อภาษาอังกฤษ (Auto)"
+                placeholderTh={t('bottom_category_name_label')}
+                placeholderEn={t('bottom_category_name_en_label')}
+                valueTh={categoryNameInput}
+                valueEn={categoryNameEnInput}
+                onChangeTh={setCategoryNameInput}
+                onChangeEn={setCategoryNameEnInput}
+                required
+              />
               <button
                 type="button"
                 disabled={!categoryNameInput.trim()}
@@ -1959,34 +1928,18 @@ export const MenuManagementView: React.FC = () => {
           maxWidth="max-w-lg"
         >
           <form onSubmit={handleSaveEditingPreset} className="space-y-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  ชื่อ set แม่แบบ (ภาษาไทย) <span className="text-rose-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={editingPreset.name}
-                  onChange={(e) => setEditingPreset({ ...editingPreset, name: e.target.value })}
-                  placeholder="เช่น เพิ่มไข่ดาว, เลือกระดับความเผ็ด"
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-semibold"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  ชื่อ set แม่แบบ (English)
-                </label>
-                <input
-                  type="text"
-                  value={editingPreset.nameEn || ''}
-                  onChange={(e) => setEditingPreset({ ...editingPreset, nameEn: e.target.value })}
-                  placeholder="e.g. Add Eggs, Spiciness Level"
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs"
-                />
-              </div>
-            </div>
+            {/* Preset Name (TH & EN) - Thai primary with auto-translation and edit button */}
+            <BilingualNameInput
+              labelTh="ชื่อ set แม่แบบ (ภาษาไทย)"
+              labelEn="ชื่อ set แม่แบบ (English)"
+              placeholderTh="เช่น เพิ่มไข่ดาว, เลือกระดับความเผ็ด"
+              placeholderEn="e.g. Add Eggs, Spiciness Level"
+              valueTh={editingPreset.name || ''}
+              valueEn={editingPreset.nameEn || ''}
+              onChangeTh={(val) => setEditingPreset({ ...editingPreset, name: val })}
+              onChangeEn={(val) => setEditingPreset({ ...editingPreset, nameEn: val })}
+              required
+            />
 
             <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
               <div>
@@ -2052,25 +2005,19 @@ export const MenuManagementView: React.FC = () => {
                       {cIdx + 1}
                     </span>
 
-                    <input
-                      type="text"
+                    <BilingualNameInput
+                      compact
+                      placeholderTh="ชื่อตัวเลือก (ไทย)"
+                      placeholderEn="Name (EN)"
+                      valueTh={choice.name || ''}
+                      valueEn={choice.nameEn || ''}
+                      onChangeTh={(val) =>
+                        handleUpdateChoiceInEditingPreset(cIdx, { name: val })
+                      }
+                      onChangeEn={(val) =>
+                        handleUpdateChoiceInEditingPreset(cIdx, { nameEn: val })
+                      }
                       required
-                      placeholder="ชื่อตัวเลือก (ไทย)"
-                      value={choice.name}
-                      onChange={(e) =>
-                        handleUpdateChoiceInEditingPreset(cIdx, { name: e.target.value })
-                      }
-                      className="flex-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs"
-                    />
-
-                    <input
-                      type="text"
-                      placeholder="Name (EN)"
-                      value={choice.nameEn || ''}
-                      onChange={(e) =>
-                        handleUpdateChoiceInEditingPreset(cIdx, { nameEn: e.target.value })
-                      }
-                      className="flex-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs hidden sm:block"
                     />
 
                     <div className="flex items-center gap-1 w-24 shrink-0">

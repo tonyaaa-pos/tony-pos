@@ -19,6 +19,7 @@ import { formatBaht } from '../../utils/formatters';
 import { soundService } from '../../utils/audio';
 import { Modal } from '../common/Modal';
 import { compressImageFile } from '../../utils/imageCompressor';
+import { BilingualNameInput } from '../common/BilingualNameInput';
 
 interface EditMenuItemModalProps {
   isOpen: boolean;
@@ -349,39 +350,18 @@ export const EditMenuItemModal: React.FC<EditMenuItemModalProps> = ({
           </div>
         </div>
 
-        {/* Names (TH & EN) and Category */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-              {t('menu_form_name_th')} <span className="text-rose-500">*</span>
-            </label>
-            <input
-              type="text"
-              required
-              value={editingItem.name || ''}
-              onChange={(e) =>
-                setEditingItem((prev) => (prev ? { ...prev, name: e.target.value } : null))
-              }
-              placeholder="เช่น ผัดกะเพราโบราณ"
-              className="w-full px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-900 dark:text-white"
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-              {t('menu_form_name_en')}
-            </label>
-            <input
-              type="text"
-              value={editingItem.nameEn || ''}
-              onChange={(e) =>
-                setEditingItem((prev) => (prev ? { ...prev, nameEn: e.target.value } : null))
-              }
-              placeholder="e.g. Traditional Basil Stir-fry"
-              className="w-full px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-900 dark:text-white"
-            />
-          </div>
-        </div>
+        {/* Names (TH & EN) - Thai primary with auto-translation and edit button */}
+        <BilingualNameInput
+          labelTh={t('menu_form_name_th')}
+          labelEn={t('menu_form_name_en')}
+          placeholderTh="เช่น ผัดกะเพราโบราณ"
+          placeholderEn="e.g. Traditional Basil Stir-fry"
+          valueTh={editingItem.name || ''}
+          valueEn={editingItem.nameEn || ''}
+          onChangeTh={(val) => setEditingItem((prev) => (prev ? { ...prev, name: val } : null))}
+          onChangeEn={(val) => setEditingItem((prev) => (prev ? { ...prev, nameEn: val } : null))}
+          required
+        />
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
@@ -507,23 +487,16 @@ export const EditMenuItemModal: React.FC<EditMenuItemModalProps> = ({
                       </button>
                     </div>
 
-                    <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      <input
-                        type="text"
-                        required
-                        placeholder={t('menu_form_option_name_th')}
-                        value={variant.name}
-                        onChange={(e) => handleUpdateVariant(idx, { name: e.target.value })}
-                        className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs bg-slate-50 dark:bg-slate-800"
-                      />
-                      <input
-                        type="text"
-                        placeholder={t('menu_form_option_name_en')}
-                        value={variant.nameEn || ''}
-                        onChange={(e) => handleUpdateVariant(idx, { nameEn: e.target.value })}
-                        className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs bg-slate-50 dark:bg-slate-800"
-                      />
-                    </div>
+                    <BilingualNameInput
+                      compact
+                      placeholderTh={t('menu_form_option_name_th')}
+                      placeholderEn={t('menu_form_option_name_en')}
+                      valueTh={variant.name || ''}
+                      valueEn={variant.nameEn || ''}
+                      onChangeTh={(val) => handleUpdateVariant(idx, { name: val })}
+                      onChangeEn={(val) => handleUpdateVariant(idx, { nameEn: val })}
+                      required
+                    />
 
                     <div className="flex items-center gap-2 shrink-0">
                       <div className="w-20">

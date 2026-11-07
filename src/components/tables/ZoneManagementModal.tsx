@@ -5,6 +5,7 @@ import { Modal } from '../common/Modal';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import { TableZoneConfig } from '../../types';
 import { Plus, Edit2, Trash2, Check, X, Layers, AlertCircle } from 'lucide-react';
+import { BilingualNameInput } from '../common/BilingualNameInput';
 
 interface ZoneManagementModalProps {
   isOpen: boolean;
@@ -87,34 +88,17 @@ export const ZoneManagementModal: React.FC<ZoneManagementModalProps> = ({ isOpen
               <span>เพิ่มโซนใหม่ (Add New Zone)</span>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  ชื่อโซน (ภาษาไทย) <span className="text-rose-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={newZoneName}
-                  onChange={(e) => setNewZoneName(e.target.value)}
-                  placeholder="เช่น โซนริมสวน, ชั้น 2, ระเบียง"
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-900 dark:text-white"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  ชื่อโซนภาษาอังกฤษ (Optional)
-                </label>
-                <input
-                  type="text"
-                  value={newZoneNameEn}
-                  onChange={(e) => setNewZoneNameEn(e.target.value)}
-                  placeholder="e.g. Garden Terrace, 2nd Floor"
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-900 dark:text-white"
-                />
-              </div>
-            </div>
+            <BilingualNameInput
+              labelTh="ชื่อโซน (ภาษาไทย)"
+              labelEn="ชื่อโซนภาษาอังกฤษ (Auto Translate)"
+              placeholderTh="เช่น โซนริมสวน, ชั้น 2, ระเบียง, ห้อง VIP"
+              placeholderEn="e.g. Garden Terrace, 2nd Floor, VIP Room"
+              valueTh={newZoneName}
+              valueEn={newZoneNameEn}
+              onChangeTh={setNewZoneName}
+              onChangeEn={setNewZoneNameEn}
+              required
+            />
 
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
               {/* Color Selection */}
@@ -166,22 +150,20 @@ export const ZoneManagementModal: React.FC<ZoneManagementModalProps> = ({ isOpen
                     {isEditing ? (
                       /* Inline Edit Form */
                       <div className="flex-1 flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-                        <input
-                          type="text"
-                          value={editName}
-                          onChange={(e) => setEditName(e.target.value)}
-                          placeholder="ชื่อภาษาไทย"
-                          className="flex-1 px-3 py-1.5 rounded-xl border border-amber-400 bg-amber-50/30 dark:bg-slate-800 text-xs font-semibold"
-                          autoFocus
-                        />
-                        <input
-                          type="text"
-                          value={editNameEn}
-                          onChange={(e) => setEditNameEn(e.target.value)}
-                          placeholder="English name"
-                          className="flex-1 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs"
-                        />
-                        <div className="flex items-center gap-1.5 justify-end">
+                        <div className="flex-1">
+                          <BilingualNameInput
+                            compact
+                            size="sm"
+                            placeholderTh="ชื่อโซนภาษาไทย"
+                            placeholderEn="Zone English name"
+                            valueTh={editName}
+                            valueEn={editNameEn}
+                            onChangeTh={setEditName}
+                            onChangeEn={setEditNameEn}
+                            required
+                          />
+                        </div>
+                        <div className="flex items-center gap-1.5 justify-end shrink-0">
                           <button
                             type="button"
                             onClick={() => handleSaveEdit(zone)}
