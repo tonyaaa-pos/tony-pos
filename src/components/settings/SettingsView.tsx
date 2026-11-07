@@ -30,6 +30,7 @@ import {
   Monitor,
   ExternalLink,
   Eye,
+  Usb,
 } from 'lucide-react';
 import { formatBaht } from '../../utils/formatters';
 import { compressImageFile } from '../../utils/imageCompressor';
@@ -38,6 +39,7 @@ import { ConfirmDialog } from '../common/ConfirmDialog';
 import { Table, User, TableShape, ChairStyle } from '../../types';
 import { soundService } from '../../utils/audio';
 import { bluetoothPrinterService, BluetoothState } from '../../services/bluetoothPrinterService';
+import { usbPrinterService, USBPrinterState } from '../../services/usbPrinterService';
 import { CustomerDisplayView } from '../customer/CustomerDisplayView';
 
 export const SettingsView: React.FC = () => {
@@ -77,10 +79,23 @@ export const SettingsView: React.FC = () => {
   const [btTestPrinting, setBtTestPrinting] = useState(false);
   const [btMessage, setBtMessage] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
 
+  // USB Printer states
+  const [usbState, setUsbState] = useState<USBPrinterState>(usbPrinterService.getState());
+  const [usbConnecting, setUsbConnecting] = useState(false);
+  const [usbTestPrinting, setUsbTestPrinting] = useState(false);
+  const [usbMessage, setUsbMessage] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
+
   React.useEffect(() => {
-    return bluetoothPrinterService.subscribe((state) => {
+    const unsubBt = bluetoothPrinterService.subscribe((state) => {
       setBtState(state);
     });
+    const unsubUsb = usbPrinterService.subscribe((state) => {
+      setUsbState(state);
+    });
+    return () => {
+      unsubBt();
+      unsubUsb();
+    };
   }, []);
 
   // Form states for Shop info
@@ -327,7 +342,7 @@ export const SettingsView: React.FC = () => {
       <div className="flex items-center gap-1.5 p-1 bg-slate-100 dark:bg-slate-800 rounded-2xl overflow-x-auto pb-1">
         {[
           { id: 'shop', label: 'ข้อมูลร้าน & ภาษี', icon: Store },
-          { id: 'bluetooth', label: 'เครื่องพิมพ์ & Bluetooth', icon: Bluetooth },
+          { id: 'bluetooth', label: 'เครื่องพิมพ์ (USB & BT)', icon: Printer },
           { id: 'dualscreen', label: 'จอลูกค้า (2 จอ)', icon: Monitor },
           { id: 'qr', label: 'QR ชำระเงิน', icon: QrCode },
           { id: 'tables', label: 'จัดการโต๊ะ & โซน', icon: Grid3X3 },
@@ -539,10 +554,163 @@ export const SettingsView: React.FC = () => {
         </form>
       )}
 
-      {/* Tab: Bluetooth & Thermal Printer Management */}
+      {/* Tab: Thermal Printer Management (USB & Bluetooth) */}
       {activeTab === 'bluetooth' && (
         <div className="space-y-6">
-          {/* Status & Connection Card */}
+          {/* Card 1: USB Thermal Printer Management */}
+          <div className="p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-4">
+              <div>
+                <h3 className="font-bold text-base text-slate-900 dark:text-white flex items-center gap-2">
+                  <Usb className="w-5 h-5 text-emerald-500" />
+                  <span>จัดการเครื่องพิมพ์พอร์ต USB (WebUSB ESC/POS Thermal Printer)</span>
+                </h3>
+                <p className="text-xs text-slate-500 mt-1">
+                  เชื่อมต่อเครื่องพิมพ์ใบเสร็จความร้อนผ่านสาย USB โดยตรง รองรับการจดจำอุปกรณ์และเชื่อมต่อให้อัตโนมัติทุกครั้งที่เปิดแอป
+                </p>
+              </div>
+
+              {/* Status Badge */}
+              <div className="shrink-0 flex items-center gap-2">
+                {usbState.isConnected ? (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                    <span>เชื่อมต่อ USB แล้ว: {usbState.deviceName}</span>
+                    {usbState.isSimulated && <span className="opacity-75 text-[10px]">(จำลอง)</span>}
+                  </span>
+                ) : usbConnecting ? (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800">
+                    <RefreshCw className="w-3 h-3 animate-spin" />
+                    <span>กำลังค้นหา USB...</span>
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700">
+                    <span className="w-2 h-2 rounded-full bg-slate-400" />
+                    <span>ยังไม่ได้เชื่อมต่อ USB</span>
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Notification Banner */}
+            {usbMessage && (
+              <div
+                className={`p-3 rounded-2xl text-xs font-semibold flex items-center justify-between gap-2 ${
+                  usbMessage.type === 'success'
+                    ? 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+                    : usbMessage.type === 'error'
+                    ? 'bg-rose-50 dark:bg-rose-950/50 text-rose-800 dark:text-rose-300 border border-rose-200 dark:border-rose-800'
+                    : 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+                }`}
+              >
+                <span>{usbMessage.text}</span>
+                <button
+                  type="button"
+                  onClick={() => setUsbMessage(null)}
+                  className="p-1 hover:opacity-75 cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
+            {/* Actions */}
+            <div className="flex flex-wrap items-center gap-3">
+              {!usbState.isConnected ? (
+                <>
+                  <button
+                    type="button"
+                    disabled={usbConnecting}
+                    onClick={async () => {
+                      setUsbConnecting(true);
+                      setUsbMessage(null);
+                      soundService.playTap();
+                      const res = await usbPrinterService.connect();
+                      setUsbConnecting(false);
+                      if (res.success) {
+                        soundService.playReadyChime();
+                        setUsbMessage({
+                          type: 'success',
+                          text: `เชื่อมต่อกับ "${res.deviceName}" ผ่านพอร์ต USB สำเร็จ พร้อมสั่งพิมพ์ใบเสร็จและจดจำอุปกรณ์อัตโนมัติ`,
+                        });
+                      } else {
+                        setUsbMessage({
+                          type: 'error',
+                          text: res.error || 'ไม่สามารถเชื่อมต่ออุปกรณ์ USB ได้',
+                        });
+                      }
+                    }}
+                    className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-xs transition flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                  >
+                    <Usb className="w-4 h-4" />
+                    <span>{usbConnecting ? 'กำลังค้นหา USB...' : 'ค้นหา & เชื่อมต่อเครื่องพิมพ์ USB'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      soundService.playReadyChime();
+                      usbPrinterService.simulateConnection();
+                      setUsbMessage({
+                        type: 'success',
+                        text: 'เปิดใช้งานโหมดจำลองเครื่องพิมพ์ USB (Demo Simulator) สำเร็จแล้ว สามารถทดสอบพิมพ์ได้ทันที',
+                      });
+                    }}
+                    className="px-4 py-2.5 rounded-xl border border-dashed border-emerald-400/80 hover:border-emerald-500 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 font-semibold text-xs transition flex items-center gap-1.5 cursor-pointer"
+                    title="ทดสอบระบบจำลอง USB สำหรับอุปกรณ์ที่ไม่มีเครื่องพิมพ์ USB เสียบอยู่จริง"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>จำลองเชื่อมต่อ USB (Demo)</span>
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    disabled={usbTestPrinting}
+                    onClick={async () => {
+                      setUsbTestPrinting(true);
+                      setUsbMessage(null);
+                      soundService.playTap();
+                      const res = await usbPrinterService.printTestReceipt(settings);
+                      setUsbTestPrinting(false);
+                      if (res.success) {
+                        soundService.playSuccessTap();
+                        setUsbMessage({
+                          type: 'success',
+                          text: 'ส่งคำสั่งพิมพ์ใบเสร็จทดสอบไปยังเครื่องพิมพ์ USB เรียบร้อยแล้ว',
+                        });
+                      } else {
+                        setUsbMessage({
+                          type: 'error',
+                          text: res.error || 'เกิดข้อผิดพลาดในการพิมพ์ทดสอบผ่าน USB',
+                        });
+                      }
+                    }}
+                    className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-xs transition flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                  >
+                    <Printer className="w-4 h-4" />
+                    <span>{usbTestPrinting ? 'กำลังพิมพ์ USB...' : 'พิมพ์ใบเสร็จทดสอบผ่าน USB (Test Print)'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      soundService.playTap();
+                      usbPrinterService.disconnect();
+                      setUsbMessage({ type: 'info', text: 'ตัดการเชื่อมต่อเครื่องพิมพ์ USB แล้ว' });
+                    }}
+                    className="px-4 py-2.5 rounded-xl border border-rose-200 dark:border-rose-800 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/50 font-semibold text-xs transition flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>ตัดการเชื่อมต่อ USB</span>
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* Card 2: Bluetooth Thermal Printer Management */}
           <div className="p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-5">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-4">
               <div>
@@ -699,7 +867,7 @@ export const SettingsView: React.FC = () => {
           <div className="p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-5">
             <h4 className="font-bold text-sm text-slate-900 dark:text-white border-b border-slate-100 dark:border-slate-800 pb-3 flex items-center gap-2">
               <Printer className="w-4 h-4 text-amber-500" />
-              <span>การตั้งค่าการพิมพ์ใบเสร็จบลูทูธ (Thermal ESC/POS Config)</span>
+              <span>การตั้งค่าการพิมพ์ใบเสร็จความร้อน (Thermal ESC/POS Config - USB & Bluetooth)</span>
             </h4>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -713,10 +881,11 @@ export const SettingsView: React.FC = () => {
                     type="button"
                     onClick={() => {
                       bluetoothPrinterService.setPaperWidth('80mm');
+                      usbPrinterService.setPaperWidth('80mm');
                       soundService.playTap();
                     }}
                     className={`p-3 rounded-2xl border text-left transition cursor-pointer ${
-                      btState.paperWidth === '80mm'
+                      btState.paperWidth === '80mm' || usbState.paperWidth === '80mm'
                         ? 'bg-amber-500/10 border-amber-500 text-amber-900 dark:text-amber-300 ring-2 ring-amber-400/40'
                         : 'border-slate-200 dark:border-slate-700 hover:border-slate-300'
                     }`}
@@ -731,10 +900,11 @@ export const SettingsView: React.FC = () => {
                     type="button"
                     onClick={() => {
                       bluetoothPrinterService.setPaperWidth('58mm');
+                      usbPrinterService.setPaperWidth('58mm');
                       soundService.playTap();
                     }}
                     className={`p-3 rounded-2xl border text-left transition cursor-pointer ${
-                      btState.paperWidth === '58mm'
+                      btState.paperWidth === '58mm' && usbState.paperWidth === '58mm'
                         ? 'bg-amber-500/10 border-amber-500 text-amber-900 dark:text-amber-300 ring-2 ring-amber-400/40'
                         : 'border-slate-200 dark:border-slate-700 hover:border-slate-300'
                     }`}
@@ -754,11 +924,13 @@ export const SettingsView: React.FC = () => {
                 </label>
                 <div
                   onClick={() => {
-                    bluetoothPrinterService.setAutoPrint(!btState.autoPrintEnabled);
+                    const nextVal = !(btState.autoPrintEnabled || usbState.autoPrintEnabled);
+                    bluetoothPrinterService.setAutoPrint(nextVal);
+                    usbPrinterService.setAutoPrint(nextVal);
                     soundService.playTap();
                   }}
                   className={`p-3.5 rounded-2xl border flex items-center justify-between cursor-pointer transition select-none ${
-                    btState.autoPrintEnabled
+                    btState.autoPrintEnabled || usbState.autoPrintEnabled
                       ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-400 text-emerald-900 dark:text-emerald-300'
                       : 'border-slate-200 dark:border-slate-700 hover:border-slate-300'
                   }`}
@@ -766,17 +938,17 @@ export const SettingsView: React.FC = () => {
                   <div>
                     <div className="font-bold text-xs">พิมพ์ใบเสร็จอัตโนมัติเมื่อกดชำระเงิน</div>
                     <div className="text-[10px] text-slate-500 mt-0.5">
-                      ส่งคำสั่งพิมพ์ไปยังเครื่องพิมพ์ Bluetooth ทันทีเมื่อกดยืนยันการชำระเงิน
+                      ส่งคำสั่งพิมพ์ไปยังเครื่องพิมพ์ USB / Bluetooth ทันทีเมื่อกดยืนยันการชำระเงิน
                     </div>
                   </div>
                   <div
                     className={`w-11 h-6 rounded-full transition-colors relative flex items-center px-0.5 ${
-                      btState.autoPrintEnabled ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-700'
+                      btState.autoPrintEnabled || usbState.autoPrintEnabled ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-700'
                     }`}
                   >
                     <div
                       className={`w-5 h-5 rounded-full bg-white shadow-md transform transition-transform ${
-                        btState.autoPrintEnabled ? 'translate-x-5' : 'translate-x-0'
+                        btState.autoPrintEnabled || usbState.autoPrintEnabled ? 'translate-x-5' : 'translate-x-0'
                       }`}
                     />
                   </div>

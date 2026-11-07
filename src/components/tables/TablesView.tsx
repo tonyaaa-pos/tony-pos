@@ -18,6 +18,7 @@ import {
   Maximize2,
   ArrowRightLeft,
   Merge,
+  UtensilsCrossed,
 } from 'lucide-react';
 import { formatBaht, formatElapsedTime } from '../../utils/formatters';
 import { soundService } from '../../utils/audio';
@@ -67,6 +68,8 @@ export const TablesView: React.FC = () => {
   const {
     tables,
     bills,
+    activeBill,
+    assignTableToBill,
     openTable,
     moveTable,
     mergeTables,
@@ -326,6 +329,19 @@ export const TablesView: React.FC = () => {
       return;
     }
 
+    // Case: Staff chose dishes first and tapped Confirm Order -> Assign immediately to clicked table
+    if (activeBill && activeBill.items.length > 0 && !activeBill.tableId) {
+      assignTableToBill(activeBill.id, table.id);
+      confirmOrder(activeBill.id);
+      soundService.playSuccessTap();
+      setMoveFeedback({
+        type: 'success',
+        message: `บันทึกและส่งออเดอร์เข้าโต๊ะ ${table.number} สำเร็จเรียบร้อยแล้ว!`,
+      });
+      setTimeout(() => setMoveFeedback(null), 3500);
+      return;
+    }
+
     if (table.status === 'available') {
       const defaultGuests = table.capacity || 2;
       const billId = openTable(table.id, defaultGuests);
@@ -536,6 +552,35 @@ export const TablesView: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* Unassigned Active Bill Table Selection Banner */}
+      {activeBill && activeBill.items.length > 0 && !activeBill.tableId && (
+        <div className="p-4 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-600 text-white rounded-2xl shadow-lg border-2 border-emerald-400 flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in slide-in-from-top-2 duration-200">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-slate-950 text-emerald-400 shadow-sm shrink-0">
+              <UtensilsCrossed className="w-5 h-5 animate-bounce" />
+            </div>
+            <div>
+              <div className="text-[11px] font-black uppercase tracking-wider text-emerald-200">
+                🍽️ กำลังเลือกโต๊ะสำหรับออเดอร์
+              </div>
+              <div className="text-sm font-black">
+                มี {activeBill.items.length} รายการ (฿{activeBill.grandTotal.toLocaleString()}) → แตะเลือกโต๊ะบนผังร้านเพื่อผูกออเดอร์และส่งเข้าครัวทันที
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setActiveCategory('all');
+              setActiveNav('pos');
+            }}
+            className="px-4 py-2 rounded-xl bg-slate-950 text-white hover:bg-slate-900 text-xs font-bold shadow-xs transition cursor-pointer self-start sm:self-auto shrink-0"
+          >
+            กลับไปหน้าสั่งอาหาร
+          </button>
+        </div>
+      )}
 
       {/* Interactive Table Move Banner on Floor Plan */}
       {movingSourceTable && (

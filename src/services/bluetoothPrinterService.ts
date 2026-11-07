@@ -17,6 +17,9 @@ const STORAGE_KEYS = {
   AUTO_PRINT: 'kind_pos_bt_autoprint_v1',
   PAPER_WIDTH: 'kind_pos_bt_paper_v1',
   LAST_DEVICE_NAME: 'kind_pos_bt_devicename_v1',
+  LAST_DEVICE_ID: 'kind_pos_bt_deviceid_v1',
+  IS_REMEMBERED: 'kind_pos_bt_remembered_v1',
+  IS_SIMULATED: 'kind_pos_bt_simulated_v1',
 };
 
 // Common Bluetooth ESC/POS Printer Service and Characteristic UUIDs
@@ -63,6 +66,10 @@ class BluetoothPrinterService {
         if (savedName) {
           this.state.deviceName = savedName;
         }
+        // Auto-reconnect if remembered
+        setTimeout(() => {
+          this.autoReconnect().catch(() => {});
+        }, 600);
       } catch {}
     }
   }
@@ -193,6 +200,9 @@ class BluetoothPrinterService {
 
       try {
         localStorage.setItem(STORAGE_KEYS.LAST_DEVICE_NAME, this.state.deviceName || '');
+        localStorage.setItem(STORAGE_KEYS.LAST_DEVICE_ID, device.id || '');
+        localStorage.setItem(STORAGE_KEYS.IS_REMEMBERED, 'true');
+        localStorage.setItem(STORAGE_KEYS.IS_SIMULATED, 'false');
       } catch {}
 
       this.notify();
@@ -208,6 +218,75 @@ class BluetoothPrinterService {
   }
 
   /**
+   * Auto reconnect to remembered Bluetooth device or simulated profile on startup
+   */
+  public async autoReconnect(): Promise<boolean> {
+    if (typeof window === 'undefined') return false;
+    try {
+      const isRemembered = localStorage.getItem(STORAGE_KEYS.IS_REMEMBERED) === 'true';
+      if (!isRemembered) return false;
+
+      const isSimulated = localStorage.getItem(STORAGE_KEYS.IS_SIMULATED) === 'true';
+      if (isSimulated) {
+        const name = localStorage.getItem(STORAGE_KEYS.LAST_DEVICE_NAME) || 'ESC/POS Thermal Printer (BT-80)';
+        this.simulateConnection(name);
+        return true;
+      }
+
+      const nav = navigator as any;
+      if (typeof nav !== 'undefined' && nav.bluetooth && typeof nav.bluetooth.getDevices === 'function') {
+        const devices = await nav.bluetooth.getDevices();
+        if (devices && devices.length > 0) {
+          const savedId = localStorage.getItem(STORAGE_KEYS.LAST_DEVICE_ID);
+          const target = devices.find((d: any) => d.id === savedId) || devices[0];
+          if (target && target.gatt) {
+            this.state.isConnecting = true;
+            this.notify();
+
+            target.addEventListener('gattserverdisconnected', () => {
+              this.handleDisconnected();
+            });
+
+            const server = await target.gatt.connect();
+            let targetChar: any = null;
+
+            for (const serviceUuid of KNOWN_PRINTER_SERVICES) {
+              try {
+                const service = await server.getPrimaryService(serviceUuid);
+                const chars = await service.getCharacteristics();
+                for (const char of chars) {
+                  if (char.properties.write || char.properties.writeWithoutResponse) {
+                    targetChar = char;
+                    break;
+                  }
+                }
+                if (targetChar) break;
+              } catch {}
+            }
+
+            if (targetChar) {
+              this.bluetoothDevice = target;
+              this.writeCharacteristic = targetChar;
+              this.state.isConnected = true;
+              this.state.isConnecting = false;
+              this.state.deviceName = target.name || 'เครื่องพิมพ์ Bluetooth';
+              this.state.deviceId = target.id;
+              this.state.isSimulated = false;
+              this.notify();
+              return true;
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('Bluetooth background auto-reconnect note:', err);
+      this.state.isConnecting = false;
+      this.notify();
+    }
+    return false;
+  }
+
+  /**
    * Disconnect current Bluetooth printer
    */
   public disconnect() {
@@ -215,6 +294,9 @@ class BluetoothPrinterService {
       if (this.bluetoothDevice && this.bluetoothDevice.gatt?.connected) {
         this.bluetoothDevice.gatt.disconnect();
       }
+      localStorage.removeItem(STORAGE_KEYS.IS_REMEMBERED);
+      localStorage.removeItem(STORAGE_KEYS.IS_SIMULATED);
+      localStorage.removeItem(STORAGE_KEYS.LAST_DEVICE_ID);
     } catch {}
     this.handleDisconnected();
   }
@@ -240,6 +322,8 @@ class BluetoothPrinterService {
     this.state.lastError = null;
     try {
       localStorage.setItem(STORAGE_KEYS.LAST_DEVICE_NAME, name);
+      localStorage.setItem(STORAGE_KEYS.IS_REMEMBERED, 'true');
+      localStorage.setItem(STORAGE_KEYS.IS_SIMULATED, 'true');
     } catch {}
     this.notify();
   }

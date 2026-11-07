@@ -15,13 +15,15 @@ import {
   Plus,
   Minus,
   Trash2,
-  Check,
   Printer,
   Bluetooth,
+  Usb,
+  Check,
 } from 'lucide-react';
 import { ReceiptPrint } from './ReceiptPrint';
 import { soundService } from '../../utils/audio';
 import { bluetoothPrinterService, BluetoothState } from '../../services/bluetoothPrinterService';
+import { usbPrinterService, USBPrinterState } from '../../services/usbPrinterService';
 import { customerDisplayService } from '../../services/customerDisplayService';
 
 const formatAmount = (amount: number, showDecimals = true): string => {
@@ -91,15 +93,24 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
   // Printable bill state for window.print()
   const [printableBill, setPrintableBill] = useState<Bill | null>(null);
 
-  // Bluetooth thermal printer state
+  // Thermal printer states (Bluetooth & USB)
   const [btState, setBtState] = useState<BluetoothState>(bluetoothPrinterService.getState());
   const [btPrinting, setBtPrinting] = useState<boolean>(false);
-  const [btPrintSuccess, setBtPrintSuccess] = useState<boolean>(false);
+  const [usbState, setUsbState] = useState<USBPrinterState>(usbPrinterService.getState());
+  const [usbPrinting, setUsbPrinting] = useState<boolean>(false);
+  const [printSuccess, setPrintSuccess] = useState<boolean>(false);
 
   useEffect(() => {
-    return bluetoothPrinterService.subscribe((state) => {
+    const unsubBt = bluetoothPrinterService.subscribe((state) => {
       setBtState(state);
     });
+    const unsubUsb = usbPrinterService.subscribe((state) => {
+      setUsbState(state);
+    });
+    return () => {
+      unsubBt();
+      unsubUsb();
+    };
   }, []);
 
   // Calculate live amount due
@@ -205,6 +216,10 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
       // Notify customer-facing display of payment completion
       customerDisplayService.setCompleted(result.bill);
 
+      // Auto-print to USB printer if enabled
+      if (usbState.isConnected && usbState.autoPrintEnabled) {
+        usbPrinterService.printReceipt(result.bill, settings).catch(() => {});
+      }
       // Auto-print to Bluetooth printer if enabled
       if (btState.isConnected && btState.autoPrintEnabled) {
         bluetoothPrinterService.printReceipt(result.bill, settings).catch(() => {});
@@ -216,7 +231,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
   };
 
 
-  // Print receipt only: prints 80mm thermal receipt via Bluetooth ESC/POS or window.print(), does NOT record payment, and stays on payment screen
+  // Print receipt only: prints 80mm/58mm thermal receipt via USB / Bluetooth ESC/POS or window.print(), does NOT record payment, and stays on payment screen
   const handlePrintReceipt = async () => {
     soundService.playTap();
     const previewPayments: PaymentRecord[] = payments.length > 0 ? payments : [
@@ -235,33 +250,45 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
       payments: previewPayments,
     };
 
-    // If Bluetooth thermal printer is connected, send ESC/POS directly to printer
+    // Priority 1: USB Thermal ESC/POS Printer
+    if (usbState.isConnected) {
+      try {
+        setUsbPrinting(true);
+        const res = await usbPrinterService.printReceipt(billToPrint, settings);
+        setUsbPrinting(false);
+        if (res.success) {
+          setPrintSuccess(true);
+          soundService.playSuccessTap();
+          setTimeout(() => setPrintSuccess(false), 2500);
+          return;
+        }
+      } catch {
+        setUsbPrinting(false);
+      }
+    }
+
+    // Priority 2: Bluetooth Thermal ESC/POS Printer
     if (btState.isConnected) {
       try {
         setBtPrinting(true);
         const res = await bluetoothPrinterService.printReceipt(billToPrint, settings);
         setBtPrinting(false);
         if (res.success) {
-          setBtPrintSuccess(true);
+          setPrintSuccess(true);
           soundService.playSuccessTap();
-          setTimeout(() => setBtPrintSuccess(false), 2500);
-        } else {
-          // Fallback to window.print if Bluetooth encountered an issue
-          setPrintableBill(billToPrint);
-          setTimeout(() => window.print(), 50);
+          setTimeout(() => setPrintSuccess(false), 2500);
+          return;
         }
       } catch {
         setBtPrinting(false);
-        setPrintableBill(billToPrint);
-        setTimeout(() => window.print(), 50);
       }
-    } else {
-      // Standard printer dialog
-      setPrintableBill(billToPrint);
-      setTimeout(() => {
-        window.print();
-      }, 50);
     }
+
+    // Priority 3: Fallback standard browser print dialog
+    setPrintableBill(billToPrint);
+    setTimeout(() => {
+      window.print();
+    }, 50);
   };
 
   // Handle Calculator Numpad key press
@@ -975,32 +1002,42 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
                     </button>
                   )}
 
-                  {/* Print Receipt Button (added next to confirm payment button) */}
+                  {/* Print Receipt Button (supports USB / Bluetooth / System Printer) */}
                   <button
                     type="button"
-                    disabled={btPrinting}
+                    disabled={btPrinting || usbPrinting}
                     onClick={handlePrintReceipt}
                     className={`px-4 py-2.5 rounded-xl border text-xs font-bold shadow-xs transition cursor-pointer flex items-center gap-2 ${
-                      btState.isConnected
+                      usbState.isConnected
+                        ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-400 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100'
+                        : btState.isConnected
                         ? 'bg-sky-50 dark:bg-sky-950/40 border-sky-400 text-sky-800 dark:text-sky-300 hover:bg-sky-100'
                         : 'border-slate-300 dark:border-slate-700 hover:border-amber-500 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-700/80'
                     }`}
                     title={
-                      btState.isConnected
+                      usbState.isConnected
+                        ? `พิมพ์ใบเสร็จผ่าน USB (${usbState.deviceName})`
+                        : btState.isConnected
                         ? `พิมพ์ใบเสร็จผ่าน Bluetooth (${btState.deviceName})`
                         : 'พิมพ์ใบเสร็จ 80 มม. ออกเครื่องพิมพ์ POS ทันที'
                     }
                   >
-                    {btState.isConnected ? (
+                    {usbState.isConnected ? (
+                      <Usb className={`w-4 h-4 text-emerald-500 ${usbPrinting ? 'animate-bounce' : ''}`} />
+                    ) : btState.isConnected ? (
                       <Bluetooth className={`w-4 h-4 text-sky-500 ${btPrinting ? 'animate-bounce' : ''}`} />
                     ) : (
                       <Printer className="w-4 h-4 text-amber-600 dark:text-amber-400" />
                     )}
                     <span>
-                      {btPrinting
-                        ? 'กำลังพิมพ์ Bluetooth...'
-                        : btPrintSuccess
+                      {usbPrinting
+                        ? 'กำลังพิมพ์ USB...'
+                        : btPrinting
+                        ? 'กำลังพิมพ์ BT...'
+                        : printSuccess
                         ? 'พิมพ์สำเร็จ ✓'
+                        : usbState.isConnected
+                        ? 'พิมพ์ใบเสร็จ (USB)'
                         : btState.isConnected
                         ? 'พิมพ์ใบเสร็จ (BT)'
                         : 'พิมพ์ใบเสร็จ'}

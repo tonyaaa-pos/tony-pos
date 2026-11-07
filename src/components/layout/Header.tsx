@@ -11,15 +11,10 @@ import {
   Globe,
   Bluetooth,
   Monitor,
-  ExternalLink,
-  Eye,
-  CheckCircle2,
-  Sparkles,
 } from 'lucide-react';
 import { NotificationCenter } from './NotificationCenter';
 import { formatBaht } from '../../utils/formatters';
 import { bluetoothPrinterService, BluetoothState } from '../../services/bluetoothPrinterService';
-import { Modal } from '../common/Modal';
 import { CustomerDisplayView } from '../customer/CustomerDisplayView';
 
 interface HeaderProps {
@@ -42,7 +37,6 @@ export const Header: React.FC<HeaderProps> = ({ onOpenMenu }) => {
 
   const [isNotifOpen, setIsNotifOpen] = useState(false);
   const [btState, setBtState] = useState<BluetoothState>(bluetoothPrinterService.getState());
-  const [showDualScreenModal, setShowDualScreenModal] = useState(false);
   const [showCfdPreview, setShowCfdPreview] = useState(false);
 
   React.useEffect(() => {
@@ -161,15 +155,19 @@ export const Header: React.FC<HeaderProps> = ({ onOpenMenu }) => {
 
         {/* Zone 3: Language Toggle, Notifications, Theme, User Profile */}
         <div className="flex items-center gap-1.5 sm:gap-2">
-          {/* Dual-Screen Customer Display Button */}
+          {/* Dual-Screen Customer Display Button - Automatic 1-Click Connection */}
           <button
             type="button"
-            onClick={() => setShowDualScreenModal(true)}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-amber-300 dark:border-amber-700/80 bg-amber-50 dark:bg-amber-950/40 text-xs font-bold text-amber-900 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/50 transition cursor-pointer select-none shadow-2xs"
-            title="ระบบ 2 หน้าจอ POS (จอหลังแคชเชียร์ + จอลองลูกค้า)"
+            onClick={handleOpenCustomerWindow}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 text-xs font-bold text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition cursor-pointer select-none shadow-2xs"
+            title="ระบบ 2 หน้าจอเชื่อมต่ออัตโนมัติ (คลิกเพื่อเปิด/สลับไปที่หน้าต่างจอลูกค้าทันที)"
           >
-            <Monitor className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
-            <span className="hidden sm:inline">จอลูกค้า (2 จอ)</span>
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+            </span>
+            <Monitor className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+            <span className="hidden sm:inline">2 จออัตโนมัติ</span>
           </button>
 
           {/* Bluetooth Thermal Printer Indicator */}
@@ -270,137 +268,6 @@ export const Header: React.FC<HeaderProps> = ({ onOpenMenu }) => {
 
       {/* Notifications Drawer */}
       <NotificationCenter isOpen={isNotifOpen} onClose={() => setIsNotifOpen(false)} />
-
-      {/* Dual Screen Setup & Control Modal */}
-      <Modal
-        isOpen={showDualScreenModal}
-        onClose={() => setShowDualScreenModal(false)}
-        title="🖥️ ระบบเครื่อง POS 2 หน้าจอ (Dual-Screen Display)"
-        maxWidth="max-w-2xl"
-      >
-        <div className="space-y-4 text-xs sm:text-sm text-slate-700 dark:text-slate-300">
-          <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/60 flex items-start gap-3">
-            <Monitor className="w-6 h-6 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-            <div className="space-y-1">
-              <h4 className="font-bold text-slate-900 dark:text-white text-sm">
-                รองรับเครื่อง POS แบบ 2 หน้าจอ (เช่น Sunmi D2s Plus, Windows Dual Monitor)
-              </h4>
-              <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
-                ระบบเชื่อมต่อ 2 หน้าจอแบบ Real-time: จอหลักสำหรับแคชเชียร์เลือกเมนู และจอลองหันหน้าหาลูกค้าเพื่อแสดงรายการอาหาร ยอดรวมสุทธิ และ QR พร้อมเพย์สำหรับสแกนจ่ายเงินทันที
-              </p>
-            </div>
-          </div>
-
-          {/* Action Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {/* Action 1: Open 2nd Window for Secondary Monitor */}
-            <button
-              type="button"
-              onClick={() => {
-                handleOpenCustomerWindow();
-                setShowDualScreenModal(false);
-              }}
-              className="p-4 rounded-2xl border-2 border-amber-500 bg-white dark:bg-slate-800 hover:bg-amber-50 dark:hover:bg-amber-950/20 text-left transition flex flex-col justify-between group cursor-pointer shadow-xs"
-            >
-              <div className="flex items-center justify-between mb-2">
-                <span className="p-2 rounded-xl bg-amber-500 text-slate-950 font-bold">
-                  <ExternalLink className="w-4 h-4" />
-                </span>
-                <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300">
-                  แนะนำสำหรับใช้งานจริง
-                </span>
-              </div>
-              <div>
-                <h5 className="font-extrabold text-slate-900 dark:text-white text-sm group-hover:text-amber-600 transition">
-                  เปิดจอลูกค้า (จอที่ 2 / CFD)
-                </h5>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                  เปิดหน้าต่างใหม่สำหรับลากไปวางที่จอที่ 2 (ฝั่งลูกค้า) แล้วกดปุ่มขยายเต็มจอ
-                </p>
-              </div>
-            </button>
-
-            {/* Action 2: In-App Preview Modal */}
-            <button
-              type="button"
-              onClick={() => {
-                setShowDualScreenModal(false);
-                setShowCfdPreview(true);
-              }}
-              className="p-4 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-slate-400 dark:hover:border-slate-500 text-left transition flex flex-col justify-between group cursor-pointer shadow-xs"
-            >
-              <div className="flex items-center justify-between mb-2">
-                <span className="p-2 rounded-xl bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200">
-                  <Eye className="w-4 h-4" />
-                </span>
-                <span className="text-[11px] font-medium text-slate-400">
-                  ทดสอบบนหน้าจอนี้
-                </span>
-              </div>
-              <div>
-                <h5 className="font-extrabold text-slate-900 dark:text-white text-sm group-hover:text-amber-600 transition">
-                  จำลองดูหน้าจอลูกค้า (Preview)
-                </h5>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                  ดูตัวอย่างมุมมองลูกค้าบนหน้าต่างจำลองทันทีโดยไม่ต้องต่อจอที่ 2
-                </p>
-              </div>
-            </button>
-
-            {/* Action 3: Convert this screen to Customer Display */}
-            <button
-              type="button"
-              onClick={() => {
-                localStorage.setItem('kind_pos_screen_role', 'customer');
-                window.location.hash = '#customer';
-                window.dispatchEvent(new Event('kind_pos_screen_role_change'));
-                setShowDualScreenModal(false);
-              }}
-              className="p-4 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-amber-400 text-left transition flex flex-col justify-between group cursor-pointer shadow-xs sm:col-span-2"
-            >
-              <div className="flex items-center justify-between mb-1.5">
-                <span className="p-2 rounded-xl bg-amber-500/20 text-amber-500 font-bold">
-                  <Monitor className="w-4 h-4" />
-                </span>
-                <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300">
-                  สำหรับตั้งค่าจอที่ 2
-                </span>
-              </div>
-              <div>
-                <h5 className="font-extrabold text-slate-900 dark:text-white text-sm group-hover:text-amber-600 transition">
-                  สลับหน้าจอนี้เป็น &quot;จอลูกค้า (Customer Display)&quot; ทันที
-                </h5>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                  หากเปิดหน้าเว็บนี้บนจอหลังของเครื่อง POS ให้กดปุ่มนี้เพื่อเปลี่ยนเป็นจอลูกค้าถาวร (มีปุ่มสลับกลับได้ตลอดเวลา)
-                </p>
-              </div>
-            </button>
-          </div>
-
-          {/* Feature Highlights */}
-          <div className="pt-2 border-t border-slate-200 dark:border-slate-800 space-y-2">
-            <h5 className="font-bold text-xs text-slate-900 dark:text-white">จุดเด่นของจอลูกค้า:</h5>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-slate-600 dark:text-slate-400">
-              <div className="flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
-                <span>ซิงค์รายการอาหารเรียลไทม์ขณะแคชเชียร์กดจิ้ม</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
-                <span>แสดง QR พร้อมเพย์ขนาดใหญ่ สแกนจ่ายได้ทันที</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
-                <span>สไลด์โชว์รูปเมนูแนะนำอัตโนมัติขณะไม่มีออเดอร์</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
-                <span>แสดงยอดเงินรับ ยอดเงินทอน และข้อความขอบคุณ</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </Modal>
 
       {/* In-App Full Preview Modal */}
       {showCfdPreview && (

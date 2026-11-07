@@ -525,7 +525,7 @@ export const POSView: React.FC = () => {
               </div>
             </div>
           ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3.5">
+            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2 sm:gap-2.5">
               {filteredMenuItems.map((item) => (
                 <div
                   key={item.id}
@@ -539,7 +539,7 @@ export const POSView: React.FC = () => {
                   onTouchMove={handleHoldMove}
                   onMouseMove={handleHoldMove}
                   title="คลิกเพื่อเลือกตัวเลือกย่อยและสั่งอาหาร หรือกดค้างไว้ 2 วินาทีเพื่อแก้ไขเมนูนี้ทันที"
-                  className={`relative rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800/80 shadow-xs overflow-hidden flex flex-col justify-between transition group select-none ${
+                  className={`relative rounded-xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800/80 shadow-xs overflow-hidden flex flex-col justify-between transition group select-none ${
                     item.isSoldOut
                       ? 'opacity-60 cursor-not-allowed'
                       : 'cursor-pointer hover:shadow-md hover:border-amber-400 active:scale-98'
@@ -567,17 +567,17 @@ export const POSView: React.FC = () => {
                         soundService.playTap();
                         setQuickEditItem(item);
                       }}
-                      className="absolute top-2 right-2 z-10 w-7 h-7 rounded-full bg-slate-900/60 hover:bg-amber-500 text-white hover:text-slate-950 flex items-center justify-center shadow-md backdrop-blur-xs transition cursor-pointer"
+                      className="absolute top-1.5 right-1.5 z-10 w-6 h-6 rounded-full bg-slate-900/60 hover:bg-amber-500 text-white hover:text-slate-950 flex items-center justify-center shadow-md backdrop-blur-xs transition cursor-pointer"
                       title="แก้ไขเมนูนี้ (หรือกดค้างไว้ 2 วินาที)"
                     >
-                      <Edit className="w-3.5 h-3.5" />
+                      <Edit className="w-3 h-3" />
                     </button>
 
                     {/* 2-Second Hold-to-Edit Countdown & Progress Ring (pointer-events-none ensures clicks/taps are NEVER blocked) */}
                     {holdingDishId === item.id && (
-                      <div className="absolute inset-0 z-20 pointer-events-none bg-slate-950/80 backdrop-blur-xs flex flex-col items-center justify-center p-2 text-center transition-all animate-in fade-in">
-                        <div className="relative w-14 h-14 flex items-center justify-center mb-1">
-                          <svg className="w-14 h-14 -rotate-90" viewBox="0 0 36 36">
+                      <div className="absolute inset-0 z-20 pointer-events-none bg-slate-950/80 backdrop-blur-xs flex flex-col items-center justify-center p-1.5 text-center transition-all animate-in fade-in">
+                        <div className="relative w-10 h-10 flex items-center justify-center mb-0.5">
+                          <svg className="w-10 h-10 -rotate-90" viewBox="0 0 36 36">
                             <path
                               className="text-slate-700"
                               strokeWidth="3.5"
@@ -595,21 +595,21 @@ export const POSView: React.FC = () => {
                               d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
                             />
                           </svg>
-                          <Edit className="w-5 h-5 text-amber-400 absolute" />
+                          <Edit className="w-4 h-4 text-amber-400 absolute" />
                         </div>
-                        <span className="text-[11px] font-bold text-white leading-tight">
-                          เข้าสู่โหมดแก้ไข
+                        <span className="text-[10px] font-bold text-white leading-tight">
+                          แก้ไขเมนู
                         </span>
-                        <span className="text-[10px] font-mono text-amber-300 mt-0.5">
-                          {Math.min(2.0, holdProgress * 0.02).toFixed(1)}s / 2.0s
+                        <span className="text-[9px] font-mono text-amber-300">
+                          {Math.min(2.0, holdProgress * 0.02).toFixed(1)}s
                         </span>
                       </div>
                     )}
 
                     {/* Sold out overlay */}
                     {item.isSoldOut && (
-                      <div className="absolute inset-0 bg-slate-950/75 flex items-center justify-center p-2 text-center pointer-events-none">
-                        <span className="px-3 py-1 bg-rose-600 text-white font-extrabold text-xs rounded-lg uppercase tracking-wider shadow-md">
+                      <div className="absolute inset-0 bg-slate-950/75 flex items-center justify-center p-1.5 text-center pointer-events-none">
+                        <span className="px-2 py-0.5 bg-rose-600 text-white font-extrabold text-[10px] rounded uppercase tracking-wider shadow-md">
                           {t('sold_out_overlay')}
                         </span>
                       </div>
@@ -617,8 +617,8 @@ export const POSView: React.FC = () => {
 
                     {/* Small unobtrusive recommended badge on photo corner */}
                     {item.isRecommended && !item.isSoldOut && (
-                      <div className="absolute top-2 left-2 px-2 py-0.5 rounded-lg bg-amber-500 text-slate-950 font-bold text-[10px] shadow-xs flex items-center gap-1 pointer-events-none">
-                        <Sparkles className="w-3 h-3" />
+                      <div className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded bg-amber-500 text-slate-950 font-bold text-[9px] shadow-xs flex items-center gap-0.5 pointer-events-none">
+                        <Sparkles className="w-2.5 h-2.5" />
                         <span>{t('recommended_badge')}</span>
                       </div>
                     )}
@@ -632,18 +632,18 @@ export const POSView: React.FC = () => {
                           soundService.playTap();
                           setCustomizingItem(item);
                         }}
-                        className="absolute bottom-2 right-2 z-10 px-2 py-0.5 rounded-lg bg-slate-900/80 hover:bg-amber-500 text-white hover:text-slate-950 font-semibold text-[10px] flex items-center gap-1 shadow-xs backdrop-blur-xs transition cursor-pointer"
+                        className="absolute bottom-1.5 right-1.5 z-10 px-1.5 py-0.5 rounded bg-slate-900/80 hover:bg-amber-500 text-white hover:text-slate-950 font-semibold text-[9px] flex items-center gap-0.5 shadow-xs backdrop-blur-xs transition cursor-pointer"
                         title="เลือกขนาดหรือท็อปปิ้งเพิ่มเติม"
                       >
-                        <SlidersHorizontal className="w-3 h-3" />
+                        <SlidersHorizontal className="w-2.5 h-2.5" />
                         <span>ตัวเลือก</span>
                       </button>
                     )}
                   </div>
 
                   {/* Card ONLY shows food-type name below photo */}
-                  <div className="p-3 sm:p-3.5 flex items-center justify-center min-h-[48px] sm:min-h-[54px] text-center pointer-events-none">
-                    <h4 className="font-bold text-xs sm:text-sm text-slate-900 dark:text-white leading-snug line-clamp-2">
+                  <div className="p-1.5 sm:p-2 flex items-center justify-center min-h-[36px] sm:min-h-[42px] text-center pointer-events-none">
+                    <h4 className="font-bold text-[11px] sm:text-xs text-slate-900 dark:text-white leading-tight line-clamp-2">
                       {getName(item)}
                     </h4>
                   </div>
@@ -933,7 +933,8 @@ export const POSView: React.FC = () => {
               onClick={() => {
                 if (activeBill) {
                   if (activeBill.orderType === 'dine_in' && !activeBill.tableId) {
-                    setShowTableSelectModal(true);
+                    soundService.playTap();
+                    setActiveNav('tables');
                     return;
                   }
                   soundService.playSuccessTap();
