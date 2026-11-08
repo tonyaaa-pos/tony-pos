@@ -22,7 +22,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Edit,
-  SlidersHorizontal,
 } from 'lucide-react';
 import { INITIAL_CATEGORIES, INITIAL_MENU_ITEMS } from '../../data/seedData';
 import { formatBaht } from '../../utils/formatters';
@@ -319,7 +318,7 @@ export const POSView: React.FC = () => {
     soundService.playSuccessTap();
   };
 
-  // 2-Second Hold-to-Edit handlers
+  // 1-Second Hold-to-Edit handlers
   const handleHoldStart = (e: React.MouseEvent | React.TouchEvent, item: MenuItem) => {
     // Only primary mouse button or single touch
     if ('button' in e && e.button !== 0) return;
@@ -335,15 +334,15 @@ export const POSView: React.FC = () => {
 
     const startTime = Date.now();
 
-    // Show hold progress ring ONLY after 500ms so quick clicks/taps never show any overlay or re-render
+    // Show hold progress ring ONLY after 200ms so quick clicks/taps never show any overlay or re-render
     holdIntervalRef.current = setInterval(() => {
       const elapsed = Date.now() - startTime;
-      if (elapsed >= 500) {
+      if (elapsed >= 200) {
         setHoldingDishId(item.id);
-        const pct = Math.min(100, ((elapsed - 500) / 1500) * 100);
+        const pct = Math.min(100, ((elapsed - 200) / 800) * 100);
         setHoldProgress(pct);
       }
-    }, 40);
+    }, 25);
 
     holdTimerRef.current = setTimeout(() => {
       isLongPressTriggeredRef.current = true;
@@ -352,7 +351,7 @@ export const POSView: React.FC = () => {
       setHoldProgress(0);
       soundService.playReadyChime();
       setQuickEditItem(item);
-    }, 2000);
+    }, 1000);
   };
 
   const handleHoldEnd = (e?: React.MouseEvent | React.TouchEvent, item?: MenuItem) => {
@@ -367,10 +366,10 @@ export const POSView: React.FC = () => {
     setHoldingDishId(null);
     setHoldProgress(0);
 
-    // If it was a quick touch on mobile/tablet (< 450ms) and not long press, open option customization modal!
+    // If it was a quick touch on mobile/tablet (< 350ms) and not long press, open option customization modal!
     if (e && 'changedTouches' in e && item) {
       const touchDuration = Date.now() - (pressStartTimeRef.current || 0);
-      if (!isLongPressTriggeredRef.current && touchDuration < 450) {
+      if (!isLongPressTriggeredRef.current && touchDuration < 350) {
         const now = Date.now();
         if (now - lastOrderTimestampRef.current >= 250) {
           lastOrderTimestampRef.current = now;
@@ -538,7 +537,7 @@ export const POSView: React.FC = () => {
                   onTouchCancel={() => handleHoldEnd()}
                   onTouchMove={handleHoldMove}
                   onMouseMove={handleHoldMove}
-                  title="คลิกเพื่อเลือกตัวเลือกย่อยและสั่งอาหาร หรือกดค้างไว้ 2 วินาทีเพื่อแก้ไขเมนูนี้ทันที"
+                  title="คลิกเพื่อเลือกตัวเลือกย่อยและสั่งอาหาร หรือกดค้างไว้ 1 วินาทีเพื่อแก้ไขเมนูนี้ทันที"
                   className={`relative rounded-xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800/80 shadow-xs overflow-hidden flex flex-col justify-between transition group select-none ${
                     item.isSoldOut
                       ? 'opacity-60 cursor-not-allowed'
@@ -559,21 +558,7 @@ export const POSView: React.FC = () => {
                       }}
                     />
 
-                    {/* Quick Edit Pencil Button (Top-Right) */}
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        soundService.playTap();
-                        setQuickEditItem(item);
-                      }}
-                      className="absolute top-1.5 right-1.5 z-10 w-6 h-6 rounded-full bg-slate-900/60 hover:bg-amber-500 text-white hover:text-slate-950 flex items-center justify-center shadow-md backdrop-blur-xs transition cursor-pointer"
-                      title="แก้ไขเมนูนี้ (หรือกดค้างไว้ 2 วินาที)"
-                    >
-                      <Edit className="w-3 h-3" />
-                    </button>
-
-                    {/* 2-Second Hold-to-Edit Countdown & Progress Ring (pointer-events-none ensures clicks/taps are NEVER blocked) */}
+                    {/* 1-Second Hold-to-Edit Countdown & Progress Ring (pointer-events-none ensures clicks/taps are NEVER blocked) */}
                     {holdingDishId === item.id && (
                       <div className="absolute inset-0 z-20 pointer-events-none bg-slate-950/80 backdrop-blur-xs flex flex-col items-center justify-center p-1.5 text-center transition-all animate-in fade-in">
                         <div className="relative w-10 h-10 flex items-center justify-center mb-0.5">
@@ -601,7 +586,7 @@ export const POSView: React.FC = () => {
                           แก้ไขเมนู
                         </span>
                         <span className="text-[9px] font-mono text-amber-300">
-                          {Math.min(2.0, holdProgress * 0.02).toFixed(1)}s
+                          {Math.min(1.0, holdProgress * 0.01).toFixed(1)}s
                         </span>
                       </div>
                     )}
@@ -621,23 +606,6 @@ export const POSView: React.FC = () => {
                         <Sparkles className="w-2.5 h-2.5" />
                         <span>{t('recommended_badge')}</span>
                       </div>
-                    )}
-
-                    {/* Optional Quick Customize Button (for multi-variant dishes if desired) */}
-                    {((item.variants && item.variants.length > 1) || (item.optionGroups && item.optionGroups.length > 0)) && (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          soundService.playTap();
-                          setCustomizingItem(item);
-                        }}
-                        className="absolute bottom-1.5 right-1.5 z-10 px-1.5 py-0.5 rounded bg-slate-900/80 hover:bg-amber-500 text-white hover:text-slate-950 font-semibold text-[9px] flex items-center gap-0.5 shadow-xs backdrop-blur-xs transition cursor-pointer"
-                        title="เลือกขนาดหรือท็อปปิ้งเพิ่มเติม"
-                      >
-                        <SlidersHorizontal className="w-2.5 h-2.5" />
-                        <span>ตัวเลือก</span>
-                      </button>
                     )}
                   </div>
 
