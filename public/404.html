@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="th">
+  <head>
+    <meta charset="utf-8" />
+    <title>KinD POS - Redirecting...</title>
+    <script>
+      // Single Page App redirect for GitHub Pages
+      // Encodes path and query to prevent 404s when refreshing or deep-linking
+      (function () {
+        var pathSegmentsToKeep = 1; // 1 for project pages (e.g. /REPO_NAME/)
+        var l = window.location;
+        var path = l.pathname;
+
+        // Redirect to index.html with hash preserving subpath
+        var origin = l.protocol + '//' + l.hostname + (l.port ? ':' + l.port : '');
+        var pathParts = path.split('/').filter(Boolean);
+        var repoName = pathParts.length > 0 ? pathParts[0] : '';
+        
+        // Target repository base URL
+        var baseUrl = origin + (repoName ? '/' + repoName + '/' : '/');
+        var remainingPath = pathParts.slice(1).join('/');
+        var searchAndHash = (remainingPath ? '#/' + remainingPath : '') + (l.search ? (remainingPath ? '&' : '?') + l.search.slice(1) : '') + l.hash;
+
+        l.replace(baseUrl + searchAndHash);
+      })();
+    </script>
+  </head>
+  <body style="background-color: #0f172a; color: #f8fafc; font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0;">
+    <div style="text-align: center;">
+      <h2 style="color: #f59e0b; margin-bottom: 8px;">KinD POS</h2>
+      <p style="color: #94a3b8; font-size: 14px;">กำลังนำทางกลับสู่หน้าหลัก...</p>
+    </div>
+  </body>
+</html>

@@ -2,19 +2,38 @@
 <html lang="th">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>KinD POS - ระบบจัดการร้านอาหารและจุดขาย</title>
     <meta name="description" content="ระบบจุดขายและบริหารจัดการร้านอาหารครบวงจร รองรับการสั่งอาหาร ผังโต๊ะ คิดเงิน รายงาน และการซิงค์ข้อมูลแบบเรียลไทม์" />
     <meta property="og:title" content="KinD POS - ระบบจัดการร้านอาหารและจุดขาย" />
     <meta property="og:description" content="ระบบจุดขายและบริหารจัดการร้านอาหารครบวงจร รองรับการสั่งอาหาร ผังโต๊ะ คิดเงิน รายงาน และการซิงค์ข้อมูลแบบเรียลไทม์" />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
+
+    <!-- PWA & Android Standalone Configuration -->
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <meta name="theme-color" content="#0f172a" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <link rel="icon" type="image/png" href="./icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="./icons/icon-192.png" />
+
+    <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&family=Sarabun:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   </head>
-  <body class="font-sans antialiased text-slate-900 bg-slate-50 dark:bg-slate-950 dark:text-slate-100">
+  <body class="font-sans antialiased text-slate-900 bg-slate-50 dark:bg-slate-950 dark:text-slate-100 select-none">
+    <noscript>กรุณาเปิดใช้งาน JavaScript</noscript>
     <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+    <script>
+      window.addEventListener('error', function (e) {
+        var r = document.getElementById('root');
+        if (r && !r.children.length) {
+          r.innerHTML = '<pre style="padding:16px;font:14px monospace;white-space:pre-wrap;color:#b91c1c">เปิดแอปไม่สำเร็จ: ' + (e.message || 'unknown error') + '</pre>';
+        }
+      });
+    </script>
+    <!-- Relative script entry point -->
+    <script type="module" src="./src/main.tsx"></script>
   </body>
 </html>
