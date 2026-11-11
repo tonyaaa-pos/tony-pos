@@ -170,6 +170,7 @@ export const SettingsView: React.FC = () => {
     cloudConnected,
     cloudErrorMessage,
     loginCloud,
+    loginCloudWithGoogle,
     logoutCloud,
     initialSyncPrompt,
     resolveInitialSync,
@@ -776,7 +777,27 @@ export const SettingsView: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="flex justify-end pt-1">
+                <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setIsConnectingCloud(true);
+                      setCloudAuthError(null);
+                      try {
+                        await loginCloudWithGoogle();
+                      } catch (err: any) {
+                        setCloudAuthError(err?.message || 'เข้าสู่ระบบด้วย Google ไม่สำเร็จ');
+                      } finally {
+                        setIsConnectingCloud(false);
+                      }
+                    }}
+                    disabled={isConnectingCloud}
+                    className="px-4 py-2.5 rounded-xl bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 font-bold text-xs shadow-xs transition flex items-center gap-2 cursor-pointer disabled:opacity-60"
+                  >
+                    <Cloud className="w-3.5 h-3.5 text-sky-500" />
+                    <span>เข้าสู่ระบบด้วย Google</span>
+                  </button>
+
                   <button
                     type="button"
                     onClick={handleConnectCloud}

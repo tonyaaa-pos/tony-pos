@@ -11,6 +11,8 @@ import {
   setPersistence,
   browserLocalPersistence,
   signInWithEmailAndPassword,
+  GoogleAuthProvider,
+  signInWithPopup,
   signOut,
   onAuthStateChanged,
   type Auth,
@@ -27,14 +29,18 @@ if (typeof window !== 'undefined' && isFirebaseConfigured()) {
     app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
     try {
-      db = initializeFirestore(app, {
-        localCache: persistentLocalCache({
-          tabManager: persistentMultipleTabManager(),
-        }),
-      });
+      db = initializeFirestore(
+        app,
+        {
+          localCache: persistentLocalCache({
+            tabManager: persistentMultipleTabManager(),
+          }),
+        },
+        firebaseConfig.firestoreDatabaseId
+      );
     } catch (dbInitErr) {
       console.warn('[Firebase] initializeFirestore with persistentLocalCache fallback to getFirestore:', dbInitErr);
-      db = getFirestore(app);
+      db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
     }
 
     auth = getAuth(app);
@@ -51,11 +57,23 @@ export { app, db, auth, isFirebaseConfigured };
 export async function loginToCloud(email: string, pass: string): Promise<FirebaseUser> {
   if (!auth) {
     if (!isFirebaseConfigured()) {
-      throw new Error('ยังไม่ได้กำหนดค่า Firebase ใน src/firebaseConfig.ts');
+      throw new Error('ยังไม่ได้กำหนดค่า Firebase ใน firebase-applet-config.json');
     }
     throw new Error('ระบบเชื่อมต่อ Firebase Auth ไม่พร้อมใช้งาน');
   }
   const credential = await signInWithEmailAndPassword(auth, email.trim(), pass);
+  return credential.user;
+}
+
+export async function loginWithGoogle(): Promise<FirebaseUser> {
+  if (!auth) {
+    if (!isFirebaseConfigured()) {
+      throw new Error('ยังไม่ได้กำหนดค่า Firebase ใน firebase-applet-config.json');
+    }
+    throw new Error('ระบบเชื่อมต่อ Firebase Auth ไม่พร้อมใช้งาน');
+  }
+  const provider = new GoogleAuthProvider();
+  const credential = await signInWithPopup(auth, provider);
   return credential.user;
 }
 

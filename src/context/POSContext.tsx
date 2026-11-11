@@ -39,6 +39,7 @@ import { canPay, CanPayResult } from '../utils/orderRules';
 import {
   subscribeAuthState,
   loginToCloud,
+  loginWithGoogle,
   logoutFromCloud,
   getCloudUser,
   db,
@@ -191,6 +192,7 @@ interface POSContextType {
   cloudErrorMessage: string | null;
   saveShopData: (overrideBundle?: { settings?: ShopSettings; qrImages?: PaymentQrImage[]; logo?: string }) => Promise<'saved' | 'pending' | 'error'>;
   loginCloud: (email: string, pass: string) => Promise<void>;
+  loginCloudWithGoogle: () => Promise<void>;
   logoutCloud: () => Promise<void>;
   initialSyncPrompt: {
     type: 'cloud_empty' | 'conflict';
@@ -1165,6 +1167,40 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     },
     [settings, qrImages]
   );
+
+  const loginCloudWithGoogle = useCallback(async () => {
+    const user = await loginWithGoogle();
+    setCloudUser(user);
+
+    try {
+      const remote = await fetchRemoteShopBundle();
+      if (!remote) {
+        setInitialSyncPrompt({
+          type: 'cloud_empty',
+          cloudData: null,
+        });
+      } else {
+        const isDifferent =
+          remote.settings.shopName !== settings.shopName ||
+          remote.settings.taxId !== settings.taxId ||
+          remote.settings.phone !== settings.phone ||
+          remote.qrImages.length !== qrImages.length;
+        if (isDifferent) {
+          setInitialSyncPrompt({
+            type: 'conflict',
+            cloudData: remote,
+          });
+        } else {
+          setSettings(remote.settings);
+          setQrImages(remote.qrImages);
+          localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(remote.settings));
+          localStorage.setItem(STORAGE_KEYS.QR_IMAGES, JSON.stringify(remote.qrImages));
+        }
+      }
+    } catch (syncErr) {
+      console.warn('[Initial Sync Check Error]:', syncErr);
+    }
+  }, [settings, qrImages]);
 
   const logoutCloud = useCallback(async () => {
     await logoutFromCloud();
@@ -2750,6 +2786,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     cloudErrorMessage,
     saveShopData,
     loginCloud,
+    loginCloudWithGoogle,
     logoutCloud,
     initialSyncPrompt,
     resolveInitialSync,

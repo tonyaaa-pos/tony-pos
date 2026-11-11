@@ -123,7 +123,7 @@ export async function saveShopBundle(
   const batch = writeBatch(db);
 
   // Settings
-  const settingsRef = doc(db, 'shops', 'main', 'settings', 'shop');
+  const settingsRef = doc(db, 'users', (getCloudUser()?.uid || '_'), 'settings', 'shop');
   batch.set(
     settingsRef,
     {
@@ -142,7 +142,7 @@ export async function saveShopBundle(
       const checkedLogo = await ensureImageUnderLimit(logoData, 'โลโก้ร้าน', onWarning);
       logoData = checkedLogo ?? '';
     }
-    const logoRef = doc(db, 'shops', 'main', 'media', 'logo');
+    const logoRef = doc(db, 'users', (getCloudUser()?.uid || '_'), 'media', 'logo');
     batch.set(
       logoRef,
       {
@@ -155,7 +155,7 @@ export async function saveShopBundle(
   }
 
   // QR Images diff
-  const qrColRef = collection(db, 'shops', 'main', 'qrImages');
+  const qrColRef = collection(db, 'users', (getCloudUser()?.uid || '_'), 'qrImages');
   try {
     const existingQrsSnap = await getDocs(qrColRef);
     const localQrIds = new Set(bundle.qrImages.map((q) => q.id));
@@ -175,7 +175,7 @@ export async function saveShopBundle(
       if (checkedImg === null) continue;
       imgData = checkedImg;
     }
-    const qrDocRef = doc(db, 'shops', 'main', 'qrImages', qr.id);
+    const qrDocRef = doc(db, 'users', (getCloudUser()?.uid || '_'), 'qrImages', qr.id);
     batch.set(
       qrDocRef,
       {
@@ -197,7 +197,7 @@ export async function fetchRemoteShopBundle(): Promise<RemoteShopData | null> {
   if (!db || !getCloudUser()) return null;
 
   try {
-    const settingsRef = doc(db, 'shops', 'main', 'settings', 'shop');
+    const settingsRef = doc(db, 'users', (getCloudUser()?.uid || '_'), 'settings', 'shop');
     const settingsSnap = await getDoc(settingsRef);
 
     if (!settingsSnap.exists()) {
@@ -209,7 +209,7 @@ export async function fetchRemoteShopBundle(): Promise<RemoteShopData | null> {
       updatedBy?: string;
     };
 
-    const qrColRef = collection(db, 'shops', 'main', 'qrImages');
+    const qrColRef = collection(db, 'users', (getCloudUser()?.uid || '_'), 'qrImages');
     const qrSnap = await getDocs(qrColRef);
     const qrImages: PaymentQrImage[] = [];
     qrSnap.forEach((docSnap) => {
@@ -224,7 +224,7 @@ export async function fetchRemoteShopBundle(): Promise<RemoteShopData | null> {
       }
     });
 
-    const logoRef = doc(db, 'shops', 'main', 'media', 'logo');
+    const logoRef = doc(db, 'users', (getCloudUser()?.uid || '_'), 'media', 'logo');
     const logoSnap = await getDoc(logoRef);
     const logoUrl = logoSnap.exists() ? (logoSnap.data().logoUrl as string) : settingsData.logoUrl || '';
 
@@ -266,7 +266,7 @@ export function subscribeShop(
   }
 
   const deviceId = getDeviceId();
-  const settingsRef = doc(db, 'shops', 'main', 'settings', 'shop');
+  const settingsRef = doc(db, 'users', (getCloudUser()?.uid || '_'), 'settings', 'shop');
 
   return onSnapshot(
     settingsRef,
@@ -297,7 +297,7 @@ export async function saveMenuItemRemote(item: MenuItem): Promise<void> {
     image = checked || '';
   }
 
-  const ref = doc(db, 'shops', 'main', 'menuItems', item.id);
+  const ref = doc(db, 'users', (getCloudUser()?.uid || '_'), 'menuItems', item.id);
   await setDoc(
     ref,
     {
@@ -312,13 +312,13 @@ export async function saveMenuItemRemote(item: MenuItem): Promise<void> {
 
 export async function deleteMenuItemRemote(id: string): Promise<void> {
   if (!db || !getCloudUser()) return;
-  const ref = doc(db, 'shops', 'main', 'menuItems', id);
+  const ref = doc(db, 'users', (getCloudUser()?.uid || '_'), 'menuItems', id);
   await deleteDoc(ref);
 }
 
 export async function saveCategoryRemote(category: MenuCategory): Promise<void> {
   if (!db || !getCloudUser()) return;
-  const ref = doc(db, 'shops', 'main', 'categories', category.id);
+  const ref = doc(db, 'users', (getCloudUser()?.uid || '_'), 'categories', category.id);
   await setDoc(
     ref,
     {
@@ -332,7 +332,7 @@ export async function saveCategoryRemote(category: MenuCategory): Promise<void> 
 
 export async function deleteCategoryRemote(id: string): Promise<void> {
   if (!db || !getCloudUser()) return;
-  const ref = doc(db, 'shops', 'main', 'categories', id);
+  const ref = doc(db, 'users', (getCloudUser()?.uid || '_'), 'categories', id);
   await deleteDoc(ref);
 }
 
@@ -342,7 +342,7 @@ export async function deleteCategoryRemote(id: string): Promise<void> {
 
 export async function saveTableRemote(table: Table): Promise<void> {
   if (!db || !getCloudUser()) return;
-  const ref = doc(db, 'shops', 'main', 'tables', table.id);
+  const ref = doc(db, 'users', (getCloudUser()?.uid || '_'), 'tables', table.id);
   await setDoc(
     ref,
     {
@@ -356,13 +356,13 @@ export async function saveTableRemote(table: Table): Promise<void> {
 
 export async function deleteTableRemote(id: string): Promise<void> {
   if (!db || !getCloudUser()) return;
-  const ref = doc(db, 'shops', 'main', 'tables', id);
+  const ref = doc(db, 'users', (getCloudUser()?.uid || '_'), 'tables', id);
   await deleteDoc(ref);
 }
 
 export async function saveZoneRemote(zone: TableZoneConfig): Promise<void> {
   if (!db || !getCloudUser()) return;
-  const ref = doc(db, 'shops', 'main', 'zones', zone.id);
+  const ref = doc(db, 'users', (getCloudUser()?.uid || '_'), 'zones', zone.id);
   await setDoc(
     ref,
     {
@@ -376,7 +376,7 @@ export async function saveZoneRemote(zone: TableZoneConfig): Promise<void> {
 
 export async function deleteZoneRemote(id: string): Promise<void> {
   if (!db || !getCloudUser()) return;
-  const ref = doc(db, 'shops', 'main', 'zones', id);
+  const ref = doc(db, 'users', (getCloudUser()?.uid || '_'), 'zones', id);
   await deleteDoc(ref);
 }
 
@@ -386,7 +386,7 @@ export async function deleteZoneRemote(id: string): Promise<void> {
 
 export async function saveOptionPresetRemote(preset: OptionGroup): Promise<void> {
   if (!db || !getCloudUser()) return;
-  const ref = doc(db, 'shops', 'main', 'optionPresets', preset.id);
+  const ref = doc(db, 'users', (getCloudUser()?.uid || '_'), 'optionPresets', preset.id);
   await setDoc(
     ref,
     {
@@ -400,13 +400,13 @@ export async function saveOptionPresetRemote(preset: OptionGroup): Promise<void>
 
 export async function deleteOptionPresetRemote(id: string): Promise<void> {
   if (!db || !getCloudUser()) return;
-  const ref = doc(db, 'shops', 'main', 'optionPresets', id);
+  const ref = doc(db, 'users', (getCloudUser()?.uid || '_'), 'optionPresets', id);
   await deleteDoc(ref);
 }
 
 export async function saveMemberRemote(member: Member): Promise<void> {
   if (!db || !getCloudUser()) return;
-  const ref = doc(db, 'shops', 'main', 'members', member.id);
+  const ref = doc(db, 'users', (getCloudUser()?.uid || '_'), 'members', member.id);
   await setDoc(
     ref,
     {
@@ -424,7 +424,7 @@ export async function saveMemberRemote(member: Member): Promise<void> {
 
 export async function saveBillRemote(bill: Bill): Promise<void> {
   if (!db || !getCloudUser()) return;
-  const ref = doc(db, 'shops', 'main', 'bills', bill.id);
+  const ref = doc(db, 'users', (getCloudUser()?.uid || '_'), 'bills', bill.id);
   await setDoc(
     ref,
     {
@@ -452,7 +452,7 @@ export async function atomicPayBillAndReleaseTable(params: {
   const deviceId = getDeviceId();
 
   // 1. Update Bill to paid
-  const billRef = doc(db, 'shops', 'main', 'bills', params.bill.id);
+  const billRef = doc(db, 'users', (getCloudUser()?.uid || '_'), 'bills', params.bill.id);
   batch.set(
     billRef,
     {
@@ -466,7 +466,7 @@ export async function atomicPayBillAndReleaseTable(params: {
 
   // 2. Update Table status
   if (params.tableId) {
-    const tableRef = doc(db, 'shops', 'main', 'tables', params.tableId);
+    const tableRef = doc(db, 'users', (getCloudUser()?.uid || '_'), 'tables', params.tableId);
     if (params.isTableReleased) {
       batch.update(tableRef, {
         status: 'available',
@@ -488,7 +488,7 @@ export async function atomicPayBillAndReleaseTable(params: {
 
   // 3. Update Member points & total spent if applicable
   if (params.memberUpdate) {
-    const memberRef = doc(db, 'shops', 'main', 'members', params.memberUpdate.id);
+    const memberRef = doc(db, 'users', (getCloudUser()?.uid || '_'), 'members', params.memberUpdate.id);
     batch.update(memberRef, {
       points: params.memberUpdate.points,
       totalSpent: params.memberUpdate.totalSpent,
@@ -513,7 +513,7 @@ export async function atomicVoidBillAndReleaseTable(params: {
   const batch = writeBatch(db);
   const deviceId = getDeviceId();
 
-  const billRef = doc(db, 'shops', 'main', 'bills', params.bill.id);
+  const billRef = doc(db, 'users', (getCloudUser()?.uid || '_'), 'bills', params.bill.id);
   batch.set(
     billRef,
     {
@@ -526,7 +526,7 @@ export async function atomicVoidBillAndReleaseTable(params: {
   );
 
   if (params.tableId && params.isTableReleased) {
-    const tableRef = doc(db, 'shops', 'main', 'tables', params.tableId);
+    const tableRef = doc(db, 'users', (getCloudUser()?.uid || '_'), 'tables', params.tableId);
     batch.update(tableRef, {
       status: 'available',
       currentBillId: null,
@@ -547,7 +547,7 @@ export async function fetchArchivedBills(beforeIsoDate: string): Promise<Bill[]>
   if (!db || !getCloudUser()) return [];
 
   try {
-    const billsCol = collection(db, 'shops', 'main', 'bills');
+    const billsCol = collection(db, 'users', (getCloudUser()?.uid || '_'), 'bills');
     const q = query(
       billsCol,
       where('createdAt', '<', beforeIsoDate),
@@ -573,7 +573,7 @@ export async function fetchArchivedBills(beforeIsoDate: string): Promise<Bill[]>
 
 export async function saveShiftRemote(shift: Shift | null): Promise<void> {
   if (!db || !getCloudUser()) return;
-  const activeShiftRef = doc(db, 'shops', 'main', 'shifts', 'active');
+  const activeShiftRef = doc(db, 'users', (getCloudUser()?.uid || '_'), 'shifts', 'active');
   const deviceId = getDeviceId();
 
   if (shift) {
@@ -584,7 +584,7 @@ export async function saveShiftRemote(shift: Shift | null): Promise<void> {
     });
 
     // Also record into shift history collection
-    const shiftHistoryRef = doc(db, 'shops', 'main', 'shiftRecords', shift.id);
+    const shiftHistoryRef = doc(db, 'users', (getCloudUser()?.uid || '_'), 'shiftRecords', shift.id);
     await setDoc(
       shiftHistoryRef,
       {
@@ -605,7 +605,7 @@ export async function saveShiftRemote(shift: Shift | null): Promise<void> {
 
 export async function saveNotificationRemote(notif: AppNotification): Promise<void> {
   if (!db || !getCloudUser()) return;
-  const ref = doc(db, 'shops', 'main', 'notifications', notif.id);
+  const ref = doc(db, 'users', (getCloudUser()?.uid || '_'), 'notifications', notif.id);
   await setDoc(
     ref,
     {
@@ -619,7 +619,7 @@ export async function saveNotificationRemote(notif: AppNotification): Promise<vo
 
 export async function markNotificationReadRemote(id: string): Promise<void> {
   if (!db || !getCloudUser()) return;
-  const ref = doc(db, 'shops', 'main', 'notifications', id);
+  const ref = doc(db, 'users', (getCloudUser()?.uid || '_'), 'notifications', id);
   await setDoc(
     ref,
     {
@@ -636,7 +636,7 @@ export async function clearNotificationsRemote(ids: string[]): Promise<void> {
   if (!firestore || !getCloudUser() || ids.length === 0) return;
   const batch = writeBatch(firestore);
   ids.slice(0, 400).forEach((id) => {
-    const ref = doc(firestore, 'shops', 'main', 'notifications', id);
+    const ref = doc(firestore, 'users', (getCloudUser()?.uid || '_'), 'notifications', id);
     batch.delete(ref);
   });
   await batch.commit();
@@ -658,7 +658,7 @@ export async function saveUserRemote(user: User): Promise<void> {
     pinHash = await hashPinWithSalt(user.pin || '1234', salt);
   }
 
-  const ref = doc(db, 'shops', 'main', 'users', user.id);
+  const ref = doc(db, 'users', (getCloudUser()?.uid || '_'), 'users', user.id);
   // Plain text `pin` is explicitly OMITTED from Cloud payload!
   await setDoc(
     ref,
@@ -679,7 +679,7 @@ export async function saveUserRemote(user: User): Promise<void> {
 
 export async function deleteUserRemote(id: string): Promise<void> {
   if (!db || !getCloudUser()) return;
-  const ref = doc(db, 'shops', 'main', 'users', id);
+  const ref = doc(db, 'users', (getCloudUser()?.uid || '_'), 'users', id);
   await deleteDoc(ref);
 }
 
@@ -697,7 +697,7 @@ export function subscribeCollection<T extends { id: string }>(
   }
 
   const deviceId = getDeviceId();
-  const baseCol = collection(db, 'shops', 'main', collectionName);
+  const baseCol = collection(db, 'users', (getCloudUser()?.uid || '_'), collectionName);
   const q = customQueryBuilder ? customQueryBuilder(baseCol) : baseCol;
 
   return onSnapshot(
@@ -744,7 +744,7 @@ export function subscribeRecentBills(onUpdate: (recentBills: Bill[]) => void): U
   const thirtyDaysAgoISO = thirtyDaysAgo.toISOString();
 
   const deviceId = getDeviceId();
-  const billsCol = collection(db, 'shops', 'main', 'bills');
+  const billsCol = collection(db, 'users', (getCloudUser()?.uid || '_'), 'bills');
   const q = query(billsCol, where('createdAt', '>=', thirtyDaysAgoISO));
 
   return onSnapshot(
@@ -775,7 +775,7 @@ export function subscribeActiveShift(onUpdate: (shift: Shift | null) => void): U
   }
 
   const deviceId = getDeviceId();
-  const shiftRef = doc(db, 'shops', 'main', 'shifts', 'active');
+  const shiftRef = doc(db, 'users', (getCloudUser()?.uid || '_'), 'shifts', 'active');
 
   return onSnapshot(
     shiftRef,
