@@ -689,7 +689,7 @@ export async function deleteUserRemote(id: string): Promise<void> {
 
 export function subscribeCollection<T extends { id: string }>(
   collectionName: string,
-  onUpdate: (items: T[]) => void,
+  onUpdate: (items: T[], removedIds: string[]) => void,
   customQueryBuilder?: (col: any) => any
 ): Unsubscribe {
   if (!db || !isFirebaseConfigured() || !getCloudUser()) {
@@ -716,8 +716,13 @@ export function subscribeCollection<T extends { id: string }>(
         items.push(data as T);
       });
 
-      if (items.length > 0 || snapshot.docChanges().some((c: any) => c.type === 'removed')) {
-        onUpdate(items);
+      const removedIds: string[] = snapshot
+        .docChanges()
+        .filter((c: any) => c.type === 'removed')
+        .map((c: any) => c.doc.id);
+
+      if (items.length > 0 || removedIds.length > 0) {
+        onUpdate(items, removedIds);
       }
     },
     (err: any) => {

@@ -835,11 +835,12 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // 1. Menu items
     unsubs.push(
-      subscribeCollection<MenuItem>('menuItems', (remoteItems) => {
-        if (!remoteItems || remoteItems.length === 0) return;
+      subscribeCollection<MenuItem>('menuItems', (remoteItems, removedIds) => {
+        if ((!remoteItems || remoteItems.length === 0) && removedIds.length === 0) return;
         setMenuItems((prev) => {
           const map = new Map(prev.map((m) => [m.id, m]));
           remoteItems.forEach((rm) => map.set(rm.id, rm));
+          removedIds.forEach((id) => map.delete(id));
           const merged = Array.from(map.values());
           localStorage.setItem(STORAGE_KEYS.MENU, JSON.stringify(merged));
           return merged;
@@ -850,11 +851,12 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // 2. Categories
     unsubs.push(
-      subscribeCollection<MenuCategory>('categories', (remoteCats) => {
-        if (!remoteCats || remoteCats.length === 0) return;
+      subscribeCollection<MenuCategory>('categories', (remoteCats, removedIds) => {
+        if ((!remoteCats || remoteCats.length === 0) && removedIds.length === 0) return;
         setCategories((prev) => {
           const map = new Map(prev.map((c) => [c.id, c]));
           remoteCats.forEach((rc) => map.set(rc.id, rc));
+          removedIds.forEach((id) => map.delete(id));
           const merged = Array.from(map.values());
           localStorage.setItem(STORAGE_KEYS.CATEGORIES, JSON.stringify(merged));
           return merged;
@@ -865,11 +867,12 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // 3. Tables
     unsubs.push(
-      subscribeCollection<Table>('tables', (remoteTables) => {
-        if (!remoteTables || remoteTables.length === 0) return;
+      subscribeCollection<Table>('tables', (remoteTables, removedIds) => {
+        if ((!remoteTables || remoteTables.length === 0) && removedIds.length === 0) return;
         setTables((prev) => {
           const map = new Map(prev.map((t) => [t.id, t]));
           remoteTables.forEach((rt) => map.set(rt.id, rt));
+          removedIds.forEach((id) => map.delete(id));
           const merged = autoPositionTables(Array.from(map.values()));
           localStorage.setItem(STORAGE_KEYS.TABLES, JSON.stringify(merged));
           return merged;
@@ -880,11 +883,12 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // 4. Zones
     unsubs.push(
-      subscribeCollection<TableZoneConfig>('zones', (remoteZones) => {
-        if (!remoteZones || remoteZones.length === 0) return;
+      subscribeCollection<TableZoneConfig>('zones', (remoteZones, removedIds) => {
+        if ((!remoteZones || remoteZones.length === 0) && removedIds.length === 0) return;
         setZones((prev) => {
           const map = new Map(prev.map((z) => [z.id, z]));
           remoteZones.forEach((rz) => map.set(rz.id, rz));
+          removedIds.forEach((id) => map.delete(id));
           const merged = Array.from(map.values());
           localStorage.setItem(STORAGE_KEYS.ZONES, JSON.stringify(merged));
           return merged;
@@ -895,11 +899,12 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // 5. Option Presets
     unsubs.push(
-      subscribeCollection<OptionGroup>('optionPresets', (remotePresets) => {
-        if (!remotePresets || remotePresets.length === 0) return;
+      subscribeCollection<OptionGroup>('optionPresets', (remotePresets, removedIds) => {
+        if ((!remotePresets || remotePresets.length === 0) && removedIds.length === 0) return;
         setOptionPresets((prev) => {
           const map = new Map(prev.map((p) => [p.id, p]));
           remotePresets.forEach((rp) => map.set(rp.id, rp));
+          removedIds.forEach((id) => map.delete(id));
           const merged = Array.from(map.values());
           localStorage.setItem(STORAGE_KEYS.OPTION_PRESETS, JSON.stringify(merged));
           return merged;
@@ -910,11 +915,12 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // 6. Members
     unsubs.push(
-      subscribeCollection<Member>('members', (remoteMembers) => {
-        if (!remoteMembers || remoteMembers.length === 0) return;
+      subscribeCollection<Member>('members', (remoteMembers, removedIds) => {
+        if ((!remoteMembers || remoteMembers.length === 0) && removedIds.length === 0) return;
         setMembers((prev) => {
           const map = new Map(prev.map((m) => [m.id, m]));
           remoteMembers.forEach((rm) => map.set(rm.id, rm));
+          removedIds.forEach((id) => map.delete(id));
           const merged = Array.from(map.values());
           localStorage.setItem(STORAGE_KEYS.MEMBERS, JSON.stringify(merged));
           return merged;
@@ -953,8 +959,8 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // 9. Users
     unsubs.push(
-      subscribeCollection<User>('users', (remoteUsers) => {
-        if (!remoteUsers || remoteUsers.length === 0) return;
+      subscribeCollection<User>('users', (remoteUsers, removedIds) => {
+        if ((!remoteUsers || remoteUsers.length === 0) && removedIds.length === 0) return;
         setUsers((prev) => {
           const map = new Map(prev.map((u) => [u.id, u]));
           remoteUsers.forEach((ru) => {
@@ -964,8 +970,27 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               pin: localUser?.pin || ru.pin || '',
             });
           });
+          removedIds.forEach((id) => map.delete(id));
           const merged = Array.from(map.values());
           localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(merged));
+          return merged;
+        });
+        syncService.broadcast('DATA_RELOAD');
+      })
+    );
+
+    // 10. Notifications
+    unsubs.push(
+      subscribeCollection<AppNotification>('notifications', (remoteNotifs, removedIds) => {
+        if ((!remoteNotifs || remoteNotifs.length === 0) && removedIds.length === 0) return;
+        setNotifications((prev) => {
+          const map = new Map(prev.map((n) => [n.id, n]));
+          remoteNotifs.forEach((rn) => map.set(rn.id, rn));
+          removedIds.forEach((id) => map.delete(id));
+          const merged = Array.from(map.values())
+            .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+            .slice(0, 50);
+          localStorage.setItem(STORAGE_KEYS.NOTIFICATIONS, JSON.stringify(merged));
           return merged;
         });
         syncService.broadcast('DATA_RELOAD');
