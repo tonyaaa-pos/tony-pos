@@ -11,6 +11,8 @@ import {
   Globe,
   Bluetooth,
   Monitor,
+  Cloud,
+  CloudOff,
 } from 'lucide-react';
 import { NotificationCenter } from './NotificationCenter';
 import { formatBaht } from '../../utils/formatters';
@@ -31,6 +33,8 @@ export const Header: React.FC<HeaderProps> = ({ onOpenMenu }) => {
     activeNav,
     currentShift,
     setActiveNav,
+    cloudUser,
+    cloudConnected,
   } = usePOS();
 
   const { t, language, toggleLanguage, getName } = useLanguage();
@@ -182,6 +186,43 @@ export const Header: React.FC<HeaderProps> = ({ onOpenMenu }) => {
               <span className="max-w-[100px] truncate">{btState.deviceName}</span>
             </button>
           )}
+
+          {/* Cloud Status Indicator */}
+          <button
+            type="button"
+            onClick={() => setActiveNav('settings')}
+            className={`p-2 rounded-xl transition cursor-pointer flex items-center justify-center ${
+              cloudConnected
+                ? 'text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-950/40'
+                : cloudUser
+                ? 'text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-950/40'
+                : 'text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+            }`}
+            title={
+              cloudConnected
+                ? `Cloud Firestore: เชื่อมต่อแล้ว (${cloudUser?.email || 'ออนไลน์'})`
+                : cloudUser
+                ? 'Cloud Firestore: ออฟไลน์ (บันทึกในเครื่องแล้ว จะซิงค์เมื่อต่อเน็ต)'
+                : 'Cloud Firestore: ยังไม่ได้เชื่อมต่อบัญชีร้าน (ใช้งานแบบ Local)'
+            }
+            aria-label="Cloud Status"
+          >
+            {cloudConnected ? (
+              <div className="relative">
+                <Cloud className="w-4 h-4" />
+                <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-500 ring-2 ring-white dark:ring-slate-900" />
+              </div>
+            ) : cloudUser ? (
+              <div className="relative">
+                <CloudOff className="w-4 h-4" />
+                <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-amber-500 ring-2 ring-white dark:ring-slate-900" />
+              </div>
+            ) : (
+              <div className="relative opacity-60">
+                <Cloud className="w-4 h-4" />
+              </div>
+            )}
+          </button>
 
           {/* Language Switcher Button (TH | EN) */}
           <button

@@ -21,12 +21,14 @@ import { UnsavedItemsPaymentDialog } from '../pos/UnsavedItemsPaymentDialog';
 import { PaymentModal } from '../pos/PaymentModal';
 
 export const BillsView: React.FC = () => {
-  const { bills, settings, voidBill, confirmOrder, setActiveNav } = usePOS();
+  const { bills, settings, voidBill, confirmOrder, setActiveNav, loadArchivedBills, cloudConnected } = usePOS();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'open' | 'paid' | 'voided'>('all');
   const [selectedBill, setSelectedBill] = useState<Bill | null>(null);
   const [showPrintModal, setShowPrintModal] = useState<Bill | null>(null);
+  const [isLoadingArchive, setIsLoadingArchive] = useState(false);
+  const [archiveLoadMessage, setArchiveLoadMessage] = useState<string | null>(null);
 
   // Payment states
   const [payingBill, setPayingBill] = useState<Bill | null>(null);
@@ -47,6 +49,21 @@ export const BillsView: React.FC = () => {
       return;
     }
     setPayingBill(bill);
+  };
+
+  const handleLoadArchive = async () => {
+    setIsLoadingArchive(true);
+    setArchiveLoadMessage(null);
+    try {
+      const count = await loadArchivedBills();
+      setArchiveLoadMessage(`โหลดบิลประวัติเก่าเพิ่มเติมแล้ว ${count} รายการ`);
+      setTimeout(() => setArchiveLoadMessage(null), 4000);
+    } catch {
+      setArchiveLoadMessage('เกิดข้อผิดพลาดในการโหลดบิลเก่า');
+      setTimeout(() => setArchiveLoadMessage(null), 4000);
+    } finally {
+      setIsLoadingArchive(false);
+    }
   };
 
   // Filter bills
@@ -114,15 +131,37 @@ export const BillsView: React.FC = () => {
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={handleExportCSV}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 text-xs font-semibold shadow-2xs transition cursor-pointer"
-        >
-          <Download className="w-4 h-4" />
-          <span>ส่งออกรายงาน (CSV)</span>
-        </button>
+        <div className="flex items-center gap-2">
+          {cloudConnected && (
+            <button
+              type="button"
+              onClick={handleLoadArchive}
+              disabled={isLoadingArchive}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800 hover:bg-amber-100 text-xs font-semibold shadow-2xs transition cursor-pointer disabled:opacity-50"
+              title="ดึงบิลย้อนหลังเก่ากว่า 30 วันจาก Cloud มาตรวจสอบ"
+            >
+              <Clock className={`w-4 h-4 ${isLoadingArchive ? 'animate-spin' : ''}`} />
+              <span>{isLoadingArchive ? 'กำลังโหลด...' : 'ดึงบิลเก่ากว่า 30 วัน'}</span>
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={handleExportCSV}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 text-xs font-semibold shadow-2xs transition cursor-pointer"
+          >
+            <Download className="w-4 h-4" />
+            <span>ส่งออกรายงาน (CSV)</span>
+          </button>
+        </div>
       </div>
+
+      {archiveLoadMessage && (
+        <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-200 rounded-xl text-xs font-medium flex items-center gap-2">
+          <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+          <span>{archiveLoadMessage}</span>
+        </div>
+      )}
 
       {/* Filter and Search Bar */}
       <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">

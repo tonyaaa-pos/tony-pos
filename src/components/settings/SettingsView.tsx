@@ -31,16 +31,112 @@ import {
   ExternalLink,
   Eye,
   Usb,
+  Cloud,
+  CloudOff,
+  Loader2,
+  AlertTriangle,
+  Image as ImageIcon,
 } from 'lucide-react';
 import { formatBaht } from '../../utils/formatters';
 import { compressImageFile } from '../../utils/imageCompressor';
 import { Modal } from '../common/Modal';
 import { ConfirmDialog } from '../common/ConfirmDialog';
-import { Table, User, TableShape, ChairStyle } from '../../types';
+import { Table, User, TableShape, ChairStyle, PaymentMethod, ShopSettings } from '../../types';
 import { soundService } from '../../utils/audio';
 import { bluetoothPrinterService, BluetoothState } from '../../services/bluetoothPrinterService';
 import { usbPrinterService, USBPrinterState } from '../../services/usbPrinterService';
 import { CustomerDisplayView } from '../customer/CustomerDisplayView';
+import { isFirebaseConfigured } from '../../firebaseConfig';
+
+interface SaveButtonProps {
+  status: 'idle' | 'saving' | 'saved' | 'pending' | 'error';
+  errorMessage: string | null;
+  onRetry?: () => void;
+  className?: string;
+}
+
+const SaveButton: React.FC<SaveButtonProps> = ({ status, errorMessage, onRetry, className = '' }) => {
+  return (
+    <div className={`flex flex-col sm:flex-row items-end sm:items-center gap-2.5 ${className}`}>
+      {/* Accessible Status Message */}
+      <div aria-live="polite" className="text-xs font-semibold">
+        {status === 'saved' && (
+          <span className="text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5 animate-in fade-in">
+            <Check className="w-4 h-4 text-emerald-500" />
+            <span>บันทึกแล้ว (ในเครื่อง + Cloud)</span>
+          </span>
+        )}
+        {status === 'pending' && (
+          <span className="text-amber-600 dark:text-amber-400 flex items-center gap-1.5 animate-in fade-in">
+            <CloudOff className="w-4 h-4 text-amber-500" />
+            <span>บันทึกในเครื่องแล้ว กำลังรอส่งขึ้น Cloud</span>
+          </span>
+        )}
+        {status === 'error' && (
+          <span className="text-rose-600 dark:text-rose-400 flex items-center gap-1.5 animate-in fade-in">
+            <AlertTriangle className="w-4 h-4 text-rose-500 shrink-0" />
+            <span className="max-w-xs truncate">{errorMessage || 'เกิดข้อผิดพลาดในการบันทึก'}</span>
+          </span>
+        )}
+      </div>
+
+      <div className="flex items-center gap-2">
+        {status === 'error' && onRetry && (
+          <button
+            type="button"
+            onClick={onRetry}
+            className="px-3 py-2 rounded-xl border border-rose-300 dark:border-rose-800 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-xs font-bold transition cursor-pointer"
+          >
+            ลองอีกครั้ง
+          </button>
+        )}
+
+        <button
+          type="submit"
+          disabled={status === 'saving'}
+          className={`px-5 py-2.5 rounded-xl font-bold text-xs shadow-xs transition flex items-center gap-2 cursor-pointer ${
+            status === 'saving'
+              ? 'bg-amber-400 text-slate-800 opacity-80 cursor-not-allowed'
+              : status === 'saved'
+              ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+              : status === 'pending'
+              ? 'bg-amber-500 text-slate-950 hover:bg-amber-600'
+              : status === 'error'
+              ? 'bg-rose-600 text-white hover:bg-rose-700'
+              : 'bg-amber-500 hover:bg-amber-600 text-slate-950'
+          }`}
+        >
+          {status === 'saving' ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span>กำลังบันทึก...</span>
+            </>
+          ) : status === 'saved' ? (
+            <>
+              <Check className="w-4 h-4" />
+              <span>บันทึกข้อมูลร้าน & สื่อ</span>
+            </>
+          ) : status === 'pending' ? (
+            <>
+              <CloudOff className="w-4 h-4" />
+              <span>บันทึกข้อมูลร้าน & สื่อ</span>
+            </>
+          ) : status === 'error' ? (
+            <>
+              <AlertTriangle className="w-4 h-4" />
+              <span>บันทึกข้อมูลร้าน & สื่อ</span>
+            </>
+          ) : (
+            <>
+              <Save className="w-4 h-4" />
+              <span>บันทึกข้อมูลร้าน & สื่อ</span>
+            </>
+          )}
+        </button>
+      </div>
+    </div>
+  );
+};
 
 export const SettingsView: React.FC = () => {
   const {
@@ -66,6 +162,23 @@ export const SettingsView: React.FC = () => {
     resetDemoData,
     exportDataJson,
     importDataJson,
+
+    // Cloud Sync (Phase 1)
+    saveShopData,
+    cloudUser,
+    cloudSyncStatus,
+    cloudConnected,
+    cloudErrorMessage,
+    loginCloud,
+    logoutCloud,
+    initialSyncPrompt,
+    resolveInitialSync,
+    cancelInitialSync,
+    hasExternalCloudUpdate,
+    applyExternalCloudUpdate,
+    dismissExternalCloudUpdate,
+    isFormEditingShop,
+    setIsFormEditingShop,
   } = usePOS();
 
   const [activeTab, setActiveTab] = useState<
@@ -98,18 +211,153 @@ export const SettingsView: React.FC = () => {
     };
   }, []);
 
-  // Form states for Shop info
-  const [shopName, setShopName] = useState(settings.shopName);
-  const [address, setAddress] = useState(settings.address);
-  const [phone, setPhone] = useState(settings.phone);
-  const [taxId, setTaxId] = useState(settings.taxId);
-  const [receiptFooter, setReceiptFooter] = useState(settings.receiptFooter);
-  const [vatEnabled, setVatEnabled] = useState(settings.vatEnabled);
-  const [vatRate, setVatRate] = useState(settings.vatRate);
-  const [vatInclusive, setVatInclusive] = useState(settings.vatInclusive);
-  const [serviceChargeEnabled, setServiceChargeEnabled] = useState(settings.serviceChargeEnabled);
-  const [serviceChargeRate, setServiceChargeRate] = useState(settings.serviceChargeRate);
-  const [savedSuccess, setSavedSuccess] = useState(false);
+  // Form states for Shop info & media (covering ALL ShopSettings fields)
+  const [shopName, setShopName] = useState(settings.shopName || '');
+  const [address, setAddress] = useState(settings.address || '');
+  const [phone, setPhone] = useState(settings.phone || '');
+  const [taxId, setTaxId] = useState(settings.taxId || '');
+  const [logoUrl, setLogoUrl] = useState(settings.logoUrl || '');
+  const [receiptHeader, setReceiptHeader] = useState(settings.receiptHeader || '');
+  const [receiptFooter, setReceiptFooter] = useState(settings.receiptFooter || '');
+  const [receiptPaperWidth, setReceiptPaperWidth] = useState<'80mm' | '58mm'>(settings.receiptPaperWidth || '80mm');
+  const [vatEnabled, setVatEnabled] = useState(Boolean(settings.vatEnabled));
+  const [vatRate, setVatRate] = useState(settings.vatRate ?? 7);
+  const [vatInclusive, setVatInclusive] = useState(Boolean(settings.vatInclusive));
+  const [serviceChargeEnabled, setServiceChargeEnabled] = useState(Boolean(settings.serviceChargeEnabled));
+  const [serviceChargeRate, setServiceChargeRate] = useState(settings.serviceChargeRate ?? 0);
+  const [pointsEarnRate, setPointsEarnRate] = useState(settings.pointsEarnRate ?? 50);
+  const [pointsRedeemRate, setPointsRedeemRate] = useState(settings.pointsRedeemRate ?? 1);
+  const [allowedPaymentMethods, setAllowedPaymentMethods] = useState<PaymentMethod[]>(
+    settings.allowedPaymentMethods || ['cash', 'transfer']
+  );
+  const [isUploadingLogo, setIsUploadingLogo] = useState(false);
+  const [logoUploadError, setLogoUploadError] = useState('');
+
+  // Cloud Auth form states
+  const [cloudEmail, setCloudEmail] = useState('');
+  const [cloudPassword, setCloudPassword] = useState('');
+  const [cloudAuthError, setCloudAuthError] = useState<string | null>(null);
+  const [isConnectingCloud, setIsConnectingCloud] = useState(false);
+
+  // Sync external changes into form if user is not currently editing
+  React.useEffect(() => {
+    if (!isFormEditingShop) {
+      setShopName(settings.shopName || '');
+      setAddress(settings.address || '');
+      setPhone(settings.phone || '');
+      setTaxId(settings.taxId || '');
+      setLogoUrl(settings.logoUrl || '');
+      setReceiptHeader(settings.receiptHeader || '');
+      setReceiptFooter(settings.receiptFooter || '');
+      setReceiptPaperWidth(settings.receiptPaperWidth || '80mm');
+      setVatEnabled(Boolean(settings.vatEnabled));
+      setVatRate(settings.vatRate ?? 7);
+      setVatInclusive(Boolean(settings.vatInclusive));
+      setServiceChargeEnabled(Boolean(settings.serviceChargeEnabled));
+      setServiceChargeRate(settings.serviceChargeRate ?? 0);
+      setPointsEarnRate(settings.pointsEarnRate ?? 50);
+      setPointsRedeemRate(settings.pointsRedeemRate ?? 1);
+      setAllowedPaymentMethods(settings.allowedPaymentMethods || ['cash', 'transfer']);
+    }
+  }, [settings, isFormEditingShop]);
+
+  const handleFieldChange = () => {
+    if (!isFormEditingShop) {
+      setIsFormEditingShop(true);
+    }
+  };
+
+  const handleLogoFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      setIsUploadingLogo(true);
+      setLogoUploadError('');
+      handleFieldChange();
+      const compressed = await compressImageFile(file, 600, 0.8);
+      setLogoUrl(compressed);
+    } catch {
+      setLogoUploadError('ไม่สามารถอ่านหรือบีบอัดไฟล์รูปภาพได้');
+    } finally {
+      setIsUploadingLogo(false);
+    }
+  };
+
+  // Save Shop Settings & Media (Single unified handler for both SaveButtons)
+  const handleSaveShopSettings = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setIsFormEditingShop(false);
+    dismissExternalCloudUpdate();
+
+    const updatedSettings: ShopSettings = {
+      ...settings,
+      shopName: shopName.trim(),
+      address: address.trim(),
+      phone: phone.trim(),
+      taxId: taxId.trim(),
+      logoUrl: logoUrl,
+      receiptHeader: receiptHeader.trim(),
+      receiptFooter: receiptFooter.trim(),
+      receiptPaperWidth,
+      vatEnabled,
+      vatRate: Number(vatRate),
+      vatInclusive,
+      serviceChargeEnabled,
+      serviceChargeRate: Number(serviceChargeRate),
+      pointsEarnRate: Number(pointsEarnRate),
+      pointsRedeemRate: Number(pointsRedeemRate),
+      allowedPaymentMethods,
+    };
+
+    updateSettings(updatedSettings);
+
+    await saveShopData({
+      settings: updatedSettings,
+      qrImages,
+      logo: logoUrl,
+    });
+  };
+
+  const handleConnectCloud = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!cloudEmail || !cloudPassword) {
+      setCloudAuthError('กรุณากรอกอีเมลและรหัสผ่าน');
+      return;
+    }
+    setCloudAuthError(null);
+    setIsConnectingCloud(true);
+    try {
+      await loginCloud(cloudEmail, cloudPassword);
+      setCloudPassword('');
+    } catch (err: any) {
+      console.warn('Cloud login error:', err);
+      let msg = 'ไม่สามารถเข้าสู่ระบบ Cloud ได้ กรุณาตรวจสอบอีเมลหรือรหัสผ่าน';
+      if (
+        err?.code === 'auth/invalid-credential' ||
+        err?.code === 'auth/wrong-password' ||
+        err?.code === 'auth/user-not-found'
+      ) {
+        msg = 'อีเมลหรือรหัสผ่านไม่ถูกต้อง';
+      } else if (err?.code === 'auth/too-many-requests') {
+        msg = 'ลองเข้าสู่ระบบบ่อยเกินไป กรุณารอสักครู่แล้วลองใหม่';
+      } else if (err?.message) {
+        msg = err.message;
+      }
+      setCloudAuthError(msg);
+    } finally {
+      setIsConnectingCloud(false);
+    }
+  };
+
+  const handleDisconnectCloud = async () => {
+    try {
+      await logoutCloud();
+      setCloudAuthError(null);
+    } catch (err) {
+      console.warn('Cloud logout error:', err);
+    }
+  };
+
 
   // QR Upload
   const [newQrLabel, setNewQrLabel] = useState('พร้อมเพย์ (PromptPay)');
@@ -149,24 +397,6 @@ export const SettingsView: React.FC = () => {
   const [restoreSuccess, setRestoreSuccess] = useState<string | null>(null);
   const [exportSuccessMessage, setExportSuccessMessage] = useState<string | null>(null);
 
-  // Save Shop Settings
-  const handleSaveShopSettings = (e: React.FormEvent) => {
-    e.preventDefault();
-    updateSettings({
-      shopName,
-      address,
-      phone,
-      taxId,
-      receiptFooter,
-      vatEnabled,
-      vatRate: Number(vatRate),
-      vatInclusive,
-      serviceChargeEnabled,
-      serviceChargeRate: Number(serviceChargeRate),
-    });
-    setSavedSuccess(true);
-    setTimeout(() => setSavedSuccess(false), 2500);
-  };
 
   // QR Upload Handler (Compressed base64 storage)
   const handleQrFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -370,24 +600,283 @@ export const SettingsView: React.FC = () => {
         })}
       </div>
 
-      {/* Tab 1: Shop Information & Tax */}
+      {/* Tab 1: Shop Information & Media & Cloud Sync */}
       {activeTab === 'shop' && (
         <form onSubmit={handleSaveShopSettings} className="space-y-6">
+          {/* Sticky Top Header with Title and SaveButton (Requirement D.1, D.2) */}
+          <div className="sticky top-0 z-20 flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 -mt-2 rounded-2xl bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border border-slate-200 dark:border-slate-800 shadow-sm">
+            <div className="flex items-center gap-2.5">
+              <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-500 shrink-0">
+                <Store className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-bold text-sm text-slate-900 dark:text-white">
+                  ข้อมูลร้าน & สื่อ (Shop Profile & Cloud Sync)
+                </h3>
+                <p className="text-[11px] text-slate-500">
+                  ซิงค์แบบ Local-first บันทึกลงเครื่องทันทีและส่งขึ้น Cloud
+                </p>
+              </div>
+            </div>
+
+            <SaveButton
+              status={cloudSyncStatus}
+              errorMessage={cloudErrorMessage}
+              onRetry={handleSaveShopSettings}
+            />
+          </div>
+
+          {/* Conflict Notice: Update arrived from another device while editing (Requirement B.6) */}
+          {hasExternalCloudUpdate && (
+            <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in">
+              <div className="flex items-center gap-2.5">
+                <AlertCircle className="w-5 h-5 text-amber-500 shrink-0" />
+                <div>
+                  <p className="text-xs font-bold text-amber-900 dark:text-amber-200">
+                    มีการอัปเดตข้อมูลร้านจากเครื่องอื่น
+                  </p>
+                  <p className="text-[11px] text-amber-700 dark:text-amber-300">
+                    มีข้อมูลอัปเดตใหม่ล่าสุดจาก Cloud ระบบจะไม่เขียนทับช่องที่คุณกำลังพิมพ์อยู่
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={applyExternalCloudUpdate}
+                  className="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs transition cursor-pointer flex items-center gap-1.5 shadow-xs"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>โหลดค่าใหม่ (Reload)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={dismissExternalCloudUpdate}
+                  className="px-3 py-1.5 rounded-xl text-slate-500 hover:text-slate-700 dark:text-slate-400 text-xs transition cursor-pointer"
+                >
+                  คงค่าที่กำลังพิมพ์
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Section: Cloud Firestore & Auth Connection (Requirement A.4) */}
+          <div className="p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div
+                  className={`w-9 h-9 rounded-xl flex items-center justify-center ${
+                    cloudConnected
+                      ? 'bg-emerald-500/10 text-emerald-500'
+                      : cloudUser
+                      ? 'bg-amber-500/10 text-amber-500'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-500'
+                  }`}
+                >
+                  {cloudConnected ? <Cloud className="w-5 h-5" /> : <CloudOff className="w-5 h-5" />}
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm text-slate-900 dark:text-white">
+                    เชื่อมต่อ Cloud (Cloud Firestore & Auth)
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    เข้าสู่ระบบบัญชีเจ้าของร้านเพื่อซิงค์ข้อมูลร้านและการตั้งค่าข้ามเครื่อง
+                  </p>
+                </div>
+              </div>
+
+              <div>
+                {cloudConnected ? (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-xs font-bold">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                    เชื่อมต่อแล้ว (Online)
+                  </span>
+                ) : cloudUser ? (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-amber-400 text-xs font-bold">
+                    <span className="w-2 h-2 rounded-full bg-amber-500" />
+                    ออฟไลน์ (Offline)
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 text-xs font-medium">
+                    ยังไม่เชื่อมต่อ (Local Mode)
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {!isFirebaseConfigured() ? (
+              <div className="p-4 rounded-2xl bg-sky-50 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-800/50 text-xs text-sky-800 dark:text-sky-300 space-y-1.5">
+                <p className="font-bold flex items-center gap-1.5">
+                  <Info className="w-4 h-4 text-sky-500 shrink-0" />
+                  <span>ยังไม่ได้กำหนดค่า Firebase ในไฟล์ src/firebaseConfig.ts</span>
+                </p>
+                <p className="text-[11px] leading-relaxed text-sky-700 dark:text-sky-400">
+                  ระบบกำลังทำงานในโหมด Local-first โดยจัดเก็บข้อมูลลงใน LocalStorage บนเครื่องนี้อย่างสมบูรณ์
+                  เมื่อต้องการซิงค์ Cloud ให้นำค่า Firebase Web App Config มาใส่ใน <code className="px-1 py-0.5 rounded bg-sky-100 dark:bg-sky-900 font-mono">src/firebaseConfig.ts</code>
+                </p>
+              </div>
+            ) : cloudUser ? (
+              <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="space-y-1">
+                  <div className="text-xs text-slate-500">บัญชีเจ้าของร้านที่เข้าสู่ระบบ:</div>
+                  <div className="text-sm font-bold text-slate-900 dark:text-white font-mono flex items-center gap-2">
+                    <ShieldCheck className="w-4 h-4 text-emerald-500" />
+                    <span>{cloudUser.email}</span>
+                  </div>
+                  <div className="text-[11px] text-slate-400">
+                    เข้าสู่ระบบแล้ว 1 บัญชีต่อเครื่อง ข้อมูลจะซิงค์กับ Cloud Firestore แบบ Local-first อัตโนมัติ
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleDisconnectCloud}
+                  className="px-4 py-2 rounded-xl border border-rose-200 dark:border-rose-900/50 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 text-xs font-bold transition cursor-pointer shrink-0"
+                >
+                  ตัดการเชื่อมต่อ Cloud
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-xs text-slate-500">
+                  กรอกอีเมลและรหัสผ่านของเจ้าของร้าน (ทำครั้งเดียวต่อเครื่อง) เพื่อเชื่อมต่อฐานข้อมูล Cloud
+                </p>
+
+                {cloudAuthError && (
+                  <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-xs text-rose-600 dark:text-rose-400 font-semibold flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 shrink-0" />
+                    <span>{cloudAuthError}</span>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      อีเมลเจ้าของร้าน
+                    </label>
+                    <input
+                      type="email"
+                      placeholder="owner@myrestaurant.com"
+                      value={cloudEmail}
+                      onChange={(e) => setCloudEmail(e.target.value)}
+                      className="w-full px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-sans"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      รหัสผ่าน
+                    </label>
+                    <input
+                      type="password"
+                      placeholder="••••••••"
+                      value={cloudPassword}
+                      onChange={(e) => setCloudPassword(e.target.value)}
+                      className="w-full px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-sans"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex justify-end pt-1">
+                  <button
+                    type="button"
+                    onClick={handleConnectCloud}
+                    disabled={isConnectingCloud}
+                    className="px-5 py-2.5 rounded-xl bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-950 hover:bg-slate-800 dark:hover:bg-slate-200 font-bold text-xs shadow-xs transition flex items-center gap-2 cursor-pointer disabled:opacity-60"
+                  >
+                    {isConnectingCloud ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>กำลังเชื่อมต่อ...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Cloud className="w-3.5 h-3.5" />
+                        <span>เชื่อมต่อ Cloud</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Section: Shop Logo & Media */}
+          <div className="p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
+            <h3 className="font-bold text-sm text-slate-900 dark:text-white border-b border-slate-100 dark:border-slate-800 pb-3 flex items-center gap-2">
+              <ImageIcon className="w-4 h-4 text-amber-500" />
+              <span>โลโก้และรูปสื่อของร้าน (Shop Logo & Media)</span>
+            </h3>
+
+            <div className="flex flex-col sm:flex-row items-center gap-6">
+              <div className="relative w-28 h-28 rounded-2xl border-2 border-dashed border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 flex items-center justify-center overflow-hidden shrink-0">
+                {logoUrl ? (
+                  <img src={logoUrl} alt="Logo" className="w-full h-full object-contain p-2" />
+                ) : (
+                  <div className="text-center p-2 text-slate-400">
+                    <Store className="w-8 h-8 mx-auto mb-1 opacity-50" />
+                    <span className="text-[10px]">ยังไม่มีโลโก้</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-2 flex-1">
+                <div className="flex items-center gap-3">
+                  <label className="px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-xs font-bold transition cursor-pointer flex items-center gap-2">
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>{logoUrl ? 'เปลี่ยนรูปโลโก้' : 'อัปโหลดโลโก้'}</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleLogoFileChange}
+                      className="hidden"
+                    />
+                  </label>
+
+                  {logoUrl && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLogoUrl('');
+                        handleFieldChange();
+                      }}
+                      className="px-3 py-2 rounded-xl text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-xs font-semibold transition cursor-pointer flex items-center gap-1.5"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>ลบโลโก้</span>
+                    </button>
+                  )}
+                </div>
+
+                {logoUploadError && (
+                  <p className="text-xs text-rose-500 font-semibold">{logoUploadError}</p>
+                )}
+
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  รองรับไฟล์ภาพ PNG, JPG หรือ SVG ระบบบีบอัดให้อัตโนมัติไม่เกิน 700 KB เพื่อความรวดเร็วในการซิงค์ขึ้น Cloud
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Section: Shop Information & Receipt details */}
           <div className="p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
             <h3 className="font-bold text-sm text-slate-900 dark:text-white border-b border-slate-100 dark:border-slate-800 pb-3">
-              ข้อมูลร้านและใบเสร็จรับเงิน
+              ข้อมูลร้านและข้อความใบเสร็จรับเงิน
             </h3>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  ชื่อร้านค้า
+                  ชื่อร้านค้า <span className="text-rose-500">*</span>
                 </label>
                 <input
                   type="text"
                   required
                   value={shopName}
-                  onChange={(e) => setShopName(e.target.value)}
+                  onChange={(e) => {
+                    setShopName(e.target.value);
+                    handleFieldChange();
+                  }}
                   className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs"
                 />
               </div>
@@ -399,7 +888,10 @@ export const SettingsView: React.FC = () => {
                 <input
                   type="text"
                   value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
+                  onChange={(e) => {
+                    setPhone(e.target.value);
+                    handleFieldChange();
+                  }}
                   className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs"
                 />
               </div>
@@ -413,7 +905,10 @@ export const SettingsView: React.FC = () => {
                 <textarea
                   rows={2}
                   value={address}
-                  onChange={(e) => setAddress(e.target.value)}
+                  onChange={(e) => {
+                    setAddress(e.target.value);
+                    handleFieldChange();
+                  }}
                   className="w-full px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs"
                 />
               </div>
@@ -425,26 +920,85 @@ export const SettingsView: React.FC = () => {
                 <input
                   type="text"
                   value={taxId}
-                  onChange={(e) => setTaxId(e.target.value)}
+                  onChange={(e) => {
+                    setTaxId(e.target.value);
+                    handleFieldChange();
+                  }}
                   className="w-full px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-mono"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  ข้อความหัวใบเสร็จรับเงิน (Receipt Header)
+                </label>
+                <textarea
+                  rows={2}
+                  value={receiptHeader}
+                  onChange={(e) => {
+                    setReceiptHeader(e.target.value);
+                    handleFieldChange();
+                  }}
+                  placeholder="เช่น ยินดีต้อนรับสู่ร้าน KinD อาหารไทยรสชาติต้นตำรับ"
+                  className="w-full px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  ข้อความท้ายใบเสร็จรับเงิน (Receipt Footer Message)
+                </label>
+                <textarea
+                  rows={2}
+                  value={receiptFooter}
+                  onChange={(e) => {
+                    setReceiptFooter(e.target.value);
+                    handleFieldChange();
+                  }}
+                  placeholder="เช่น ขอบคุณที่ใช้บริการ / Thank you"
+                  className="w-full px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs"
                 />
               </div>
             </div>
 
             <div>
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                ข้อความท้ายใบเสร็จรับเงิน (Receipt Footer Message)
+                ขนาดกระดาษใบเสร็จมาตรฐาน
               </label>
-              <textarea
-                rows={2}
-                value={receiptFooter}
-                onChange={(e) => setReceiptFooter(e.target.value)}
-                className="w-full px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs"
-              />
+              <div className="flex items-center gap-4 text-xs">
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="paperWidth"
+                    checked={receiptPaperWidth === '80mm'}
+                    onChange={() => {
+                      setReceiptPaperWidth('80mm');
+                      handleFieldChange();
+                    }}
+                    className="text-amber-500"
+                  />
+                  <span>80 มม. (มาตรฐานเครื่อง POS)</span>
+                </label>
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="paperWidth"
+                    checked={receiptPaperWidth === '58mm'}
+                    onChange={() => {
+                      setReceiptPaperWidth('58mm');
+                      handleFieldChange();
+                    }}
+                    className="text-amber-500"
+                  />
+                  <span>58 มม. (เครื่องพิมพ์พกพาขนาดเล็ก)</span>
+                </label>
+              </div>
             </div>
           </div>
 
-          {/* Tax & Service Charge Card */}
+          {/* Section: Tax & Service Charge Card */}
           <div className="p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
             <h3 className="font-bold text-sm text-slate-900 dark:text-white border-b border-slate-100 dark:border-slate-800 pb-3">
               ภาษีและค่าบริการ (VAT & Service Charge)
@@ -457,7 +1011,10 @@ export const SettingsView: React.FC = () => {
                   <input
                     type="checkbox"
                     checked={vatEnabled}
-                    onChange={(e) => setVatEnabled(e.target.checked)}
+                    onChange={(e) => {
+                      setVatEnabled(e.target.checked);
+                      handleFieldChange();
+                    }}
                     className="w-4 h-4 rounded text-amber-500"
                   />
                   <span className="font-bold text-xs text-slate-900 dark:text-white">
@@ -474,7 +1031,10 @@ export const SettingsView: React.FC = () => {
                         min={0}
                         max={100}
                         value={vatRate}
-                        onChange={(e) => setVatRate(Number(e.target.value))}
+                        onChange={(e) => {
+                          setVatRate(Number(e.target.value));
+                          handleFieldChange();
+                        }}
                         className="w-20 px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-mono text-center font-bold"
                       />
                     </div>
@@ -485,7 +1045,10 @@ export const SettingsView: React.FC = () => {
                           type="radio"
                           name="vatType"
                           checked={vatInclusive}
-                          onChange={() => setVatInclusive(true)}
+                          onChange={() => {
+                            setVatInclusive(true);
+                            handleFieldChange();
+                          }}
                           className="text-amber-500"
                         />
                         <span>ราคารวม VAT แล้ว (Inclusive)</span>
@@ -495,7 +1058,10 @@ export const SettingsView: React.FC = () => {
                           type="radio"
                           name="vatType"
                           checked={!vatInclusive}
-                          onChange={() => setVatInclusive(false)}
+                          onChange={() => {
+                            setVatInclusive(false);
+                            handleFieldChange();
+                          }}
                           className="text-amber-500"
                         />
                         <span>คิด VAT เพิ่มเติม (Exclusive)</span>
@@ -511,7 +1077,10 @@ export const SettingsView: React.FC = () => {
                   <input
                     type="checkbox"
                     checked={serviceChargeEnabled}
-                    onChange={(e) => setServiceChargeEnabled(e.target.checked)}
+                    onChange={(e) => {
+                      setServiceChargeEnabled(e.target.checked);
+                      handleFieldChange();
+                    }}
                     className="w-4 h-4 rounded text-amber-500"
                   />
                   <span className="font-bold text-xs text-slate-900 dark:text-white">
@@ -527,7 +1096,10 @@ export const SettingsView: React.FC = () => {
                       min={0}
                       max={100}
                       value={serviceChargeRate}
-                      onChange={(e) => setServiceChargeRate(Number(e.target.value))}
+                      onChange={(e) => {
+                        setServiceChargeRate(Number(e.target.value));
+                        handleFieldChange();
+                      }}
                       className="w-20 px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-mono text-center font-bold"
                     />
                   </div>
@@ -536,20 +1108,112 @@ export const SettingsView: React.FC = () => {
             </div>
           </div>
 
-          <div className="flex items-center justify-end gap-3">
-            {savedSuccess && (
-              <span className="text-xs text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1">
-                <Check className="w-4 h-4" />
-                <span>บันทึกการตั้งค่าเรียบร้อยแล้ว</span>
-              </span>
-            )}
-            <button
-              type="submit"
-              className="px-6 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs shadow-xs transition flex items-center gap-1.5 cursor-pointer"
-            >
-              <Save className="w-4 h-4" />
-              <span>บันทึกการตั้งค่า</span>
-            </button>
+          {/* Section: Points & Membership Settings */}
+          <div className="p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
+            <h3 className="font-bold text-sm text-slate-900 dark:text-white border-b border-slate-100 dark:border-slate-800 pb-3 flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-amber-500" />
+              <span>อัตราสะสมและใช้แต้มสมาชิก (Points & Loyalty)</span>
+            </h3>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  ยอดซื้อที่ได้รับ 1 แต้ม (บาท)
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={1}
+                    value={pointsEarnRate}
+                    onChange={(e) => {
+                      setPointsEarnRate(Number(e.target.value));
+                      handleFieldChange();
+                    }}
+                    className="w-32 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-mono font-bold"
+                  />
+                  <span className="text-xs text-slate-500">บาท = 1 แต้ม</span>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  มูลค่าส่วนลดต่อ 1 แต้ม (บาท)
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={0.1}
+                    step={0.1}
+                    value={pointsRedeemRate}
+                    onChange={(e) => {
+                      setPointsRedeemRate(Number(e.target.value));
+                      handleFieldChange();
+                    }}
+                    className="w-32 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-mono font-bold"
+                  />
+                  <span className="text-xs text-slate-500">1 แต้ม = บาทส่วนลด</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Section: QR Payment Summary */}
+          <div className="p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <QrCode className="w-4 h-4 text-amber-500" />
+                <h3 className="font-bold text-sm text-slate-900 dark:text-white">
+                  รูป QR ชำระเงิน ({qrImages.length} บัญชี)
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveTab('qr')}
+                className="text-xs text-amber-500 hover:text-amber-600 font-bold transition cursor-pointer"
+              >
+                จัดการบัญชี QR ทั้งหมด &rarr;
+              </button>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              {qrImages.map((qr) => (
+                <div
+                  key={qr.id}
+                  className="flex items-center gap-2.5 p-2 pr-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/60"
+                >
+                  <img
+                    src={qr.imageData}
+                    alt={qr.label}
+                    className="w-10 h-10 object-contain rounded-lg border border-slate-200 dark:border-slate-700 bg-white"
+                  />
+                  <div>
+                    <div className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                      <span>{qr.label}</span>
+                      {qr.isDefault && (
+                        <span className="px-1.5 py-0.5 rounded text-[9px] bg-amber-500/10 text-amber-600 dark:text-amber-400 font-extrabold">
+                          หลัก
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {qrImages.length === 0 && (
+                <span className="text-xs text-slate-400">ยังไม่มีรูป QR ชำระเงิน</span>
+              )}
+            </div>
+          </div>
+
+          {/* Bottom Save Button (Identical handler and status to sticky header) */}
+          <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-3">
+            <span className="text-xs text-slate-500">
+              ทุกครั้งที่กดบันทึก ข้อมูลร้านและรูปภาพจะถูกบันทึกในเครื่องทันที และส่งขึ้น Cloud
+            </span>
+            <SaveButton
+              status={cloudSyncStatus}
+              errorMessage={cloudErrorMessage}
+              onRetry={handleSaveShopSettings}
+            />
           </div>
         </form>
       )}
@@ -2029,6 +2693,103 @@ export const SettingsView: React.FC = () => {
                 <span>ยืนยันกู้คืนข้อมูลทั้งหมด</span>
               </button>
             </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Initial Sync Conflict / Cloud Empty Modal (Requirement B.7) */}
+      {initialSyncPrompt && (
+        <Modal
+          isOpen={true}
+          onClose={cancelInitialSync}
+          title={
+            initialSyncPrompt.type === 'cloud_empty'
+              ? 'ซิงค์ข้อมูลร้านค้ากับ Cloud'
+              : 'พบข้อมูลร้านค้าบน Cloud ที่แตกต่างกัน'
+          }
+          maxWidth="max-w-md"
+        >
+          <div className="space-y-4 p-1">
+            {initialSyncPrompt.type === 'cloud_empty' ? (
+              <>
+                <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-900 dark:text-amber-200 leading-relaxed">
+                  <p className="font-bold mb-1">ตรวจพบว่าบน Cloud ยังไม่มีข้อมูลร้านค้า</p>
+                  <p>
+                    ต้องการอัปโหลดข้อมูลร้านค้า การตั้งค่าภาษี/ใบเสร็จ และ QR ชำระเงิน จากเครื่องนี้ขึ้นไปบันทึกบน Cloud หรือไม่?
+                  </p>
+                </div>
+                <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                  <button
+                    type="button"
+                    onClick={cancelInitialSync}
+                    className="px-4 py-2 rounded-xl text-slate-500 hover:text-slate-700 text-xs font-semibold cursor-pointer"
+                  >
+                    ข้ามก่อน
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => resolveInitialSync('use_local')}
+                    className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs transition cursor-pointer flex items-center gap-1.5 shadow-xs"
+                  >
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>อัปโหลดขึ้น Cloud ทันที</span>
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="p-3.5 rounded-2xl bg-sky-500/10 border border-sky-500/20 text-xs text-sky-900 dark:text-sky-200 leading-relaxed">
+                  <p className="font-bold mb-1">ข้อมูลบน Cloud แตกต่างจากข้อมูลในเครื่องนี้</p>
+                  <p>
+                    กรุณาเลือกว่าต้องการนำข้อมูลจาก Cloud มาใช้งานในเครื่องนี้ หรือจะอัปโหลดข้อมูลจากเครื่องนี้ทับขึ้นไปบน Cloud:
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 text-xs">
+                  <div className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 space-y-1.5">
+                    <div className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                      <Cloud className="w-3.5 h-3.5 text-sky-500" />
+                      <span>ข้อมูลบน Cloud</span>
+                    </div>
+                    <div className="text-[11px] text-slate-500 space-y-0.5">
+                      <div>ชื่อร้าน: <span className="font-semibold text-slate-700 dark:text-slate-300">{initialSyncPrompt.cloudData?.settings.shopName || '-'}</span></div>
+                      <div>เบอร์โทร: <span className="font-semibold text-slate-700 dark:text-slate-300">{initialSyncPrompt.cloudData?.settings.phone || '-'}</span></div>
+                      <div>QR: <span className="font-semibold text-slate-700 dark:text-slate-300">{initialSyncPrompt.cloudData?.qrImages.length || 0} รายการ</span></div>
+                    </div>
+                  </div>
+
+                  <div className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 space-y-1.5">
+                    <div className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                      <Store className="w-3.5 h-3.5 text-amber-500" />
+                      <span>ข้อมูลในเครื่องนี้</span>
+                    </div>
+                    <div className="text-[11px] text-slate-500 space-y-0.5">
+                      <div>ชื่อร้าน: <span className="font-semibold text-slate-700 dark:text-slate-300">{settings.shopName || '-'}</span></div>
+                      <div>เบอร์โทร: <span className="font-semibold text-slate-700 dark:text-slate-300">{settings.phone || '-'}</span></div>
+                      <div>QR: <span className="font-semibold text-slate-700 dark:text-slate-300">{qrImages.length || 0} รายการ</span></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex flex-col sm:flex-row items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => resolveInitialSync('use_local')}
+                    className="w-full sm:w-auto px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold text-xs transition cursor-pointer"
+                  >
+                    ใช้ของเครื่องนี้ (อัปโหลดทับ Cloud)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => resolveInitialSync('use_cloud')}
+                    className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-xs"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>ใช้ข้อมูลของ Cloud</span>
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </Modal>
       )}

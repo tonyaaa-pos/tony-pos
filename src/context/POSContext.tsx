@@ -36,12 +36,55 @@ import {
 import { syncService, SyncMessage } from '../services/syncService';
 import { soundService } from '../utils/audio';
 import { canPay, CanPayResult } from '../utils/orderRules';
+import {
+  subscribeAuthState,
+  loginToCloud,
+  logoutFromCloud,
+  getCloudUser,
+  db,
+  isFirebaseConfigured,
+} from '../services/firebase';
+import {
+  saveShopBundle,
+  fetchRemoteShopBundle,
+  subscribeShop,
+  waitForPendingWrites,
+  saveMenuItemRemote,
+  deleteMenuItemRemote,
+  saveCategoryRemote,
+  deleteCategoryRemote,
+  saveTableRemote,
+  deleteTableRemote,
+  saveZoneRemote,
+  deleteZoneRemote,
+  saveOptionPresetRemote,
+  deleteOptionPresetRemote,
+  saveMemberRemote,
+  saveBillRemote,
+  atomicPayBillAndReleaseTable,
+  atomicVoidBillAndReleaseTable,
+  fetchArchivedBills,
+  saveShiftRemote,
+  saveNotificationRemote,
+  markNotificationReadRemote,
+  clearNotificationsRemote,
+  saveUserRemote,
+  deleteUserRemote,
+  subscribeCollection,
+  subscribeRecentBills,
+  subscribeActiveShift,
+  uploadFullLocalDataToCloud,
+  type ShopBundle,
+  type RemoteShopData,
+} from '../services/cloudStore';
+import { generateSalt, hashPinWithSalt, verifyPin } from '../utils/crypto';
+import type { User as FirebaseUser } from 'firebase/auth';
 
 interface POSContextType {
   // Auth
   currentUser: User | null;
   users: User[];
-  loginWithPin: (pin: string) => { success: boolean; message?: string };
+  loginWithPin: (pin: string) => Promise<{ success: boolean; message?: string }> | { success: boolean; message?: string };
   switchUser: (userId: string) => void;
   logout: () => void;
   addStaff: (user: Omit<User, 'id'>) => void;
@@ -121,6 +164,7 @@ interface POSContextType {
   voidBill: (billId: string, reason: string) => void;
   lastCompletedBill: Bill | null;
   setLastCompletedBill: (bill: Bill | null) => void;
+  loadArchivedBills: () => Promise<number>;
 
   // Shifts
   currentShift: Shift | null;
@@ -139,6 +183,26 @@ interface POSContextType {
   addQrImage: (label: string, imageData: string, isDefault?: boolean) => void;
   updateQrImage: (id: string, updates: Partial<PaymentQrImage>) => void;
   deleteQrImage: (id: string) => void;
+
+  // Cloud Sync (Phase 1: Shop Settings & Media)
+  cloudUser: FirebaseUser | null;
+  cloudSyncStatus: 'idle' | 'saving' | 'saved' | 'pending' | 'error';
+  cloudConnected: boolean;
+  cloudErrorMessage: string | null;
+  saveShopData: (overrideBundle?: { settings?: ShopSettings; qrImages?: PaymentQrImage[]; logo?: string }) => Promise<'saved' | 'pending' | 'error'>;
+  loginCloud: (email: string, pass: string) => Promise<void>;
+  logoutCloud: () => Promise<void>;
+  initialSyncPrompt: {
+    type: 'cloud_empty' | 'conflict';
+    cloudData: RemoteShopData | null;
+  } | null;
+  resolveInitialSync: (choice: 'use_cloud' | 'use_local') => Promise<void>;
+  cancelInitialSync: () => void;
+  hasExternalCloudUpdate: boolean;
+  applyExternalCloudUpdate: () => void;
+  dismissExternalCloudUpdate: () => void;
+  isFormEditingShop: boolean;
+  setIsFormEditingShop: (editing: boolean) => void;
 
   // Notifications
   notifications: AppNotification[];
@@ -335,25 +399,31 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
     setZones((prev) => [...prev, newZone]);
     soundService.playTap();
+    saveZoneRemote(newZone).catch((err) => console.warn('[Cloud saveZoneRemote error]:', err));
     return newZone;
   }, []);
 
   const updateZone = useCallback((id: string, name: string, nameEn?: string, color?: string) => {
     const cleanName = name.trim();
     if (!cleanName) return;
+    let updatedZone: TableZoneConfig | null = null;
     setZones((prev) =>
-      prev.map((z) =>
-        z.id === id
-          ? {
-              ...z,
-              name: cleanName,
-              nameEn: typeof nameEn === 'string' ? nameEn.trim() : z.nameEn,
-              color: color || z.color,
-            }
-          : z
-      )
+      prev.map((z) => {
+        if (z.id !== id) return z;
+        const updated = {
+          ...z,
+          name: cleanName,
+          nameEn: typeof nameEn === 'string' ? nameEn.trim() : z.nameEn,
+          color: color || z.color,
+        };
+        updatedZone = updated;
+        return updated;
+      })
     );
     soundService.playTap();
+    if (updatedZone) {
+      saveZoneRemote(updatedZone).catch((err) => console.warn('[Cloud saveZoneRemote error]:', err));
+    }
   }, []);
 
   const deleteZone = useCallback(
@@ -376,6 +446,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setSelectedZone((prev) => (prev === id ? 'all' : prev));
       setZones(remainingZones);
       soundService.playTap();
+      deleteZoneRemote(id).catch((err) => console.warn('[Cloud deleteZoneRemote error]:', err));
       return { success: true };
     },
     [zones]
@@ -584,7 +655,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch {}
   }, []);
 
-  // Multi-Tab Sync Listener
+  // Multi-Tab Sync Listener (Reload all STORAGE_KEYS)
   useEffect(() => {
     const unsubscribe = syncService.subscribe((msg: SyncMessage) => {
       if (msg.type === 'DATA_RELOAD' || msg.type === 'TABLE_UPDATED') {
@@ -593,6 +664,14 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setMenuItems(normalizeAndSeedMenuItems(loadState(STORAGE_KEYS.MENU, INITIAL_MENU_ITEMS)));
         setCategories(loadState(STORAGE_KEYS.CATEGORIES, INITIAL_CATEGORIES));
         setNotifications(loadState(STORAGE_KEYS.NOTIFICATIONS, []));
+        setSettings(loadState(STORAGE_KEYS.SETTINGS, INITIAL_SETTINGS));
+        setQrImages(loadState(STORAGE_KEYS.QR_IMAGES, INITIAL_QR_IMAGES));
+        setUsers(loadState(STORAGE_KEYS.USERS, INITIAL_USERS));
+        setCurrentUser(loadState(STORAGE_KEYS.CURRENT_USER, null));
+        setMembers(loadState(STORAGE_KEYS.MEMBERS, INITIAL_MEMBERS));
+        setCurrentShift(loadState(STORAGE_KEYS.SHIFT, null));
+        setOptionPresets(loadState(STORAGE_KEYS.OPTION_PRESETS, DEFAULT_OPTION_GROUP_PRESETS));
+        setZones(loadState(STORAGE_KEYS.ZONES, INITIAL_ZONES));
       }
     });
 
@@ -600,6 +679,526 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       unsubscribe();
     };
   }, []);
+
+  // Cloud Firestore & Auth State (Phase 1)
+  const [cloudUser, setCloudUser] = useState<FirebaseUser | null>(() => getCloudUser());
+  const [cloudSyncStatus, setCloudSyncStatus] = useState<'idle' | 'saving' | 'saved' | 'pending' | 'error'>('idle');
+  const [cloudErrorMessage, setCloudErrorMessage] = useState<string | null>(null);
+  const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== 'undefined' ? navigator.onLine : true);
+  const [hasExternalCloudUpdate, setHasExternalCloudUpdate] = useState<boolean>(false);
+  const [cachedRemoteShopData, setCachedRemoteShopData] = useState<RemoteShopData | null>(null);
+  const [isFormEditingShop, setIsFormEditingShop] = useState<boolean>(false);
+  const [initialSyncPrompt, setInitialSyncPrompt] = useState<{
+    type: 'cloud_empty' | 'conflict';
+    cloudData: RemoteShopData | null;
+  } | null>(null);
+
+  // Online / Offline tracking & Auto-Resync when back online
+  const PENDING_OFFLINE_SYNC_KEY = 'kind_pos_pending_offline_sync_v1';
+
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => {
+      setIsOnline(false);
+      if (cloudUser) {
+        setCloudSyncStatus('pending');
+      }
+    };
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [cloudUser]);
+
+  // Mark pending offline sync whenever data changes while offline
+  useEffect(() => {
+    if (!isOnline && cloudUser) {
+      try {
+        localStorage.setItem(PENDING_OFFLINE_SYNC_KEY, 'true');
+        setCloudSyncStatus('pending');
+      } catch {}
+    }
+  }, [
+    isOnline,
+    cloudUser,
+    bills,
+    tables,
+    menuItems,
+    categories,
+    zones,
+    optionPresets,
+    members,
+    currentShift,
+    settings,
+    qrImages,
+    users,
+  ]);
+
+  // Auto-sync queued offline changes to Cloud Firestore when internet is restored
+  useEffect(() => {
+    if (!isOnline || !cloudUser || !isFirebaseConfigured() || !db) return;
+
+    const hasPending = localStorage.getItem(PENDING_OFFLINE_SYNC_KEY) === 'true';
+    if (!hasPending) return;
+
+    let cancelled = false;
+    setCloudSyncStatus('saving');
+    setCloudErrorMessage(null);
+
+    uploadFullLocalDataToCloud({
+      menuItems,
+      categories,
+      tables,
+      zones,
+      optionPresets,
+      members,
+      bills,
+      users,
+      shift: currentShift,
+      notifications,
+      settings,
+      qrImages,
+    })
+      .then(() => {
+        if (cancelled) return;
+        localStorage.removeItem(PENDING_OFFLINE_SYNC_KEY);
+        setCloudSyncStatus('saved');
+        setTimeout(() => {
+          if (!cancelled) setCloudSyncStatus('idle');
+        }, 3000);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        console.warn('[Auto-Resync Offline Data Error]:', err);
+        setCloudSyncStatus('pending');
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    isOnline,
+    cloudUser,
+    menuItems,
+    categories,
+    tables,
+    zones,
+    optionPresets,
+    members,
+    bills,
+    users,
+    currentShift,
+    notifications,
+    settings,
+    qrImages,
+  ]);
+
+  // Firebase Auth state listener
+  useEffect(() => {
+    const unsub = subscribeAuthState((user) => {
+      setCloudUser(user);
+    });
+    return () => unsub();
+  }, []);
+
+  // Cloud real-time subscription (subscribeShop)
+  useEffect(() => {
+    if (!cloudUser || !isFirebaseConfigured()) return;
+
+    const unsub = subscribeShop((remote: RemoteShopData) => {
+      setCachedRemoteShopData(remote);
+      // Conflict protection: if user is currently editing the shop settings form, don't overwrite inputs
+      if (isFormEditingShop) {
+        setHasExternalCloudUpdate(true);
+      } else {
+        // Direct safe update to state and localStorage (never loop back to Firestore)
+        setSettings(remote.settings);
+        setQrImages(remote.qrImages);
+        localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(remote.settings));
+        localStorage.setItem(STORAGE_KEYS.QR_IMAGES, JSON.stringify(remote.qrImages));
+        syncService.broadcast('DATA_RELOAD');
+      }
+    });
+
+    return () => {
+      unsub();
+    };
+  }, [cloudUser, isFormEditingShop]);
+
+  // Phase 2: Cloud real-time subscriptions for remaining data
+  useEffect(() => {
+    if (!cloudUser || !isFirebaseConfigured()) return;
+
+    const unsubs: (() => void)[] = [];
+
+    // 1. Menu items
+    unsubs.push(
+      subscribeCollection<MenuItem>('menuItems', (remoteItems) => {
+        if (!remoteItems || remoteItems.length === 0) return;
+        setMenuItems((prev) => {
+          const map = new Map(prev.map((m) => [m.id, m]));
+          remoteItems.forEach((rm) => map.set(rm.id, rm));
+          const merged = Array.from(map.values());
+          localStorage.setItem(STORAGE_KEYS.MENU, JSON.stringify(merged));
+          return merged;
+        });
+        syncService.broadcast('DATA_RELOAD');
+      })
+    );
+
+    // 2. Categories
+    unsubs.push(
+      subscribeCollection<MenuCategory>('categories', (remoteCats) => {
+        if (!remoteCats || remoteCats.length === 0) return;
+        setCategories((prev) => {
+          const map = new Map(prev.map((c) => [c.id, c]));
+          remoteCats.forEach((rc) => map.set(rc.id, rc));
+          const merged = Array.from(map.values());
+          localStorage.setItem(STORAGE_KEYS.CATEGORIES, JSON.stringify(merged));
+          return merged;
+        });
+        syncService.broadcast('DATA_RELOAD');
+      })
+    );
+
+    // 3. Tables
+    unsubs.push(
+      subscribeCollection<Table>('tables', (remoteTables) => {
+        if (!remoteTables || remoteTables.length === 0) return;
+        setTables((prev) => {
+          const map = new Map(prev.map((t) => [t.id, t]));
+          remoteTables.forEach((rt) => map.set(rt.id, rt));
+          const merged = autoPositionTables(Array.from(map.values()));
+          localStorage.setItem(STORAGE_KEYS.TABLES, JSON.stringify(merged));
+          return merged;
+        });
+        syncService.broadcast('TABLE_UPDATED');
+      })
+    );
+
+    // 4. Zones
+    unsubs.push(
+      subscribeCollection<TableZoneConfig>('zones', (remoteZones) => {
+        if (!remoteZones || remoteZones.length === 0) return;
+        setZones((prev) => {
+          const map = new Map(prev.map((z) => [z.id, z]));
+          remoteZones.forEach((rz) => map.set(rz.id, rz));
+          const merged = Array.from(map.values());
+          localStorage.setItem(STORAGE_KEYS.ZONES, JSON.stringify(merged));
+          return merged;
+        });
+        syncService.broadcast('DATA_RELOAD');
+      })
+    );
+
+    // 5. Option Presets
+    unsubs.push(
+      subscribeCollection<OptionGroup>('optionPresets', (remotePresets) => {
+        if (!remotePresets || remotePresets.length === 0) return;
+        setOptionPresets((prev) => {
+          const map = new Map(prev.map((p) => [p.id, p]));
+          remotePresets.forEach((rp) => map.set(rp.id, rp));
+          const merged = Array.from(map.values());
+          localStorage.setItem(STORAGE_KEYS.OPTION_PRESETS, JSON.stringify(merged));
+          return merged;
+        });
+        syncService.broadcast('DATA_RELOAD');
+      })
+    );
+
+    // 6. Members
+    unsubs.push(
+      subscribeCollection<Member>('members', (remoteMembers) => {
+        if (!remoteMembers || remoteMembers.length === 0) return;
+        setMembers((prev) => {
+          const map = new Map(prev.map((m) => [m.id, m]));
+          remoteMembers.forEach((rm) => map.set(rm.id, rm));
+          const merged = Array.from(map.values());
+          localStorage.setItem(STORAGE_KEYS.MEMBERS, JSON.stringify(merged));
+          return merged;
+        });
+        syncService.broadcast('DATA_RELOAD');
+      })
+    );
+
+    // 7. Recent Bills (open bills & bills within last 30 days)
+    unsubs.push(
+      subscribeRecentBills((remoteRecentBills) => {
+        if (!remoteRecentBills || remoteRecentBills.length === 0) return;
+        setBills((prev) => {
+          const map = new Map(prev.map((b) => [b.id, b]));
+          remoteRecentBills.forEach((rb) => map.set(rb.id, rb));
+          const merged = Array.from(map.values());
+          localStorage.setItem(STORAGE_KEYS.BILLS, JSON.stringify(merged));
+          return merged;
+        });
+        syncService.broadcast('DATA_RELOAD');
+      })
+    );
+
+    // 8. Active Shift
+    unsubs.push(
+      subscribeActiveShift((remoteShift) => {
+        setCurrentShift(remoteShift);
+        if (remoteShift) {
+          localStorage.setItem(STORAGE_KEYS.SHIFT, JSON.stringify(remoteShift));
+        } else {
+          localStorage.removeItem(STORAGE_KEYS.SHIFT);
+        }
+        syncService.broadcast('DATA_RELOAD');
+      })
+    );
+
+    // 9. Users
+    unsubs.push(
+      subscribeCollection<User>('users', (remoteUsers) => {
+        if (!remoteUsers || remoteUsers.length === 0) return;
+        setUsers((prev) => {
+          const map = new Map(prev.map((u) => [u.id, u]));
+          remoteUsers.forEach((ru) => {
+            const localUser = map.get(ru.id);
+            map.set(ru.id, {
+              ...ru,
+              pin: localUser?.pin || ru.pin || '',
+            });
+          });
+          const merged = Array.from(map.values());
+          localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(merged));
+          return merged;
+        });
+        syncService.broadcast('DATA_RELOAD');
+      })
+    );
+
+    return () => {
+      unsubs.forEach((unsub) => unsub());
+    };
+  }, [cloudUser]);
+
+  // Automatic PIN migration for existing legacy plain-text users
+  useEffect(() => {
+    let hasUnmigrated = false;
+    for (const u of users) {
+      if (!u.pinHash || !u.salt) {
+        hasUnmigrated = true;
+        break;
+      }
+    }
+    if (hasUnmigrated) {
+      (async () => {
+        const updatedUsers = await Promise.all(
+          users.map(async (u) => {
+            if (u.pinHash && u.salt) return u;
+            const salt = generateSalt();
+            const pinHash = await hashPinWithSalt(u.pin || '1234', salt);
+            return {
+              ...u,
+              salt,
+              pinHash,
+            };
+          })
+        );
+        setUsers(updatedUsers);
+        localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updatedUsers));
+      })();
+    }
+  }, [users]);
+
+  const applyExternalCloudUpdate = useCallback(() => {
+    if (cachedRemoteShopData) {
+      setSettings(cachedRemoteShopData.settings);
+      setQrImages(cachedRemoteShopData.qrImages);
+      localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(cachedRemoteShopData.settings));
+      localStorage.setItem(STORAGE_KEYS.QR_IMAGES, JSON.stringify(cachedRemoteShopData.qrImages));
+      syncService.broadcast('DATA_RELOAD');
+    }
+    setHasExternalCloudUpdate(false);
+  }, [cachedRemoteShopData]);
+
+  const dismissExternalCloudUpdate = useCallback(() => {
+    setHasExternalCloudUpdate(false);
+  }, []);
+
+  // Save Shop Data (Requirement C.1)
+  const saveShopData = useCallback(
+    async (overrideBundle?: { settings?: ShopSettings; qrImages?: PaymentQrImage[]; logo?: string }): Promise<'saved' | 'pending' | 'error'> => {
+      const targetSettings = overrideBundle?.settings || settings;
+      const targetQrImages = overrideBundle?.qrImages || qrImages;
+      const targetLogo = overrideBundle?.logo !== undefined ? overrideBundle.logo : (targetSettings.logoUrl || '');
+
+      // (ก) เขียน settings, qrImages, โลโก้ ลง localStorage ทันที
+      try {
+        localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(targetSettings));
+        localStorage.setItem(STORAGE_KEYS.QR_IMAGES, JSON.stringify(targetQrImages));
+        setSettings(targetSettings);
+        setQrImages(targetQrImages);
+      } catch (err) {
+        console.warn('[saveShopData] Failed to write localStorage:', err);
+      }
+
+      // (ข) เรียก syncService.broadcast('DATA_RELOAD') ทันที
+      syncService.broadcast('DATA_RELOAD');
+
+      // Local-first check: if Firebase is not configured or not logged in
+      if (!isFirebaseConfigured() || !cloudUser || !db) {
+        setCloudSyncStatus('saved');
+        setTimeout(() => setCloudSyncStatus('idle'), 3000);
+        return 'saved';
+      }
+
+      // (ค) เรียก saveShopBundle แล้วรอผลสูงสุด 8 วินาที
+      setCloudSyncStatus('saving');
+      setCloudErrorMessage(null);
+
+      try {
+        const bundle: ShopBundle = {
+          settings: targetSettings,
+          qrImages: targetQrImages,
+          logo: targetLogo,
+        };
+
+        const timeoutPromise = new Promise<'timeout'>((resolve) =>
+          setTimeout(() => resolve('timeout'), 8000)
+        );
+
+        const savePromise = saveShopBundle(bundle, (warnMsg) => {
+          setCloudErrorMessage(warnMsg);
+        }).then(() => 'done' as const);
+
+        const raceResult = await Promise.race([savePromise, timeoutPromise]);
+
+        if (raceResult === 'done') {
+          setCloudSyncStatus('saved');
+          setTimeout(() => setCloudSyncStatus('idle'), 3000);
+          return 'saved';
+        } else {
+          // Exceeded 8s or offline -> pending in persistent local cache
+          setCloudSyncStatus('pending');
+
+          // Follow up with waitForPendingWrites
+          waitForPendingWrites(db)
+            .then(() => {
+              setCloudSyncStatus('saved');
+              setTimeout(() => setCloudSyncStatus('idle'), 3000);
+            })
+            .catch((pwErr) => {
+              console.warn('[waitForPendingWrites error]:', pwErr);
+            });
+
+          return 'pending';
+        }
+      } catch (err: any) {
+        console.error('[saveShopData error]:', err);
+        const errMsg = err?.message || 'เกิดข้อผิดพลาดในการบันทึกข้อมูลขึ้น Cloud';
+        setCloudErrorMessage(errMsg);
+        setCloudSyncStatus('error');
+        return 'error';
+      }
+    },
+    [settings, qrImages, cloudUser]
+  );
+
+  // Login Cloud with initial sync comparison
+  const loginCloud = useCallback(
+    async (email: string, pass: string) => {
+      const user = await loginToCloud(email, pass);
+      setCloudUser(user);
+
+      try {
+        const remote = await fetchRemoteShopBundle();
+        if (!remote) {
+          // Cloud is empty, ask user if they want to upload local data
+          setInitialSyncPrompt({
+            type: 'cloud_empty',
+            cloudData: null,
+          });
+        } else {
+          // Check if remote data differs from local
+          const isDifferent =
+            remote.settings.shopName !== settings.shopName ||
+            remote.settings.taxId !== settings.taxId ||
+            remote.settings.phone !== settings.phone ||
+            remote.qrImages.length !== qrImages.length;
+          if (isDifferent) {
+            setInitialSyncPrompt({
+              type: 'conflict',
+              cloudData: remote,
+            });
+          } else {
+            // Already in sync
+            setSettings(remote.settings);
+            setQrImages(remote.qrImages);
+            localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(remote.settings));
+            localStorage.setItem(STORAGE_KEYS.QR_IMAGES, JSON.stringify(remote.qrImages));
+          }
+        }
+      } catch (syncErr) {
+        console.warn('[Initial Sync Check Error]:', syncErr);
+      }
+    },
+    [settings, qrImages]
+  );
+
+  const logoutCloud = useCallback(async () => {
+    await logoutFromCloud();
+    setCloudUser(null);
+    setInitialSyncPrompt(null);
+    setHasExternalCloudUpdate(false);
+    setCloudSyncStatus('idle');
+  }, []);
+
+  const resolveInitialSync = useCallback(
+    async (choice: 'use_cloud' | 'use_local') => {
+      if (choice === 'use_cloud' && initialSyncPrompt?.cloudData) {
+        const remote = initialSyncPrompt.cloudData;
+        setSettings(remote.settings);
+        setQrImages(remote.qrImages);
+        localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(remote.settings));
+        localStorage.setItem(STORAGE_KEYS.QR_IMAGES, JSON.stringify(remote.qrImages));
+        syncService.broadcast('DATA_RELOAD');
+      } else if (choice === 'use_local') {
+        if (db) {
+          await uploadFullLocalDataToCloud({
+            menuItems,
+            categories,
+            tables,
+            zones,
+            optionPresets,
+            members,
+            bills,
+            users,
+            shift: currentShift,
+            notifications,
+            settings,
+            qrImages,
+          });
+        }
+      }
+      setInitialSyncPrompt(null);
+    },
+    [
+      initialSyncPrompt,
+      settings,
+      qrImages,
+      menuItems,
+      categories,
+      tables,
+      zones,
+      optionPresets,
+      members,
+      bills,
+      users,
+      currentShift,
+      notifications,
+    ]
+  );
+
+  const cancelInitialSync = useCallback(() => {
+    setInitialSyncPrompt(null);
+  }, []);
+
 
   // Helper to recalculate totals
   const recalculateBill = useCallback((bill: Bill, currentSettings: ShopSettings): Bill => {
@@ -655,17 +1254,34 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   }, []);
 
-  // Auth Handlers
-  const loginWithPin = useCallback((pin: string) => {
-    const matched = users.find((u) => u.pin === pin);
-    if (matched) {
-      setCurrentUser(matched);
-      setActiveCategory(null);
-      setActiveNav('tables'); // Always open Tables on login!
-      return { success: true };
-    }
-    return { success: false, message: 'รหัส PIN ไม่ถูกต้อง' };
-  }, [users]);
+  // Auth Handlers (Never send plain-text PIN to Cloud, verify with salt & SHA-256)
+  const loginWithPin = useCallback(
+    async (pin: string): Promise<{ success: boolean; message?: string }> => {
+      for (const u of users) {
+        const isMatch = await verifyPin(pin, u);
+        if (isMatch) {
+          let userToSet = u;
+          if (!u.pinHash || !u.salt) {
+            const salt = generateSalt();
+            const pinHash = await hashPinWithSalt(pin, salt);
+            userToSet = { ...u, salt, pinHash };
+            setUsers((prev) => prev.map((item) => (item.id === u.id ? userToSet : item)));
+            localStorage.setItem(
+              STORAGE_KEYS.USERS,
+              JSON.stringify(users.map((item) => (item.id === u.id ? userToSet : item)))
+            );
+            saveUserRemote(userToSet).catch((err) => console.warn('[Cloud saveUserRemote error]:', err));
+          }
+          setCurrentUser(userToSet);
+          setActiveCategory(null);
+          setActiveNav('tables'); // Always open Tables on login!
+          return { success: true };
+        }
+      }
+      return { success: false, message: 'รหัส PIN ไม่ถูกต้อง' };
+    },
+    [users]
+  );
 
   const switchUser = useCallback((userId: string) => {
     const target = users.find((u) => u.id === userId);
@@ -680,20 +1296,52 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setCurrentUser(null);
   }, []);
 
-  const addStaff = useCallback((userData: Omit<User, 'id'>) => {
+  const addStaff = useCallback(async (userData: Omit<User, 'id'>) => {
+    const salt = userData.salt || generateSalt();
+    const pinHash = userData.pinHash || (await hashPinWithSalt(userData.pin || '1234', salt));
+
     const newUser: User = {
       ...userData,
       id: 'usr_' + Date.now(),
+      salt,
+      pinHash,
     };
     setUsers((prev) => [...prev, newUser]);
+    saveUserRemote(newUser).catch((err) => console.warn('[Cloud sync addStaff]', err));
   }, []);
 
-  const updateStaff = useCallback((id: string, updates: Partial<User>) => {
-    setUsers((prev) => prev.map((u) => (u.id === id ? { ...u, ...updates } : u)));
+  const updateStaff = useCallback(async (id: string, updates: Partial<User>) => {
+    let updatedUserObj: User | null = null;
+    let finalSalt = updates.salt;
+    let finalPinHash = updates.pinHash;
+
+    if (updates.pin && (!finalPinHash || !finalSalt)) {
+      finalSalt = generateSalt();
+      finalPinHash = await hashPinWithSalt(updates.pin, finalSalt);
+    }
+
+    setUsers((prev) =>
+      prev.map((u) => {
+        if (u.id !== id) return u;
+        const updated: User = {
+          ...u,
+          ...updates,
+          ...(finalSalt ? { salt: finalSalt } : {}),
+          ...(finalPinHash ? { pinHash: finalPinHash } : {}),
+        };
+        updatedUserObj = updated;
+        return updated;
+      })
+    );
+
+    if (updatedUserObj) {
+      saveUserRemote(updatedUserObj).catch((err) => console.warn('[Cloud sync updateStaff]', err));
+    }
   }, []);
 
   const deleteStaff = useCallback((id: string) => {
     setUsers((prev) => prev.filter((u) => u.id !== id));
+    deleteUserRemote(id).catch((err) => console.warn('[Cloud sync deleteStaff]', err));
   }, []);
 
   // Active Bill
@@ -714,15 +1362,19 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       tableNumber,
     };
     setNotifications((prev) => [newNotif, ...prev.slice(0, 49)]);
+    saveNotificationRemote(newNotif).catch((err) => console.warn('[Cloud saveNotificationRemote error]:', err));
   }, []);
 
   const markNotificationAsRead = useCallback((id: string) => {
     setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
+    markNotificationReadRemote(id).catch((err) => console.warn('[Cloud markNotificationReadRemote error]:', err));
   }, []);
 
   const clearAllNotifications = useCallback(() => {
+    const ids = notifications.map((n) => n.id);
     setNotifications([]);
-  }, []);
+    clearNotificationsRemote(ids).catch((err) => console.warn('[Cloud clearNotificationsRemote error]:', err));
+  }, [notifications]);
 
   const callWaiterAlert = useCallback((tableNumber: string) => {
     addNotification('call_waiter', 'ลูกค้าเรียกพนักงาน!', `โต๊ะ ${tableNumber} กดเรียกบริการ`, tableNumber);
@@ -781,6 +1433,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       setBills((prev) => [...prev, newBill]);
       setActiveBillId(newBill.id);
+      saveBillRemote(newBill).catch((err) => console.warn('[Cloud saveBillRemote error]:', err));
 
       if (tableId) {
         setTables((prev) =>
@@ -791,6 +1444,15 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           )
         );
         syncService.broadcast('TABLE_UPDATED');
+        if (assignedTable) {
+          saveTableRemote({
+            ...assignedTable,
+            status: 'occupied',
+            currentBillId: newBill.id,
+            seatedAt: now.toISOString(),
+            guestCount,
+          }).catch((err) => console.warn('[Cloud saveTableRemote error]:', err));
+        }
       }
 
       return newBill;
@@ -905,6 +1567,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // "Confirm order" saves new unsent items to bill without kitchen status flow
   const confirmOrder = useCallback((billId: string) => {
     let affectedTableId: string | undefined;
+    let updatedBillObj: Bill | null = null;
 
     setBills((prev) =>
       prev.map((b) => {
@@ -920,7 +1583,9 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
           return item;
         });
-        return { ...b, items: updatedItems };
+        const up = { ...b, items: updatedItems };
+        updatedBillObj = up;
+        return up;
       })
     );
 
@@ -940,12 +1605,17 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     soundService.playSuccessTap();
     syncService.broadcast('DATA_RELOAD');
+
+    if (updatedBillObj) {
+      saveBillRemote(updatedBillObj).catch((err) => console.warn('[Cloud saveBillRemote error]:', err));
+    }
   }, []);
 
   const sendOrderToKitchen = confirmOrder; // alias for backwards compatibility
 
   const voidOrderItem = useCallback(
     (billId: string, itemId: string, reason: string) => {
+      let updatedBillObj: Bill | null = null;
       setBills((prev) =>
         prev.map((b) => {
           if (b.id !== billId) return b;
@@ -963,23 +1633,29 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           // Recalculate bill excluding voided items
           const activeItems = updatedItems.filter((i) => i.status !== 'voided');
           const recalculated = recalculateBill({ ...b, items: activeItems }, settings);
-          return {
+          const finalBill = {
             ...recalculated,
             items: updatedItems,
           };
+          updatedBillObj = finalBill;
+          return finalBill;
         })
       );
       syncService.broadcast('DATA_RELOAD');
+      if (updatedBillObj) {
+        saveBillRemote(updatedBillObj).catch((err) => console.warn('[Cloud saveBillRemote error]:', err));
+      }
     },
     [currentUser?.name, recalculateBill, settings]
   );
 
   const applyBillDiscount = useCallback(
     (billId: string, type: 'percentage' | 'fixed', value: number) => {
+      let updatedBillObj: Bill | null = null;
       setBills((prev) =>
         prev.map((bill) => {
           if (bill.id !== billId) return bill;
-          return recalculateBill(
+          const recalculated = recalculateBill(
             {
               ...bill,
               discountType: type,
@@ -987,8 +1663,13 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             },
             settings
           );
+          updatedBillObj = recalculated;
+          return recalculated;
         })
       );
+      if (updatedBillObj) {
+        saveBillRemote(updatedBillObj).catch((err) => console.warn('[Cloud saveBillRemote error]:', err));
+      }
     },
     [recalculateBill, settings]
   );
@@ -1106,9 +1787,42 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       syncService.broadcast('TABLE_UPDATED');
       syncService.broadcast('DATA_RELOAD');
 
+      // Cloud Atomic writeBatch sync
+      if (db && cloudUser) {
+        const otherOpenBills = targetBill.tableId
+          ? bills.filter((b) => b.tableId === targetBill.tableId && b.id !== billId && b.status === 'open')
+          : [];
+        const isTableReleased = otherOpenBills.length === 0;
+        const nextTableBillId = otherOpenBills[0]?.id;
+
+        const targetMember = targetBill.membershipPhone
+          ? members.find((m) => m.phone === targetBill.membershipPhone)
+          : undefined;
+        const memberUpdate = targetMember
+          ? {
+              id: targetMember.id,
+              points: Math.max(
+                0,
+                targetMember.points -
+                  (targetBill.membershipDiscountPoints || 0) +
+                  Math.floor(targetBill.grandTotal / settings.pointsEarnRate)
+              ),
+              totalSpent: targetMember.totalSpent + targetBill.grandTotal,
+            }
+          : undefined;
+
+        atomicPayBillAndReleaseTable({
+          bill: updatedBill,
+          tableId: targetBill.tableId,
+          isTableReleased,
+          nextTableBillId,
+          memberUpdate,
+        }).catch((err) => console.warn('[Cloud sync atomicPayBill error]:', err));
+      }
+
       return { success: true, bill: updatedBill };
     },
-    [activeBillId, bills, settings.pointsEarnRate]
+    [activeBillId, bills, members, settings.pointsEarnRate, cloudUser]
   );
 
   const voidBill = useCallback(
@@ -1147,8 +1861,17 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       syncService.broadcast('TABLE_UPDATED');
       syncService.broadcast('DATA_RELOAD');
+
+      // Cloud Atomic writeBatch sync
+      if (db && cloudUser) {
+        atomicVoidBillAndReleaseTable({
+          bill: updatedBill,
+          tableId: targetBill.tableId,
+          isTableReleased: true,
+        }).catch((err) => console.warn('[Cloud sync atomicVoidBill error]:', err));
+      }
     },
-    [activeBillId, bills, currentUser?.name]
+    [activeBillId, bills, currentUser?.name, cloudUser]
   );
 
   const splitBill = useCallback(
@@ -1383,31 +2106,50 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
     setTables((prev) => [...prev, newTable]);
     syncService.broadcast('TABLE_UPDATED');
+    saveTableRemote(newTable).catch((err) => console.warn('[Cloud saveTableRemote error]:', err));
   }, []);
 
   const updateTable = useCallback((id: string, updates: Partial<Table>) => {
-    setTables((prev) => prev.map((t) => (t.id === id ? { ...t, ...updates } : t)));
+    let updatedTable: Table | null = null;
+    setTables((prev) =>
+      prev.map((t) => {
+        if (t.id !== id) return t;
+        const up = { ...t, ...updates };
+        updatedTable = up;
+        return up;
+      })
+    );
     syncService.broadcast('TABLE_UPDATED');
+    if (updatedTable) {
+      saveTableRemote(updatedTable).catch((err) => console.warn('[Cloud saveTableRemote error]:', err));
+    }
   }, []);
 
   const deleteTable = useCallback((id: string) => {
     setTables((prev) => prev.filter((t) => t.id !== id));
     syncService.broadcast('TABLE_UPDATED');
+    deleteTableRemote(id).catch((err) => console.warn('[Cloud deleteTableRemote error]:', err));
   }, []);
 
   const updateTablePosition = useCallback((id: string, x: number, y: number, rotation?: number) => {
+    let updatedTable: Table | null = null;
     setTables((prev) =>
       prev.map((t) => {
         if (t.id !== id) return t;
-        return {
+        const up = {
           ...t,
           x: Math.round(x),
           y: Math.round(y),
           ...(typeof rotation === 'number' ? { rotation } : {}),
         };
+        updatedTable = up;
+        return up;
       })
     );
     syncService.broadcast('TABLE_UPDATED');
+    if (updatedTable) {
+      saveTableRemote(updatedTable).catch((err) => console.warn('[Cloud saveTableRemote error]:', err));
+    }
   }, []);
 
   // Menu & Categories
@@ -1418,23 +2160,45 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
     setMenuItems((prev) => [...prev, newItem]);
     syncService.broadcast('DATA_RELOAD');
+    saveMenuItemRemote(newItem).catch((err) => console.warn('[Cloud saveMenuItemRemote error]:', err));
   }, []);
 
   const updateMenuItem = useCallback((id: string, updates: Partial<MenuItem>) => {
-    setMenuItems((prev) => prev.map((m) => (m.id === id ? { ...m, ...updates } : m)));
+    let updatedItem: MenuItem | null = null;
+    setMenuItems((prev) =>
+      prev.map((m) => {
+        if (m.id !== id) return m;
+        const up = { ...m, ...updates };
+        updatedItem = up;
+        return up;
+      })
+    );
     syncService.broadcast('DATA_RELOAD');
+    if (updatedItem) {
+      saveMenuItemRemote(updatedItem).catch((err) => console.warn('[Cloud saveMenuItemRemote error]:', err));
+    }
   }, []);
 
   const deleteMenuItem = useCallback((id: string) => {
     setMenuItems((prev) => prev.filter((m) => m.id !== id));
     syncService.broadcast('DATA_RELOAD');
+    deleteMenuItemRemote(id).catch((err) => console.warn('[Cloud deleteMenuItemRemote error]:', err));
   }, []);
 
   const toggleSoldOut = useCallback((id: string) => {
+    let updatedItem: MenuItem | null = null;
     setMenuItems((prev) =>
-      prev.map((m) => (m.id === id ? { ...m, isSoldOut: !m.isSoldOut } : m))
+      prev.map((m) => {
+        if (m.id !== id) return m;
+        const up = { ...m, isSoldOut: !m.isSoldOut };
+        updatedItem = up;
+        return up;
+      })
     );
     syncService.broadcast('DATA_RELOAD');
+    if (updatedItem) {
+      saveMenuItemRemote(updatedItem).catch((err) => console.warn('[Cloud saveMenuItemRemote error]:', err));
+    }
   }, []);
 
   const addCategory = useCallback((name: string, icon?: string, color?: string, nameEn?: string) => {
@@ -1448,23 +2212,29 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
     setCategories((prev) => [...prev, newCat]);
     syncService.broadcast('DATA_RELOAD');
+    saveCategoryRemote(newCat).catch((err) => console.warn('[Cloud saveCategoryRemote error]:', err));
   }, [categories.length]);
 
   const updateCategory = useCallback((id: string, name: string, icon?: string, color?: string, nameEn?: string) => {
+    let updatedCat: MenuCategory | null = null;
     setCategories((prev) =>
-      prev.map((c) =>
-        c.id === id
-          ? {
-              ...c,
-              name: name.trim(),
-              ...(nameEn !== undefined ? { nameEn: nameEn.trim() } : {}),
-              ...(icon ? { icon } : {}),
-              ...(color ? { color } : {}),
-            }
-          : c
-      )
+      prev.map((c) => {
+        if (c.id !== id) return c;
+        const up = {
+          ...c,
+          name: name.trim(),
+          ...(nameEn !== undefined ? { nameEn: nameEn.trim() } : {}),
+          ...(icon ? { icon } : {}),
+          ...(color ? { color } : {}),
+        };
+        updatedCat = up;
+        return up;
+      })
     );
     syncService.broadcast('DATA_RELOAD');
+    if (updatedCat) {
+      saveCategoryRemote(updatedCat).catch((err) => console.warn('[Cloud saveCategoryRemote error]:', err));
+    }
   }, []);
 
   // When a category with items is deleted, move items to "Uncategorized" category
@@ -1476,16 +2246,23 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setCategories((prev) => {
         const exists = prev.some((c) => c.id === targetUncategorizedId);
         if (!exists) {
+          const uncategorizedCat: MenuCategory = { id: targetUncategorizedId, name: 'ไม่ระบุหมวดหมู่', icon: '📦', color: '#94a3b8', sortOrder: 999 };
+          saveCategoryRemote(uncategorizedCat).catch((err) => console.warn('[Cloud saveCategoryRemote error]:', err));
           return [
             ...prev.filter((c) => c.id !== id),
-            { id: targetUncategorizedId, name: 'ไม่ระบุหมวดหมู่', icon: '📦', color: '#94a3b8', sortOrder: 999 },
+            uncategorizedCat,
           ];
         }
         return prev.filter((c) => c.id !== id);
       });
 
       setMenuItems((prev) =>
-        prev.map((m) => (m.categoryId === id ? { ...m, categoryId: targetUncategorizedId } : m))
+        prev.map((m) => {
+          if (m.categoryId !== id) return m;
+          const up = { ...m, categoryId: targetUncategorizedId };
+          saveMenuItemRemote(up).catch((err) => console.warn('[Cloud saveMenuItemRemote error]:', err));
+          return up;
+        })
       );
     } else {
       setCategories((prev) => prev.filter((c) => c.id !== id));
@@ -1495,6 +2272,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setActiveCategory(null);
     }
     syncService.broadcast('DATA_RELOAD');
+    deleteCategoryRemote(id).catch((err) => console.warn('[Cloud deleteCategoryRemote error]:', err));
   }, [activeCategory, menuItems]);
 
   const reorderCategories = useCallback((startIndex: number, endIndex: number) => {
@@ -1524,18 +2302,29 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
     setOptionPresets((prev) => [...prev, newPreset]);
     syncService.broadcast('DATA_RELOAD');
+    saveOptionPresetRemote(newPreset).catch((err) => console.warn('[Cloud saveOptionPresetRemote error]:', err));
   }, []);
 
   const updateOptionPreset = useCallback((id: string, updates: Partial<OptionGroup>) => {
+    let updatedPreset: OptionGroup | null = null;
     setOptionPresets((prev) =>
-      prev.map((p) => (p.id === id ? { ...p, ...updates } : p))
+      prev.map((p) => {
+        if (p.id !== id) return p;
+        const up = { ...p, ...updates };
+        updatedPreset = up;
+        return up;
+      })
     );
     syncService.broadcast('DATA_RELOAD');
+    if (updatedPreset) {
+      saveOptionPresetRemote(updatedPreset).catch((err) => console.warn('[Cloud saveOptionPresetRemote error]:', err));
+    }
   }, []);
 
   const deleteOptionPreset = useCallback((id: string) => {
     setOptionPresets((prev) => prev.filter((p) => p.id !== id));
     syncService.broadcast('DATA_RELOAD');
+    deleteOptionPresetRemote(id).catch((err) => console.warn('[Cloud deleteOptionPresetRemote error]:', err));
   }, []);
 
   const reorderOptionPresets = useCallback(
@@ -1571,6 +2360,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       note,
     };
     setCurrentShift(newShift);
+    saveShiftRemote(newShift).catch((err) => console.warn('[Cloud saveShiftRemote error]:', err));
   }, [currentUser?.name]);
 
   const closeShift = useCallback((countedCash: number, note?: string) => {
@@ -1597,6 +2387,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     setCurrentShift(null);
+    saveShiftRemote(closed).catch((err) => console.warn('[Cloud saveShiftRemote error]:', err));
   }, [bills, currentShift, currentUser?.name]);
 
   // Members
@@ -1614,7 +2405,33 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       registeredAt: new Date().toISOString(),
     };
     setMembers((prev) => [...prev, newMember]);
+    saveMemberRemote(newMember).catch((err) => console.warn('[Cloud saveMemberRemote error]:', err));
     return newMember;
+  }, []);
+
+  // On-demand loader for historical bills older than 30 days
+  const loadArchivedBills = useCallback(async (): Promise<number> => {
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const thirtyDaysAgoISO = thirtyDaysAgo.toISOString();
+
+    const archived = await fetchArchivedBills(thirtyDaysAgoISO);
+    if (archived && archived.length > 0) {
+      setBills((prev) => {
+        const map = new Map(prev.map((b) => [b.id, b]));
+        archived.forEach((b) => {
+          if (!map.has(b.id)) {
+            map.set(b.id, b);
+          }
+        });
+        const merged = Array.from(map.values());
+        localStorage.setItem(STORAGE_KEYS.BILLS, JSON.stringify(merged));
+        return merged;
+      });
+      syncService.broadcast('DATA_RELOAD');
+      return archived.length;
+    }
+    return 0;
   }, []);
 
   // Settings & QR
@@ -1884,6 +2701,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     voidBill,
     lastCompletedBill,
     setLastCompletedBill,
+    loadArchivedBills,
 
     currentShift,
     openShift,
@@ -1899,6 +2717,23 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     addQrImage,
     updateQrImage,
     deleteQrImage,
+
+    // Cloud Sync (Phase 1)
+    cloudUser,
+    cloudSyncStatus,
+    cloudConnected: Boolean(cloudUser && isOnline && isFirebaseConfigured()),
+    cloudErrorMessage,
+    saveShopData,
+    loginCloud,
+    logoutCloud,
+    initialSyncPrompt,
+    resolveInitialSync,
+    cancelInitialSync,
+    hasExternalCloudUpdate,
+    applyExternalCloudUpdate,
+    dismissExternalCloudUpdate,
+    isFormEditingShop,
+    setIsFormEditingShop,
 
     notifications,
     markNotificationAsRead,

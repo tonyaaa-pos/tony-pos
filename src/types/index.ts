@@ -6,6 +6,8 @@ export interface User {
   nameEn?: string;
   role: UserRole;
   pin: string;
+  pinHash?: string;
+  salt?: string;
   avatar?: string;
 }
 

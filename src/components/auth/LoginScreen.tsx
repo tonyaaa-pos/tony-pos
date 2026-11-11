@@ -27,11 +27,12 @@ export const LoginScreen: React.FC = () => {
       setPin(nextPin);
       setErrorMsg('');
       if (nextPin.length === 4) {
-        const res = loginWithPin(nextPin);
-        if (!res.success) {
-          setErrorMsg(res.message || t('login_pin_error'));
-          setPin('');
-        }
+        Promise.resolve(loginWithPin(nextPin)).then((res) => {
+          if (!res.success) {
+            setErrorMsg(res.message || t('login_pin_error'));
+            setPin('');
+          }
+        });
       }
     }
   };
