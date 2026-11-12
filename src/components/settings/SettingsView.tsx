@@ -36,6 +36,7 @@ import {
   Loader2,
   AlertTriangle,
   Image as ImageIcon,
+  Calculator,
 } from 'lucide-react';
 import { formatBaht } from '../../utils/formatters';
 import { compressImageFile } from '../../utils/imageCompressor';
@@ -47,6 +48,7 @@ import { bluetoothPrinterService, BluetoothState } from '../../services/bluetoot
 import { usbPrinterService, USBPrinterState } from '../../services/usbPrinterService';
 import { CustomerDisplayView } from '../customer/CustomerDisplayView';
 import { isFirebaseConfigured } from '../../firebaseConfig';
+import { CostProfitSyncModal } from '../cost/CostProfitSyncModal';
 
 interface SaveButtonProps {
   status: 'idle' | 'saving' | 'saved' | 'pending' | 'error';
@@ -391,6 +393,7 @@ export const SettingsView: React.FC = () => {
 
   // Restore & Backup states
   const [showRestoreModal, setShowRestoreModal] = useState(false);
+  const [showCostProfitModal, setShowCostProfitModal] = useState(false);
   const [pendingRestoreData, setPendingRestoreData] = useState<any | null>(null);
   const [pendingRestoreRaw, setPendingRestoreRaw] = useState<string>('');
   const [pendingFileName, setPendingFileName] = useState<string>('');
@@ -2208,6 +2211,43 @@ export const SettingsView: React.FC = () => {
             </div>
           )}
 
+          {/* Card: Cost & Profit Management Integration */}
+          <div className="p-6 rounded-3xl bg-gradient-to-r from-amber-500/10 via-orange-500/5 to-emerald-500/10 border-2 border-amber-500/40 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-amber-500/20 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-amber-500 text-slate-950 font-black flex items-center justify-center">
+                  <Calculator className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-bold text-sm text-slate-900 dark:text-white">
+                      เชื่อมต่อระบบคำนวณต้นทุน & กำไร (Cost & Profit)
+                    </h3>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300">
+                      Tony's Kitchen Integration
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    ซิงค์ต้นทุนอาหารต่อจาน (COGS), ค่า GP เดลิเวอรี (37%), ค่ากล่อง (8฿) และต้นทุนคงที่ (80,760฿/ด.) จากแอป Cost & Profit
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowCostProfitModal(true)}
+                className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black transition cursor-pointer flex items-center justify-center gap-1.5 shadow-xs shrink-0"
+              >
+                <Calculator className="w-3.5 h-3.5" />
+                <span>เปิดตัวเชื่อมต่อ & ซิงค์ข้อมูล</span>
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+              รองรับทั้งการนำเข้าไฟล์ JSON จากแอป Cost & Profit หรือซิงค์ข้อมูลผ่าน <strong>Cloud Firestore</strong> (<code>users/{'{uid}'}/costManagement/tonys_kitchen</code>) อัตโนมัติ ทำให้ยอดขายใน POS ทุกบิลคำนวณกำไรแท้จริงได้แม่นยำ 100%
+            </p>
+          </div>
+
           {/* Card 1: Full System Backup */}
           <div className="p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
@@ -2823,6 +2863,12 @@ export const SettingsView: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Cost & Profit Integration Modal */}
+      <CostProfitSyncModal
+        isOpen={showCostProfitModal}
+        onClose={() => setShowCostProfitModal(false)}
+      />
     </div>
   );
 };

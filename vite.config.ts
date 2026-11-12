@@ -6,9 +6,9 @@ import { defineConfig } from 'vite';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-export default defineConfig(() => {
+export default defineConfig(({ command }) => {
   return {
-    base: './',
+    base: command === 'build' ? './' : '/',
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
@@ -16,8 +16,7 @@ export default defineConfig(() => {
       },
     },
     build: {
-      target: ['es2015', 'chrome64'],
-      cssTarget: 'chrome61',
+      target: 'es2022',
       outDir: 'dist',
       assetsDir: 'assets',
       sourcemap: false,

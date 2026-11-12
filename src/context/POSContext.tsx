@@ -251,8 +251,9 @@ function loadState<T>(key: string, defaultValue: T): T {
 
 // Auto-place tables without positions on a neat grid per zone
 function autoPositionTables(rawTables: Table[]): Table[] {
+  const list = Array.isArray(rawTables) ? rawTables : INITIAL_TABLES;
   const zoneCounts: Record<string, number> = {};
-  return rawTables.map((t) => {
+  return list.map((t) => {
     const zone = t.zone || 'indoor';
     const index = zoneCounts[zone] || 0;
     zoneCounts[zone] = index + 1;
@@ -470,8 +471,9 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Users (filter out obsolete 'kitchen' role)
   const [users, setUsers] = useState<User[]>(() => {
     const loaded = loadState<User[]>(STORAGE_KEYS.USERS, INITIAL_USERS);
-    return loaded
-      .filter((u: any) => u.role !== 'kitchen')
+    const validUsers = Array.isArray(loaded) && loaded.length > 0 ? loaded : INITIAL_USERS;
+    return validUsers
+      .filter((u: any) => u && typeof u === 'object' && u.role !== 'kitchen')
       .map((u: any) => {
         const initialMatch = INITIAL_USERS.find((init) => init.id === u.id);
         return {

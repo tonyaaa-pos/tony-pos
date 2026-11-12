@@ -59,6 +59,7 @@ import { Modal } from '../common/Modal';
 import { ReceiptPrint } from '../pos/ReceiptPrint';
 import { soundService } from '../../utils/audio';
 import { FinancialReportModal } from './FinancialReportModal';
+import { CostProfitSyncModal } from '../cost/CostProfitSyncModal';
 
 export type TimeFilterPeriod = 'today' | 'week' | 'month' | 'year' | 'custom';
 export type DashboardTab = 'overview' | 'breakeven' | 'menu_profit' | 'shifts' | 'bills';
@@ -143,6 +144,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ defaultTab = 'over
   const [showOpExModal, setShowOpExModal] = useState(false);
   const [tempOpEx, setTempOpEx] = useState<OpExSettings>(opExSettings);
   const [showReportModal, setShowReportModal] = useState(false);
+  const [showCostProfitModal, setShowCostProfitModal] = useState(false);
   const [simulatedTargetProfit, setSimulatedTargetProfit] = useState<number>(30000);
 
   // Shift Modals
@@ -833,6 +835,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ defaultTab = 'over
               />
             </div>
           )}
+
+          {/* Cost & Profit Integration Button */}
+          <button
+            type="button"
+            onClick={() => setShowCostProfitModal(true)}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-gradient-to-r from-amber-500/20 to-orange-500/20 hover:from-amber-500/30 hover:to-orange-500/30 text-amber-900 dark:text-amber-300 text-xs font-black transition cursor-pointer border border-amber-500/40 shadow-2xs"
+            title="เชื่อมต่อและนำเข้าต้นทุนสูตรอาหาร (COGS), ค่า GP เดลิเวอรี (37%) และต้นทุนคงที่จากแอป Cost & Profit"
+          >
+            <Calculator className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+            <span>เชื่อมต่อ Cost & Profit</span>
+          </button>
 
           {/* OpEx & Break-Even Cost Settings Button */}
           <button
@@ -2804,6 +2817,22 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ defaultTab = 'over
           currentUser={currentUser}
         />
       )}
+
+      {/* MODAL: Cost & Profit Management Integration */}
+      <CostProfitSyncModal
+        isOpen={showCostProfitModal}
+        onClose={() => setShowCostProfitModal(false)}
+        onApplied={() => {
+          try {
+            const saved = localStorage.getItem(OPEX_STORAGE_KEY);
+            if (saved) {
+              setOpExSettings((prev) => ({ ...prev, ...JSON.parse(saved) }));
+            }
+          } catch (err) {
+            console.warn('Failed to refresh OpEx settings:', err);
+          }
+        }}
+      />
     </div>
   );
 };
