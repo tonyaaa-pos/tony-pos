@@ -1,5 +1,12 @@
-import { doc, getDoc, setDoc, onSnapshot, type Unsubscribe } from 'firebase/firestore';
-import { db, getCloudUser } from './firebase';
+import { doc, collection, getDoc, getDocs, setDoc, onSnapshot, serverTimestamp, type Unsubscribe } from 'firebase/firestore';
+import {
+  db,
+  getCloudUser,
+  isFirebaseConfigured,
+  firebaseConfig,
+  OperationType,
+  handleFirestoreError,
+} from './firebase';
 import { saveMenuItemRemote } from './cloudStore';
 import type { MenuItem, ItemVariantOption, ShopSettings } from '../types';
 
@@ -151,6 +158,22 @@ export interface CostSyncSummary {
       foodCostPct: number;
     }>;
   }>;
+  savedToCloud?: boolean;
+  cloudPath?: string;
+  cloudReason?: 'not_configured' | 'not_signed_in';
+}
+
+export interface CostFirestoreFetchResult {
+  status: 'found' | 'not_found' | 'not_signed_in' | 'not_configured';
+  data: TonysKitchenPayload | null;
+  docPath?: string;
+  uid?: string;
+}
+
+export interface CostFirestoreSaveResult {
+  savedToCloud: boolean;
+  docPath?: string;
+  reason?: 'not_configured' | 'not_signed_in';
 }
 
 export const OPEX_STORAGE_KEY = 'kind_pos_opex_settings_v4';
@@ -461,7 +484,37 @@ export function calculateFixedMonthlyOpEx(payload: TonysKitchenPayload) {
  * Helper to match dish name and variant
  */
 function normalizeName(str: string): string {
-  return str.toLowerCase().replace(/[\s\-_]/g, '');
+  return str.toLowerCase().replace(/[\s\-_()/]+/g, '');
+}
+
+const CORE_DISH_KEYWORDS = ['กะเพรา', 'ข้าวผัด', 'ผัดไทย', 'สุกี้', 'ไข่ดาว'];
+
+function doesMenuMatch(posName: string, costName: string, posId: string, costId: string): boolean {
+  if (posId === costId) return true;
+  const posNorm = normalizeName(posName);
+  const costNorm = normalizeName(costName);
+  if (posNorm.includes(costNorm) || costNorm.includes(posNorm)) return true;
+  return CORE_DISH_KEYWORDS.some((kw) => posNorm.includes(kw) && costNorm.includes(kw));
+}
+
+function doesVariantMatch(posVarName: string, costVarName: string, posVarId: string, costVarId: string, fallbackDishName?: string): boolean {
+  if (posVarId === costVarId) return true;
+  const vNorm = normalizeName(posVarName);
+  const cvNorm = normalizeName(costVarName);
+  if (vNorm.includes(cvNorm) || cvNorm.includes(vNorm)) return true;
+
+  const targetText = vNorm === 'ปกติ' && fallbackDishName ? normalizeName(fallbackDishName) : vNorm;
+  const proteinGroups = [
+    ['หมูสับ', 'หมูหมัก', 'หมูบด', 'หมู'],
+    ['ไก่ชิ้น', 'ไก่สับ', 'ไก่'],
+    ['เนื้อโคขุน', 'เนื้อวัว', 'เนื้อ'],
+    ['กุ้งสด', 'กุ้ง'],
+    ['ปลาหมึก', 'หมึก'],
+    ['ทะเลรวม', 'ซีฟู้ด', 'ทะเล'],
+  ];
+  return proteinGroups.some(
+    (group) => group.some((kw) => targetText.includes(kw)) && group.some((kw) => cvNorm.includes(kw))
+  );
 }
 
 /**
@@ -515,16 +568,14 @@ export async function applyCostDataToPOS(
   let updatedVariantsTotal = 0;
 
   currentMenuItems.forEach((posItem) => {
-    const posNorm = normalizeName(posItem.name);
-    // Find matching menu in Cost & Profit
-    const matchedCostMenu = costMenus.find((cm) => {
-      const cNorm = normalizeName(cm.name);
-      return posNorm.includes(cNorm) || cNorm.includes(posNorm) || cm.id === posItem.id;
-    });
+    const matchedCostMenu = costMenus.find((cm) =>
+      doesMenuMatch(posItem.name, cm.name, posItem.id, cm.id)
+    );
 
     if (!matchedCostMenu) return;
 
     let itemCostUpdated = false;
+    let itemMatchedAnyVariant = false;
     let newBaseCost = posItem.cost;
     const oldBaseCost = posItem.cost;
     const variantChanges: CostSyncSummary['syncedDishes'][0]['variants'] = [];
@@ -532,22 +583,15 @@ export async function applyCostDataToPOS(
     // Check if dish has variants in POS
     if (posItem.variants && posItem.variants.length > 0 && matchedCostMenu.variants) {
       const updatedVariants: ItemVariantOption[] = posItem.variants.map((posVar) => {
-        const vNorm = normalizeName(posVar.name);
-        const matchedCostVar = matchedCostMenu.variants?.find((cv) => {
-          const cvNorm = normalizeName(cv.name || cv.variantName || '');
-          return (
-            vNorm.includes(cvNorm) ||
-            cvNorm.includes(vNorm) ||
-            cv.id === posVar.id ||
-            // Handle pork matching (หมูสับ / หมูหมัก / หมูบด)
-            (vNorm.includes('หมู') && cvNorm.includes('หมู')) ||
-            (vNorm.includes('ไก่') && cvNorm.includes('ไก่')) ||
-            (vNorm.includes('เนื้อ') && cvNorm.includes('เนื้อ')) ||
-            (vNorm.includes('กุ้ง') && cvNorm.includes('กุ้ง')) ||
-            (vNorm.includes('หมึก') && cvNorm.includes('หมึก')) ||
-            (vNorm.includes('ทะเล') && cvNorm.includes('ทะเล'))
-          );
-        });
+        const matchedCostVar = matchedCostMenu.variants?.find((cv) =>
+          doesVariantMatch(
+            posVar.name,
+            cv.name || cv.variantName || '',
+            posVar.id,
+            cv.id,
+            posItem.name
+          )
+        );
 
         if (matchedCostVar) {
           const varCost =
@@ -557,19 +601,20 @@ export async function applyCostDataToPOS(
             matchedCostVar.cost ??
             posVar.cost;
 
+          itemMatchedAnyVariant = true;
           const oldVcost = posVar.cost;
           if (varCost !== oldVcost) {
             itemCostUpdated = true;
-            updatedVariantsTotal++;
-            variantChanges.push({
-              variantName: posVar.name,
-              oldCost: oldVcost,
-              newCost: varCost,
-              sellingPrice: posVar.price,
-              foodCostPct: posVar.price > 0 ? (varCost / posVar.price) * 100 : 0,
-            });
-            return { ...posVar, cost: varCost };
           }
+          updatedVariantsTotal++;
+          variantChanges.push({
+            variantName: posVar.name,
+            oldCost: oldVcost,
+            newCost: varCost,
+            sellingPrice: posVar.price,
+            foodCostPct: posVar.price > 0 ? (varCost / posVar.price) * 100 : 0,
+          });
+          return { ...posVar, cost: varCost };
         }
         return posVar;
       });
@@ -590,7 +635,9 @@ export async function applyCostDataToPOS(
         saveMenuItemRemote(updatedItem).catch((err) =>
           console.warn('[applyCostDataToPOS] Remote sync failed for:', posItem.id, err)
         );
+      }
 
+      if (itemMatchedAnyVariant) {
         syncedDishes.push({
           posDishId: posItem.id,
           posDishName: posItem.name,
@@ -615,28 +662,28 @@ export async function applyCostDataToPOS(
         saveMenuItemRemote(updatedItem).catch((err) =>
           console.warn('[applyCostDataToPOS] Remote sync failed for:', posItem.id, err)
         );
-
-        syncedDishes.push({
-          posDishId: posItem.id,
-          posDishName: posItem.name,
-          oldCost: oldBaseCost,
-          newCost: newBaseCost,
-          variants: [
-            {
-              variantName: 'ราคามาตรฐาน',
-              oldCost: oldBaseCost,
-              newCost: newBaseCost,
-              sellingPrice: posItem.price,
-              foodCostPct: posItem.price > 0 ? (newBaseCost / posItem.price) * 100 : 0,
-            },
-          ],
-        });
       }
+
+      syncedDishes.push({
+        posDishId: posItem.id,
+        posDishName: posItem.name,
+        oldCost: oldBaseCost,
+        newCost: singleCost,
+        variants: [
+          {
+            variantName: 'ราคามาตรฐาน',
+            oldCost: oldBaseCost,
+            newCost: singleCost,
+            sellingPrice: posItem.price,
+            foodCostPct: posItem.price > 0 ? (singleCost / posItem.price) * 100 : 0,
+          },
+        ],
+      });
     }
   });
 
   // 6. Save Cost Management bundle to Cloud Firestore under users/{uid}/costManagement/tonys_kitchen
-  await saveCostBundleToFirestore(payload);
+  const saveResult = await saveCostBundleToFirestore(payload);
 
   return {
     restaurantName: settings.restaurantName || "Tony's Kitchen",
@@ -652,16 +699,43 @@ export async function applyCostDataToPOS(
       takeaway: takeawayPkg,
     },
     syncedDishes,
+    savedToCloud: saveResult.savedToCloud,
+    cloudPath: saveResult.docPath,
+    cloudReason: saveResult.reason,
   };
+}
+
+function formatFirestoreException(err: unknown): Error {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (msg.includes('Quota exceeded')) {
+    const link = `https://console.firebase.google.com/project/${firebaseConfig.projectId}/firestore/databases/${firebaseConfig.firestoreDatabaseId}/data?openUpgradeDialog=true`;
+    return new Error(
+      `ใช้งานโควตาฟรีประจำวันของ Firestore เกินกำหนด (Quota exceeded) ระบบจะรีเซ็ตในวันถัดไป หรืออัปเกรดได้ที่: ${link}`
+    );
+  }
+  return err instanceof Error ? err : new Error(msg);
+}
+
+function isPermissionDeniedError(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  return msg.includes('missing or insufficient permissions') || msg.includes('permission-denied');
 }
 
 /**
  * Saves cost bundle to Cloud Firestore users/{uid}/costManagement/tonys_kitchen
  */
-export async function saveCostBundleToFirestore(payload: TonysKitchenPayload): Promise<void> {
+export async function saveCostBundleToFirestore(
+  payload: TonysKitchenPayload
+): Promise<CostFirestoreSaveResult> {
+  if (!isFirebaseConfigured() || !db) {
+    return { savedToCloud: false, reason: 'not_configured' };
+  }
   const user = getCloudUser();
-  if (!db || !user) return;
+  if (!user) {
+    return { savedToCloud: false, reason: 'not_signed_in' };
+  }
 
+  const docPath = `users/${user.uid}/costManagement/tonys_kitchen`;
   try {
     const costDocRef = doc(db, 'users', user.uid, 'costManagement', 'tonys_kitchen');
     await setDoc(
@@ -669,12 +743,72 @@ export async function saveCostBundleToFirestore(payload: TonysKitchenPayload): P
       {
         ...payload,
         updatedAt: new Date().toISOString(),
+        serverUpdatedAt: serverTimestamp(),
         syncedFrom: 'POS_CostProfitIntegration',
       },
       { merge: true }
     );
+    return { savedToCloud: true, docPath };
   } catch (err) {
-    console.warn('[saveCostBundleToFirestore] Error:', err);
+    if (isPermissionDeniedError(err)) {
+      handleFirestoreError(err, OperationType.WRITE, docPath);
+    }
+    throw formatFirestoreException(err);
+  }
+}
+
+/**
+ * Fetches cost management data from Firestore with clear connection/auth/existence status
+ */
+export async function fetchRemoteCostManagementStatus(): Promise<CostFirestoreFetchResult> {
+  if (!isFirebaseConfigured() || !db) {
+    return { status: 'not_configured', data: null };
+  }
+  const user = getCloudUser();
+  if (!user) {
+    return { status: 'not_signed_in', data: null };
+  }
+
+  const docPath = `users/${user.uid}/costManagement/tonys_kitchen`;
+  try {
+    const costDocRef = doc(db, 'users', user.uid, 'costManagement', 'tonys_kitchen');
+    const snap = await getDoc(costDocRef);
+    if (snap.exists()) {
+      const parsed = parseCostAndProfitPayload(snap.data());
+      return {
+        status: 'found',
+        data: parsed,
+        docPath,
+        uid: user.uid,
+      };
+    }
+
+    // Fallback: inspect any document inside users/{uid}/costManagement in case the external app used another doc ID
+    const colPath = `users/${user.uid}/costManagement`;
+    const colSnap = await getDocs(collection(db, 'users', user.uid, 'costManagement'));
+    for (const d of colSnap.docs) {
+      const raw = d.data();
+      if (raw && (raw.payload || raw.menus || raw.settings)) {
+        return {
+          status: 'found',
+          data: parseCostAndProfitPayload(raw),
+          docPath: `${colPath}/${d.id}`,
+          uid: user.uid,
+        };
+      }
+    }
+
+    return {
+      status: 'not_found',
+      data: null,
+      docPath,
+      uid: user.uid,
+    };
+  } catch (err) {
+    if (isPermissionDeniedError(err)) {
+      handleFirestoreError(err, OperationType.GET, docPath);
+    }
+    throw formatFirestoreException(err);
   }
 }
 
@@ -682,41 +816,43 @@ export async function saveCostBundleToFirestore(payload: TonysKitchenPayload): P
  * Fetches cost management data from Firestore if present
  */
 export async function fetchRemoteCostManagementData(): Promise<TonysKitchenPayload | null> {
-  const user = getCloudUser();
-  if (!db || !user) return null;
-
-  try {
-    const costDocRef = doc(db, 'users', user.uid, 'costManagement', 'tonys_kitchen');
-    const snap = await getDoc(costDocRef);
-    if (snap.exists()) {
-      return snap.data() as TonysKitchenPayload;
-    }
-  } catch (err) {
-    console.warn('[fetchRemoteCostManagementData] Error:', err);
-  }
-  return null;
+  const result = await fetchRemoteCostManagementStatus();
+  return result.data;
 }
 
 /**
  * Subscribes to Real-time updates from Cost & Profit in Firestore
  */
 export function subscribeCostManagementData(
-  onUpdate: (payload: TonysKitchenPayload) => void
+  onUpdate: (payload: TonysKitchenPayload) => void,
+  onError?: (err: Error) => void
 ): Unsubscribe | null {
+  if (!isFirebaseConfigured() || !db) return null;
   const user = getCloudUser();
-  if (!db || !user) return null;
+  if (!user) return null;
 
+  const docPath = `users/${user.uid}/costManagement/tonys_kitchen`;
   try {
     const costDocRef = doc(db, 'users', user.uid, 'costManagement', 'tonys_kitchen');
     return onSnapshot(
       costDocRef,
       (snap) => {
         if (snap.exists()) {
-          onUpdate(snap.data() as TonysKitchenPayload);
+          onUpdate(parseCostAndProfitPayload(snap.data()));
         }
       },
       (err) => {
-        console.warn('[subscribeCostManagementData] Error:', err);
+        if (isPermissionDeniedError(err)) {
+          try {
+            handleFirestoreError(err, OperationType.GET, docPath);
+          } catch (wrappedErr) {
+            if (onError && wrappedErr instanceof Error) onError(wrappedErr);
+          }
+          return;
+        }
+        const formatted = formatFirestoreException(err);
+        console.warn('[subscribeCostManagementData] Error:', formatted);
+        if (onError) onError(formatted);
       }
     );
   } catch (err) {

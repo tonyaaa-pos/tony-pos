@@ -28,13 +28,14 @@ import {
   parseCostAndProfitPayload,
   applyCostDataToPOS,
   TONYS_KITCHEN_SAMPLE_DATA,
-  fetchRemoteCostManagementData,
+  fetchRemoteCostManagementStatus,
+  saveCostBundleToFirestore,
   subscribeCostManagementData,
   calculateFixedMonthlyOpEx,
   type TonysKitchenPayload,
   type CostSyncSummary,
 } from '../../services/costSyncService';
-import { isFirebaseConfigured, getCloudUser } from '../../services/firebase';
+import { isFirebaseConfigured, getFriendlyAuthErrorMessage } from '../../services/firebase';
 import { formatBaht } from '../../utils/formatters';
 import { soundService } from '../../utils/audio';
 
@@ -49,7 +50,7 @@ export const CostProfitSyncModal: React.FC<CostProfitSyncModalProps> = ({
   onClose,
   onApplied,
 }) => {
-  const { menuItems, updateMenuItem, updateSettings } = usePOS();
+  const { menuItems, updateMenuItem, updateSettings, cloudUser, loginCloudWithGoogle } = usePOS();
 
   const [activeTab, setActiveTab] = useState<'overview' | 'sync' | 'recipes' | 'expenses'>('overview');
   const [payload, setPayload] = useState<TonysKitchenPayload>(TONYS_KITCHEN_SAMPLE_DATA);
@@ -57,34 +58,46 @@ export const CostProfitSyncModal: React.FC<CostProfitSyncModalProps> = ({
   const [isApplying, setIsApplying] = useState(false);
   const [syncResult, setSyncResult] = useState<CostSyncSummary | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [cloudNotice, setCloudNotice] = useState<{
+    type: 'needs_auth' | 'not_found' | 'cloud_saved';
+    message: string;
+    docPath?: string;
+  } | null>(null);
   const [remoteLoading, setRemoteLoading] = useState(false);
+  const [isSigningInGoogle, setIsSigningInGoogle] = useState(false);
   const [autoSyncCloud, setAutoSyncCloud] = useState(false);
 
   // Calculated OpEx from current payload
   const currentOpEx = calculateFixedMonthlyOpEx(payload);
   const settings = payload.payload?.settings || {};
   const menus = payload.payload?.menus || [];
-  const expenses = payload.payload?.expenses || [];
   const employees = payload.payload?.employees || [];
 
-  // Listen to remote Firestore cost document if cloud is connected
+  // Listen to remote Firestore cost document only when authenticated and live sync is enabled
   useEffect(() => {
-    if (!isOpen || !autoSyncCloud || !isFirebaseConfigured() || !getCloudUser()) return;
+    if (!isOpen || !autoSyncCloud || !isFirebaseConfigured() || !cloudUser) return;
 
-    const unsub = subscribeCostManagementData((remoteData) => {
-      if (remoteData) {
-        setPayload(remoteData);
+    const unsub = subscribeCostManagementData(
+      (remoteData) => {
+        if (remoteData) {
+          setPayload(remoteData);
+          setCloudNotice(null);
+        }
+      },
+      (err) => {
+        setErrorMsg('เกิดข้อผิดพลาดในการซิงค์ Real-time: ' + err.message);
       }
-    });
+    );
 
     return () => {
       if (unsub) unsub();
     };
-  }, [isOpen, autoSyncCloud]);
+  }, [isOpen, autoSyncCloud, cloudUser]);
 
   const handleApplyData = async (dataToApply: TonysKitchenPayload) => {
     setIsApplying(true);
     setErrorMsg(null);
+    setCloudNotice(null);
     try {
       const summary = await applyCostDataToPOS(
         dataToApply,
@@ -129,6 +142,7 @@ export const CostProfitSyncModal: React.FC<CostProfitSyncModalProps> = ({
         setPayload(parsed);
         setJsonInput(text);
         setErrorMsg(null);
+        setCloudNotice(null);
       } catch (err: unknown) {
         setErrorMsg('ไม่สามารถอ่านไฟล์ JSON ได้: ' + (err instanceof Error ? err.message : ''));
       }
@@ -136,17 +150,78 @@ export const CostProfitSyncModal: React.FC<CostProfitSyncModalProps> = ({
     reader.readAsText(file);
   };
 
+  const handleSignInGoogle = async () => {
+    setIsSigningInGoogle(true);
+    setErrorMsg(null);
+    setCloudNotice(null);
+    try {
+      await loginCloudWithGoogle();
+      soundService.playSuccessTap();
+    } catch (err: unknown) {
+      setErrorMsg(getFriendlyAuthErrorMessage(err));
+    } finally {
+      setIsSigningInGoogle(false);
+    }
+  };
+
+  const handleUploadToFirestore = async (dataToUpload: TonysKitchenPayload = payload) => {
+    setRemoteLoading(true);
+    setErrorMsg(null);
+    setCloudNotice(null);
+    try {
+      const res = await saveCostBundleToFirestore(dataToUpload);
+      if (!res.savedToCloud) {
+        if (res.reason === 'not_signed_in') {
+          setCloudNotice({
+            type: 'needs_auth',
+            message: 'กรุณาเข้าสู่ระบบด้วย Google ก่อนบันทึกข้อมูลขึ้น Cloud Firestore',
+          });
+        } else {
+          setErrorMsg('ระบบ Firebase Firestore ยังไม่ได้ตั้งค่าในโปรเจกต์');
+        }
+        return;
+      }
+      await handleApplyData(dataToUpload);
+      setCloudNotice({
+        type: 'cloud_saved',
+        message: `บันทึกข้อมูลต้นทุนขึ้น Cloud Firestore และปรับใช้กับ POS เรียบร้อยแล้ว`,
+        docPath: res.docPath,
+      });
+    } catch (err: unknown) {
+      setErrorMsg('เกิดข้อผิดพลาดในการบันทึกข้อมูลขึ้น Cloud Firestore: ' + (err instanceof Error ? err.message : ''));
+    } finally {
+      setRemoteLoading(false);
+    }
+  };
+
   const handleFetchFromFirestore = async () => {
     setRemoteLoading(true);
     setErrorMsg(null);
+    setCloudNotice(null);
     try {
-      const remote = await fetchRemoteCostManagementData();
-      if (remote) {
-        setPayload(remote);
-        await handleApplyData(remote);
-      } else {
-        setErrorMsg('ยังไม่พบข้อมูลใน Firestore users/{uid}/costManagement/tonys_kitchen');
+      const result = await fetchRemoteCostManagementStatus();
+      if (result.status === 'not_configured') {
+        setErrorMsg('ระบบ Firebase Firestore ยังไม่ได้ตั้งค่าในไฟล์ firebase-applet-config.json');
+        return;
       }
+      if (result.status === 'not_signed_in') {
+        setCloudNotice({
+          type: 'needs_auth',
+          message: 'ยังไม่ได้เข้าสู่ระบบด้วย Google จึงไม่สามารถอ่านข้อมูลส่วนตัวจาก Firestore ได้ (กฎความปลอดภัยอนุญาตเฉพาะเจ้าของบัญชี)',
+        });
+        return;
+      }
+      if (result.status === 'not_found' || !result.data) {
+        setCloudNotice({
+          type: 'not_found',
+          message: `เชื่อมต่อบัญชี Google สำเร็จแล้ว แต่ยังไม่มีเอกสารต้นทุนใน Cloud Firestore ที่เส้นทางนี้ (อาจเป็นเพราะยังไม่ได้กดส่งข้อมูลขึ้น Cloud จากแอป Cost & Profit หรือยังไม่เคยบันทึกจาก POS)`,
+          docPath: result.docPath,
+        });
+        return;
+      }
+
+      setPayload(result.data);
+      await handleApplyData(result.data);
     } catch (err: unknown) {
       setErrorMsg('เกิดข้อผิดพลาดในการดึงข้อมูลจาก Cloud Firestore: ' + (err instanceof Error ? err.message : ''));
     } finally {
@@ -229,15 +304,84 @@ export const CostProfitSyncModal: React.FC<CostProfitSyncModalProps> = ({
               <span>ซิงค์ข้อมูลต้นทุนและค่าใช้จ่ายดำเนินงานสำเร็จ!</span>
             </div>
             <p className="text-slate-600 dark:text-slate-400">
-              ร้าน: <strong>{syncResult.restaurantName}</strong> | ปรับต้นทุนอาหาร {syncResult.matchedDishesCount} เมนู ({syncResult.updatedVariantsCount} ตัวเลือก) | GP เดลิเวอรี Grab/LINE MAN: {syncResult.deliveryGpRates.grab}% | ค่าใช้จ่ายคงที่รายเดือน: {formatBaht(syncResult.monthlyFixedOpEx.total)}/เดือน
+              ร้าน: <strong>{syncResult.restaurantName}</strong> | จับคู่ต้นทุนอาหาร {syncResult.matchedDishesCount} เมนู ({syncResult.updatedVariantsCount} ตัวเลือก) | GP เดลิเวอรี Grab/LINE MAN: {syncResult.deliveryGpRates.grab}% | ค่าใช้จ่ายคงที่รายเดือน: {formatBaht(syncResult.monthlyFixedOpEx.total)}/เดือน
+            </p>
+            <p className="text-[11px] text-emerald-700/80 dark:text-emerald-400/80">
+              {syncResult.savedToCloud
+                ? `☁️ อัปเดตขึ้น Cloud Firestore แล้ว (${syncResult.cloudPath})`
+                : '💾 บันทึกลงเครื่องเรียบร้อยแล้ว (หากต้องการซิงค์ขึ้น Cloud ให้เข้าสู่ระบบด้วย Google)'}
             </p>
           </div>
         )}
 
+        {cloudNotice && cloudNotice.type === 'needs_auth' && (
+          <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-900 dark:text-amber-200 text-xs space-y-3">
+            <div className="flex items-start gap-2.5">
+              <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <div className="font-bold text-sm">ยังไม่ได้เข้าสู่ระบบบัญชี Google / Cloud</div>
+                <p className="text-amber-800/90 dark:text-amber-300/90 leading-relaxed">
+                  {cloudNotice.message}
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={handleSignInGoogle}
+                disabled={isSigningInGoogle}
+                className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs transition cursor-pointer flex items-center gap-1.5"
+              >
+                <Cloud className="w-3.5 h-3.5" />
+                <span>{isSigningInGoogle ? 'กำลังเข้าสู่ระบบ...' : 'เข้าสู่ระบบด้วย Google ทันที'}</span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {cloudNotice && cloudNotice.type === 'not_found' && (
+          <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-900 dark:text-amber-200 text-xs space-y-3">
+            <div className="flex items-start gap-2.5">
+              <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <div className="font-bold text-sm">ยังไม่มีข้อมูลต้นทุนบน Cloud Firestore ในบัญชีนี้</div>
+                <p className="text-amber-800/90 dark:text-amber-300/90 leading-relaxed">
+                  {cloudNotice.message}
+                </p>
+                {cloudNotice.docPath && (
+                  <div className="font-mono text-[11px] bg-amber-500/10 px-2.5 py-1 rounded-lg inline-block">
+                    เส้นทาง: {cloudNotice.docPath}
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => handleUploadToFirestore(payload)}
+                disabled={remoteLoading || isApplying}
+                className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs transition cursor-pointer flex items-center gap-1.5"
+              >
+                <Upload className="w-3.5 h-3.5" />
+                <span>อัปโหลดข้อมูล Tony&apos;s Kitchen ขึ้น Firestore ทันที</span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {cloudNotice && cloudNotice.type === 'cloud_saved' && (
+          <div className="p-4 rounded-2xl bg-blue-500/10 border border-blue-500/30 text-blue-800 dark:text-blue-300 text-xs flex items-center gap-2">
+            <Cloud className="w-4 h-4 shrink-0" />
+            <span>
+              {cloudNotice.message} {cloudNotice.docPath ? `(${cloudNotice.docPath})` : ''}
+            </span>
+          </div>
+        )}
+
         {errorMsg && (
-          <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-700 dark:text-rose-400 text-xs flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 shrink-0" />
-            <span>{errorMsg}</span>
+          <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-700 dark:text-rose-400 text-xs flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            <span className="break-words">{errorMsg}</span>
           </div>
         )}
 
@@ -379,31 +523,65 @@ export const CostProfitSyncModal: React.FC<CostProfitSyncModalProps> = ({
 
             {/* Firestore Cloud Sync */}
             <div className="p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
-                  <div className="p-2.5 rounded-xl bg-blue-500/10 text-blue-500">
+                  <div className={`p-2.5 rounded-xl ${cloudUser ? 'bg-emerald-500/10 text-emerald-500' : 'bg-blue-500/10 text-blue-500'}`}>
                     <Cloud className="w-5 h-5" />
                   </div>
                   <div>
-                    <h4 className="font-bold text-sm text-slate-900 dark:text-white">
-                      การเชื่อมต่อ Cloud Firestore
+                    <h4 className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-2">
+                      <span>การเชื่อมต่อ Cloud Firestore</span>
+                      <span
+                        className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                          cloudUser
+                            ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300'
+                            : 'bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300'
+                        }`}
+                      >
+                        {cloudUser ? `เชื่อมต่อแล้ว (${cloudUser.email || cloudUser.uid.slice(0, 8)})` : 'ยังไม่เข้าสู่ระบบ Google'}
+                      </span>
                     </h4>
                     <p className="text-xs text-slate-500 dark:text-slate-400">
-                      ดึงข้อมูลต้นทุนที่บันทึกไว้บนคลาวด์ หรือเปิดฟังการเปลี่ยนแปลงแบบ Real-time
+                      {cloudUser
+                        ? `เส้นทางข้อมูล: users/${cloudUser.uid}/costManagement/tonys_kitchen`
+                        : 'เข้าสู่ระบบด้วย Google เพื่อดึงและซิงค์ข้อมูลต้นทุนบน Cloud Firestore ของคุณ'}
                     </p>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={handleFetchFromFirestore}
-                    disabled={remoteLoading}
-                    className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <RefreshCw className={`w-3.5 h-3.5 ${remoteLoading ? 'animate-spin' : ''}`} />
-                    <span>ดึงจาก Firestore</span>
-                  </button>
+                <div className="flex flex-wrap items-center gap-2">
+                  {!cloudUser ? (
+                    <button
+                      type="button"
+                      onClick={handleSignInGoogle}
+                      disabled={isSigningInGoogle}
+                      className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black transition flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Cloud className="w-3.5 h-3.5" />
+                      <span>{isSigningInGoogle ? 'กำลังเข้าสู่ระบบ...' : 'เข้าสู่ระบบ Google'}</span>
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => handleUploadToFirestore(payload)}
+                        disabled={remoteLoading || isApplying}
+                        className="px-3.5 py-2 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-800 dark:text-amber-300 border border-amber-500/30 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Upload className="w-3.5 h-3.5" />
+                        <span>อัปโหลดขึ้น Firestore</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleFetchFromFirestore}
+                        disabled={remoteLoading}
+                        className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <RefreshCw className={`w-3.5 h-3.5 ${remoteLoading ? 'animate-spin' : ''}`} />
+                        <span>ดึงจาก Firestore</span>
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -411,14 +589,23 @@ export const CostProfitSyncModal: React.FC<CostProfitSyncModalProps> = ({
                 <span className="text-slate-500">ซิงค์แบบ Real-time เมื่อมีการอัปเดตบน Cloud:</span>
                 <button
                   type="button"
-                  onClick={() => setAutoSyncCloud(!autoSyncCloud)}
+                  onClick={() => {
+                    if (!cloudUser) {
+                      setCloudNotice({
+                        type: 'needs_auth',
+                        message: 'กรุณาเข้าสู่ระบบด้วย Google ก่อนเปิดการซิงค์แบบ Real-time',
+                      });
+                      return;
+                    }
+                    setAutoSyncCloud(!autoSyncCloud);
+                  }}
                   className={`px-3 py-1 rounded-full font-bold transition cursor-pointer ${
-                    autoSyncCloud
+                    autoSyncCloud && cloudUser
                       ? 'bg-emerald-500 text-slate-950'
                       : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
                   }`}
                 >
-                  {autoSyncCloud ? 'เปิดใช้งาน (Live)' : 'ปิดอยู่'}
+                  {autoSyncCloud && cloudUser ? 'เปิดใช้งาน (Live)' : 'ปิดอยู่'}
                 </button>
               </div>
             </div>

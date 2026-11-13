@@ -48,6 +48,7 @@ import { bluetoothPrinterService, BluetoothState } from '../../services/bluetoot
 import { usbPrinterService, USBPrinterState } from '../../services/usbPrinterService';
 import { CustomerDisplayView } from '../customer/CustomerDisplayView';
 import { isFirebaseConfigured } from '../../firebaseConfig';
+import { getFriendlyAuthErrorMessage } from '../../services/firebase';
 import { CostProfitSyncModal } from '../cost/CostProfitSyncModal';
 
 interface SaveButtonProps {
@@ -334,19 +335,7 @@ export const SettingsView: React.FC = () => {
       setCloudPassword('');
     } catch (err: any) {
       console.warn('Cloud login error:', err);
-      let msg = 'ไม่สามารถเข้าสู่ระบบ Cloud ได้ กรุณาตรวจสอบอีเมลหรือรหัสผ่าน';
-      if (
-        err?.code === 'auth/invalid-credential' ||
-        err?.code === 'auth/wrong-password' ||
-        err?.code === 'auth/user-not-found'
-      ) {
-        msg = 'อีเมลหรือรหัสผ่านไม่ถูกต้อง';
-      } else if (err?.code === 'auth/too-many-requests') {
-        msg = 'ลองเข้าสู่ระบบบ่อยเกินไป กรุณารอสักครู่แล้วลองใหม่';
-      } else if (err?.message) {
-        msg = err.message;
-      }
-      setCloudAuthError(msg);
+      setCloudAuthError(getFriendlyAuthErrorMessage(err));
     } finally {
       setIsConnectingCloud(false);
     }
@@ -747,8 +736,8 @@ export const SettingsView: React.FC = () => {
                 </p>
 
                 {cloudAuthError && (
-                  <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-xs text-rose-600 dark:text-rose-400 font-semibold flex items-center gap-2">
-                    <AlertTriangle className="w-4 h-4 shrink-0" />
+                  <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-xs text-rose-600 dark:text-rose-400 font-semibold flex items-start gap-2 whitespace-pre-line leading-relaxed">
+                    <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
                     <span>{cloudAuthError}</span>
                   </div>
                 )}
@@ -789,7 +778,7 @@ export const SettingsView: React.FC = () => {
                       try {
                         await loginCloudWithGoogle();
                       } catch (err: any) {
-                        setCloudAuthError(err?.message || 'เข้าสู่ระบบด้วย Google ไม่สำเร็จ');
+                        setCloudAuthError(getFriendlyAuthErrorMessage(err));
                       } finally {
                         setIsConnectingCloud(false);
                       }
