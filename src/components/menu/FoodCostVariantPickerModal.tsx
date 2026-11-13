@@ -19,9 +19,10 @@ interface FoodCostVariantPickerModalProps {
   isOpen: boolean;
   onClose: () => void;
   selectedCostMenuId?: string;
-  onSelectCostMenuId?: (costMenuId: string, costMenuName: string) => void;
+  onSelectCostMenuId?: (costMenuId: string, costMenuName: string, costMenu?: TonysKitchenMenu) => void;
   existingVariants: ItemVariantOption[];
   onPickVariant: (variant: ItemVariantOption) => void;
+  onPickAllVariants?: (menu: TonysKitchenMenu) => void;
   onAddCustomVariant: () => void;
 }
 
@@ -32,6 +33,7 @@ export const FoodCostVariantPickerModal: React.FC<FoodCostVariantPickerModalProp
   onSelectCostMenuId,
   existingVariants,
   onPickVariant,
+  onPickAllVariants,
   onAddCustomVariant,
 }) => {
   const [costBundle, setCostBundle] = useState<TonysKitchenPayload>(() => getCachedCostBundle());
@@ -93,19 +95,31 @@ export const FoodCostVariantPickerModal: React.FC<FoodCostVariantPickerModalProp
     const translatedEn = translateThaiToEnglishFast(varName);
     const nameEn = translatedEn && !/[\u0E00-\u0E7F]/.test(translatedEn) ? translatedEn : '';
     const recipeCost = getVariantRecipeCost(costVar);
-    const sellingPrice = getVariantSellingPrice(costVar);
+    const bundleSellingPrice = getVariantSellingPrice(costVar);
+    const existingMatch = existingVariants.find(
+      (ev) =>
+        ev.costVariantId === costVar.id ||
+        ev.name.trim().toLowerCase() === varName.toLowerCase()
+    );
+    const sellingPrice =
+      existingMatch && existingMatch.price > 0
+        ? existingMatch.price
+        : bundleSellingPrice > 0
+        ? bundleSellingPrice
+        : existingVariants[0]?.price || 80;
 
     const newVariant: ItemVariantOption = {
-      id: 'v_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+      id: existingMatch?.id || 'v_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
       name: varName,
-      nameEn,
-      price: sellingPrice > 0 ? sellingPrice : existingVariants[0]?.price || 80,
+      nameEn: existingMatch?.nameEn || nameEn,
+      price: sellingPrice,
       cost: recipeCost,
-      isAvailable: true,
-      isSoldOut: false,
+      isAvailable: existingMatch ? existingMatch.isAvailable : true,
+      isSoldOut: existingMatch?.isSoldOut || false,
       costMenuId: menu.id,
       costVariantId: costVar.id,
       costVariantName: varName,
+      priceUpdatedAt: existingMatch?.priceUpdatedAt,
     };
 
     soundService.playSuccessTap();
@@ -122,7 +136,7 @@ export const FoodCostVariantPickerModal: React.FC<FoodCostVariantPickerModalProp
       isOpen={isOpen}
       onClose={onClose}
       title="Food Cost System (หลักสากล) — เลือกตัวเลือกเนื้อสัตว์"
-      maxWidth="max-w-lg"
+      maxWidth="max-w-2xl"
       footer={
         <div className="flex flex-wrap items-center justify-between gap-2">
           <button
@@ -194,7 +208,7 @@ export const FoodCostVariantPickerModal: React.FC<FoodCostVariantPickerModalProp
             onChange={(e) => {
               const chosen = costMenus.find((m) => m.id === e.target.value);
               if (onSelectCostMenuId) {
-                onSelectCostMenuId(chosen?.id || '', chosen?.name || '');
+                onSelectCostMenuId(chosen?.id || '', chosen?.name || '', chosen);
               }
               soundService.playTap();
             }}
@@ -207,6 +221,22 @@ export const FoodCostVariantPickerModal: React.FC<FoodCostVariantPickerModalProp
               </option>
             ))}
           </select>
+          {activeCostMenu && variantsForSelectedMenu.length > 0 && onPickAllVariants && (
+            <div className="mt-2 flex justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  onPickAllVariants(activeCostMenu);
+                  soundService.playSuccessTap();
+                  onClose();
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs shadow-xs transition cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>เพิ่ม/ซิงค์ทุกตัวเลือกของเมนูนี้ ({variantsForSelectedMenu.length})</span>
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Strictly filtered list of variants for THIS menu only (NO ingredients card per requirement #3) */}
@@ -233,15 +263,19 @@ export const FoodCostVariantPickerModal: React.FC<FoodCostVariantPickerModalProp
           <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
             {variantsForSelectedMenu.map((cv) => {
               const varName = (cv.name || cv.variantName || activeCostMenu.name).trim();
-              const sellPrice = getVariantSellingPrice(cv);
-              const recipeCost = getVariantRecipeCost(cv);
-              const profit = sellPrice - recipeCost;
-              const fcPct = sellPrice > 0 ? (recipeCost / sellPrice) * 100 : 0;
-              const isAlreadyAdded = existingVariants.some(
+              const existingMatch = existingVariants.find(
                 (ev) =>
                   ev.costVariantId === cv.id ||
                   ev.name.trim().toLowerCase() === varName.toLowerCase()
               );
+              const sellPrice =
+                existingMatch && existingMatch.price > 0
+                  ? existingMatch.price
+                  : getVariantSellingPrice(cv);
+              const recipeCost = getVariantRecipeCost(cv);
+              const profit = sellPrice - recipeCost;
+              const fcPct = sellPrice > 0 ? (recipeCost / sellPrice) * 100 : 0;
+              const isAlreadyAdded = Boolean(existingMatch);
 
               return (
                 <button

@@ -28,6 +28,7 @@ import {
   ChevronRight,
   Calculator,
   Link2,
+  Lock,
 } from 'lucide-react';
 import { formatBaht } from '../../utils/formatters';
 import { soundService } from '../../utils/audio';
@@ -40,6 +41,10 @@ import { FoodCostVariantPickerModal } from './FoodCostVariantPickerModal';
 import {
   getCachedCostBundle,
   findMatchingCostMenu,
+  findMatchingCostVariant,
+  getVariantRecipeCost,
+  buildVariantsFromCostMenu,
+  syncSellingPriceUpdatesToCostBundle,
   fetchRemoteCostManagementStatus,
   type TonysKitchenMenu,
 } from '../../services/costSyncService';
@@ -218,11 +223,33 @@ export const MenuManagementView: React.FC = () => {
       ? latestCostMenus.find((m) => m.id === item.costMenuId)
       : findMatchingCostMenu(item.name, latestCostMenus, undefined, item.id);
 
+    const syncedVariants = variants.map((v) => {
+      if (autoCostMenu && v.costVariantId) {
+        const matchedCv = findMatchingCostVariant(
+          v.name,
+          autoCostMenu.variants || [],
+          v.costVariantId,
+          v.id,
+          item.name
+        );
+        if (matchedCv) {
+          return {
+            ...v,
+            cost: getVariantRecipeCost(matchedCv),
+            costMenuId: autoCostMenu.id,
+            costVariantId: matchedCv.id,
+            costVariantName: matchedCv.name || matchedCv.variantName || v.name,
+          };
+        }
+      }
+      return v;
+    });
+
     setEditingItem({
       ...item,
       costMenuId: item.costMenuId || autoCostMenu?.id || '',
       costMenuName: item.costMenuName || autoCostMenu?.name || '',
-      variants,
+      variants: syncedVariants,
       optionGroups: item.optionGroups ? JSON.parse(JSON.stringify(item.optionGroups)) : [],
     });
   };
@@ -677,6 +704,7 @@ export const MenuManagementView: React.FC = () => {
       } else if (payload.id) {
         updateMenuItem(payload.id, payload);
       }
+      void syncSellingPriceUpdatesToCostBundle(payload.costMenuId, payload.variants || []);
       setEditingItem(null);
     } catch (err: any) {
       console.error('Failed to save menu item to localStorage:', err);
@@ -1027,7 +1055,7 @@ export const MenuManagementView: React.FC = () => {
                   name: getName({ name: editingItem.name || '', nameEn: editingItem.nameEn }),
                 })
           }
-          maxWidth="max-w-2xl"
+          maxWidth="max-w-4xl"
         >
           <form onSubmit={handleSaveItem} className="space-y-4">
             {storageError && (
@@ -1197,11 +1225,28 @@ export const MenuManagementView: React.FC = () => {
                 value={editingItem.costMenuId || ''}
                 onChange={(e) => {
                   const chosen = costMenus.find((m) => m.id === e.target.value);
-                  setEditingItem((prev) => ({
-                    ...prev,
-                    costMenuId: chosen?.id || '',
-                    costMenuName: chosen?.name || '',
-                  }));
+                  setEditingItem((prev) => {
+                    if (!prev) return prev;
+                    if (!chosen) {
+                      return {
+                        ...prev,
+                        costMenuId: '',
+                        costMenuName: '',
+                        variants: (prev.variants || []).map((v) => ({
+                          ...v,
+                          costMenuId: undefined,
+                          costVariantId: undefined,
+                          costVariantName: undefined,
+                        })),
+                      };
+                    }
+                    return {
+                      ...prev,
+                      costMenuId: chosen.id,
+                      costMenuName: chosen.name,
+                      variants: buildVariantsFromCostMenu(chosen, prev.variants || []),
+                    };
+                  });
                   soundService.playTap();
                 }}
                 className="w-full px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-bold text-slate-900 dark:text-white focus:ring-2 focus:ring-amber-500"
@@ -1239,8 +1284,8 @@ export const MenuManagementView: React.FC = () => {
               <div className="space-y-2">
                 <div className="hidden sm:flex items-center text-[11px] font-bold text-slate-500 pl-8 pr-2 gap-2">
                   <div className="flex-1">ชื่อตัวเลือกย่อย (ไทย / อังกฤษ)</div>
-                  <div className="w-20 text-center">ราคาขาย (฿)</div>
-                  <div className="w-16 text-center">ต้นทุน (฿)</div>
+                  <div className="w-24 text-center">ราคาขาย (฿)</div>
+                  <div className="w-24 text-center">ต้นทุน (฿)</div>
                   <div className="w-24 text-center">หมด/พร้อมขาย</div>
                   <div className="w-8"></div>
                 </div>
@@ -1251,6 +1296,7 @@ export const MenuManagementView: React.FC = () => {
                   const varProfit = Math.max(0, varPrice - varCost);
                   const varMarginPct = varPrice > 0 ? (varProfit / varPrice) * 100 : 0;
                   const varFoodCostPct = varPrice > 0 ? (varCost / varPrice) * 100 : 0;
+                  const isCostLocked = Boolean(variant.costVariantId);
 
                   return (
                     <div
@@ -1296,8 +1342,8 @@ export const MenuManagementView: React.FC = () => {
                           required
                         />
 
-                        <div className="flex items-center gap-2 shrink-0">
-                          <div className="w-20">
+                        <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                          <div className="w-24">
                             <input
                               type="number"
                               required
@@ -1305,23 +1351,47 @@ export const MenuManagementView: React.FC = () => {
                               placeholder={t('price')}
                               value={variant.price}
                               onChange={(e) =>
-                                handleUpdateVariant(idx, { price: Number(e.target.value) })
+                                handleUpdateVariant(idx, {
+                                  price: Number(e.target.value),
+                                  priceUpdatedAt: new Date().toISOString(),
+                                })
                               }
-                              className="w-full px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-mono font-bold bg-slate-50 dark:bg-slate-800 text-amber-600 dark:text-amber-400"
+                              title="ปรับเปลี่ยนราคาขายได้ (ระบบจะอัปเดตเป็นค่าล่าสุดในการเชื่อมโยง)"
+                              className="w-full px-2 py-1.5 rounded-lg border border-amber-300 dark:border-amber-700 text-xs font-mono font-bold bg-amber-50/40 dark:bg-slate-800 text-amber-600 dark:text-amber-400"
                             />
                           </div>
 
-                          <div className="w-16">
+                          <div className="w-24 relative">
                             <input
                               type="number"
                               min={0}
+                              readOnly={isCostLocked}
+                              disabled={isCostLocked}
+                              tabIndex={isCostLocked ? -1 : undefined}
                               placeholder={t('cost')}
                               value={variant.cost}
-                              onChange={(e) =>
-                                handleUpdateVariant(idx, { cost: Number(e.target.value) })
+                              onChange={(e) => {
+                                if (!isCostLocked) {
+                                  handleUpdateVariant(idx, { cost: Number(e.target.value) });
+                                }
+                              }}
+                              title={
+                                isCostLocked
+                                  ? 'ต้นทุนจากสูตรอาหาร Food Cost System (ไม่สามารถแก้ไขได้)'
+                                  : 'ต้นทุนวัตถุดิบ (฿)'
                               }
-                              className="w-full px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-mono bg-slate-50 dark:bg-slate-800 text-slate-500"
+                              className={`w-full px-2 py-1.5 rounded-lg border text-xs font-mono ${
+                                isCostLocked
+                                  ? 'pr-6 border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800/90 text-slate-500 cursor-not-allowed select-none'
+                                  : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-500'
+                              }`}
                             />
+                            {isCostLocked && (
+                              <Lock
+                                className="w-3 h-3 text-slate-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none"
+                                aria-label="Locked Recipe Cost"
+                              />
+                            )}
                           </div>
 
                           <label className="flex items-center gap-1 cursor-pointer text-[11px] text-slate-600 dark:text-slate-400">
@@ -1667,18 +1737,77 @@ export const MenuManagementView: React.FC = () => {
           isOpen={showFoodCostVariantPicker}
           onClose={() => setShowFoodCostVariantPicker(false)}
           selectedCostMenuId={editingItem.costMenuId}
-          onSelectCostMenuId={(costMenuId, costMenuName) => {
-            setEditingItem((prev) => (prev ? { ...prev, costMenuId, costMenuName } : prev));
+          onSelectCostMenuId={(costMenuId, costMenuName, chosenMenu) => {
+            setEditingItem((prev) => {
+              if (!prev) return prev;
+              if (!chosenMenu) {
+                return {
+                  ...prev,
+                  costMenuId: '',
+                  costMenuName: '',
+                  variants: (prev.variants || []).map((v) => ({
+                    ...v,
+                    costMenuId: undefined,
+                    costVariantId: undefined,
+                    costVariantName: undefined,
+                  })),
+                };
+              }
+              return {
+                ...prev,
+                costMenuId,
+                costMenuName,
+                variants: buildVariantsFromCostMenu(chosenMenu, prev.variants || []),
+              };
+            });
           }}
           existingVariants={editingItem.variants || []}
           onPickVariant={(pickedVariant) => {
             setEditingItem((prev) => {
               if (!prev) return prev;
               const current = prev.variants || [];
+              const existingIdx = current.findIndex(
+                (v) =>
+                  (pickedVariant.costVariantId && v.costVariantId === pickedVariant.costVariantId) ||
+                  v.name.trim().toLowerCase() === pickedVariant.name.trim().toLowerCase()
+              );
+              const cleanedCurrent =
+                current.length === 1 &&
+                current[0].name === 'ปกติ' &&
+                !current[0].costVariantId
+                  ? []
+                  : [...current];
+
+              if (existingIdx >= 0 && cleanedCurrent[existingIdx]) {
+                cleanedCurrent[existingIdx] = {
+                  ...cleanedCurrent[existingIdx],
+                  cost: pickedVariant.cost,
+                  costMenuId: pickedVariant.costMenuId,
+                  costVariantId: pickedVariant.costVariantId,
+                  costVariantName: pickedVariant.costVariantName,
+                  price:
+                    cleanedCurrent[existingIdx].price > 0
+                      ? cleanedCurrent[existingIdx].price
+                      : pickedVariant.price,
+                };
+              } else {
+                cleanedCurrent.push(pickedVariant);
+              }
               return {
                 ...prev,
                 costMenuId: pickedVariant.costMenuId || prev.costMenuId,
-                variants: [...current, pickedVariant],
+                variants: cleanedCurrent,
+              };
+            });
+          }}
+          onPickAllVariants={(menu) => {
+            setEditingItem((prev) => {
+              if (!prev) return prev;
+              return {
+                ...prev,
+                costMenuId: menu.id,
+                costMenuName: menu.name,
+                variants: buildVariantsFromCostMenu(menu, prev.variants || []),
               };
             });
           }}

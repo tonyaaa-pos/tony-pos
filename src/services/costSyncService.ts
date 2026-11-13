@@ -8,6 +8,7 @@ import {
   handleFirestoreError,
 } from './firebase';
 import { saveMenuItemRemote } from './cloudStore';
+import { translateThaiToEnglishFast } from '../utils/thaiToEnglishTranslator';
 import type { MenuItem, ItemVariantOption, ShopSettings } from '../types';
 
 export interface TonysKitchenSetting {
@@ -598,6 +599,141 @@ export function findMatchingCostVariant(
 }
 
 /**
+ * Builds POS variants strictly from the selected Food Cost menu (never mixing options from other menus).
+ * Keeps latest edited selling price if matching the same linked cost menu, while always locking cost to recipe formula.
+ */
+export function buildVariantsFromCostMenu(
+  costMenu: TonysKitchenMenu,
+  existingVariants: ItemVariantOption[] = []
+): ItemVariantOption[] {
+  const costVars = costMenu.variants || [];
+  if (costVars.length === 0) return existingVariants;
+
+  const built: ItemVariantOption[] = costVars.map((cv) => {
+    const varName = (cv.name || cv.variantName || costMenu.name || '').trim();
+    const translatedEn = translateThaiToEnglishFast(varName);
+    const nameEn =
+      translatedEn && !/[\u0E00-\u0E7F]/.test(translatedEn) ? translatedEn : '';
+    const recipeCost = getVariantRecipeCost(cv);
+    const bundlePrice = getVariantSellingPrice(cv);
+
+    // Preserve user's previously customized variant only if it already belonged to THIS costMenu
+    const existingMatch = existingVariants.find(
+      (ev) =>
+        ev.costMenuId === costMenu.id &&
+        (ev.costVariantId === cv.id ||
+          normalizeName(ev.name) === normalizeName(varName))
+    );
+
+    const resolvedPrice =
+      existingMatch && existingMatch.price > 0
+        ? existingMatch.price
+        : bundlePrice > 0
+        ? bundlePrice
+        : 80;
+
+    return {
+      id:
+        existingMatch?.id ||
+        `v_${cv.id}_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 5)}`,
+      name: varName,
+      nameEn: existingMatch?.nameEn || nameEn,
+      price: resolvedPrice,
+      cost: recipeCost,
+      isAvailable: existingMatch ? existingMatch.isAvailable : true,
+      isSoldOut: existingMatch?.isSoldOut || false,
+      costMenuId: costMenu.id,
+      costVariantId: cv.id,
+      costVariantName: varName,
+      priceUpdatedAt: existingMatch?.priceUpdatedAt,
+    };
+  });
+
+  // Keep any truly custom unlinked variants the user created (exclude default placeholder 'ปกติ')
+  const customUnlinked = existingVariants.filter(
+    (ev) =>
+      !ev.costVariantId &&
+      !ev.costMenuId &&
+      ev.name.trim() !== '' &&
+      ev.name.trim() !== 'ปกติ' &&
+      ev.name.trim().toLowerCase() !== 'standard'
+  );
+
+  return [...built, ...customUnlinked];
+}
+
+/**
+ * Persists POS selling price modifications back to the linked Food Cost bundle (local cache + Firestore)
+ * so the latest edited price is always treated as the current linked value.
+ */
+export async function syncSellingPriceUpdatesToCostBundle(
+  costMenuId: string | undefined,
+  variants: ItemVariantOption[]
+): Promise<boolean> {
+  if (!costMenuId && !variants.some((v) => v.costMenuId || v.costVariantId)) {
+    return false;
+  }
+
+  const bundle = getCachedCostBundle();
+  const menus = bundle.payload?.menus || [];
+  if (menus.length === 0) return false;
+
+  const nowIso = new Date().toISOString();
+  let changed = false;
+
+  const updatedMenus = menus.map((cm) => {
+    const isTargetMenu =
+      (costMenuId && cm.id === costMenuId) ||
+      variants.some((v) => v.costMenuId === cm.id);
+    if (!isTargetMenu || !cm.variants) return cm;
+
+    const updatedVars = cm.variants.map((cv) => {
+      const matchedPosVar = variants.find(
+        (pv) =>
+          (pv.costVariantId && pv.costVariantId === cv.id) ||
+          ((pv.costMenuId === cm.id || costMenuId === cm.id) &&
+            normalizeName(pv.name) === normalizeName(cv.name || cv.variantName || ''))
+      );
+      if (matchedPosVar && typeof matchedPosVar.price === 'number' && matchedPosVar.price >= 0) {
+        const currentBundlePrice = getVariantSellingPrice(cv);
+        if (currentBundlePrice !== matchedPosVar.price) {
+          changed = true;
+        }
+        return {
+          ...cv,
+          sellingPrice: matchedPosVar.price,
+          price: matchedPosVar.price,
+        };
+      }
+      return cv;
+    });
+
+    return { ...cm, variants: updatedVars };
+  });
+
+  if (!changed) return false;
+
+  const updatedPayload: TonysKitchenPayload = {
+    ...bundle,
+    exportedAt: nowIso,
+    payload: {
+      ...bundle.payload,
+      menus: updatedMenus,
+    },
+  };
+
+  saveCachedCostBundle(updatedPayload);
+
+  try {
+    await saveCostBundleToFirestore(updatedPayload);
+  } catch (err) {
+    console.warn('[syncSellingPriceUpdatesToCostBundle] Cloud save warning:', err);
+  }
+
+  return true;
+}
+
+/**
  * Syncs Cost & Profit data into KinD POS menu items, OpEx, and Firestore
  */
 export async function applyCostDataToPOS(
@@ -679,11 +815,19 @@ export async function applyCostDataToPOS(
 
         if (matchedCostVar) {
           const varCost = getVariantRecipeCost(matchedCostVar) || posVar.cost;
+          const remoteSellPrice = getVariantSellingPrice(matchedCostVar);
+          const remoteTime = payload.exportedAt ? new Date(payload.exportedAt).getTime() : 0;
+          const localTime = posVar.priceUpdatedAt ? new Date(posVar.priceUpdatedAt).getTime() : 0;
+          const resolvedPrice =
+            remoteSellPrice > 0 && (posVar.price <= 0 || remoteTime > localTime)
+              ? remoteSellPrice
+              : posVar.price;
 
           itemMatchedAnyVariant = true;
           const oldVcost = posVar.cost;
           if (
             varCost !== oldVcost ||
+            resolvedPrice !== posVar.price ||
             posVar.costVariantId !== matchedCostVar.id ||
             posVar.costMenuId !== matchedCostMenu.id
           ) {
@@ -694,15 +838,20 @@ export async function applyCostDataToPOS(
             variantName: posVar.name,
             oldCost: oldVcost,
             newCost: varCost,
-            sellingPrice: posVar.price,
-            foodCostPct: posVar.price > 0 ? (varCost / posVar.price) * 100 : 0,
+            sellingPrice: resolvedPrice,
+            foodCostPct: resolvedPrice > 0 ? (varCost / resolvedPrice) * 100 : 0,
           });
           return {
             ...posVar,
+            price: resolvedPrice,
             cost: varCost,
             costMenuId: matchedCostMenu.id,
             costVariantId: matchedCostVar.id,
             costVariantName: matchedCostVar.name || matchedCostVar.variantName || posVar.name,
+            priceUpdatedAt:
+              resolvedPrice !== posVar.price && payload.exportedAt
+                ? payload.exportedAt
+                : posVar.priceUpdatedAt,
           };
         }
         return posVar;

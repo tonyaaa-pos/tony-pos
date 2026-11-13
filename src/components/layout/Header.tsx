@@ -117,7 +117,7 @@ export const Header: React.FC<HeaderProps> = ({ onOpenMenu }) => {
 
   return (
     <>
-      <header className="h-16 px-3 sm:px-4 md:px-6 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between sticky top-0 z-30 transition-colors shrink-0">
+      <header className="min-h-16 py-1.5 px-3 sm:px-4 md:px-6 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between sticky top-0 z-30 transition-colors shrink-0">
         {/* Zone 1: Hamburger menu button + Title */}
         <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           <button
@@ -262,7 +262,7 @@ export const Header: React.FC<HeaderProps> = ({ onOpenMenu }) => {
           >
             <Bell className="w-5 h-5" />
             {unreadCount > 0 && (
-              <span className="absolute top-1.5 right-1.5 w-4 h-4 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center animate-pulse">
+              <span className="absolute -top-1 -right-1 min-w-6 h-6 px-1 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center animate-pulse leading-none">
                 {unreadCount > 9 ? '9+' : unreadCount}
               </span>
             )}

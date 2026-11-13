@@ -82,6 +82,7 @@ export interface ItemVariantOption {
   costMenuId?: string;
   costVariantId?: string;
   costVariantName?: string;
+  priceUpdatedAt?: string;
 }
 
 export interface MenuItem {
