@@ -22,6 +22,13 @@ import {
   ChevronLeft,
   ChevronRight,
   Edit,
+  ArrowRightLeft,
+  Split,
+  Merge,
+  StickyNote,
+  Plus,
+  Minus,
+  Check,
 } from 'lucide-react';
 import { INITIAL_CATEGORIES, INITIAL_MENU_ITEMS } from '../../data/seedData';
 import { formatBaht } from '../../utils/formatters';
@@ -110,6 +117,11 @@ export const POSView: React.FC = () => {
     removeUnsentItemFromBill,
     confirmOrder,
     voidOrderItem,
+    moveTable,
+    splitBill,
+    mergeBills,
+    voidBill,
+    updateBillNote,
     settings,
     activeCategory,
     setActiveCategory,
@@ -157,6 +169,26 @@ export const POSView: React.FC = () => {
   // Drag and drop state for reordering categories
   const [draggedCatIndex, setDraggedCatIndex] = useState<number | null>(null);
   const [dragOverCatIndex, setDragOverCatIndex] = useState<number | null>(null);
+
+  // Bill operations on ordering screen: Move table, Split bill, Merge bills, Void/Delete bill, Bill note
+  const [showMoveTableModal, setShowMoveTableModal] = useState(false);
+  const [showSplitBillModal, setShowSplitBillModal] = useState(false);
+  const [posItemSplits, setPosItemSplits] = useState<Record<string, number>>({});
+  const [showMergeBillsModal, setShowMergeBillsModal] = useState(false);
+  const [mergeSelectedBillIds, setMergeSelectedBillIds] = useState<string[]>([]);
+  const [showVoidBillModal, setShowVoidBillModal] = useState(false);
+  const [voidBillReason, setVoidBillReason] = useState('');
+  const [voidBillError, setVoidBillError] = useState('');
+  const [showBillNoteModal, setShowBillNoteModal] = useState(false);
+  const [billNoteDraft, setBillNoteDraft] = useState('');
+  const [actionNotice, setActionNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  const showPosNotice = (type: 'success' | 'error', message: string) => {
+    setActionNotice({ type, message });
+    setTimeout(() => {
+      setActionNotice((prev) => (prev?.message === message ? null : prev));
+    }, 3500);
+  };
 
   // Auto-reset activeCategory and self-heal menu items on POSView mount
   useEffect(() => {
@@ -436,6 +468,39 @@ export const POSView: React.FC = () => {
   // Unsent items in cart
   const unsentCount = activeBill?.items.filter((i) => i.isNewUnsent).length || 0;
   const activeCartCount = activeBill?.items.filter((i) => i.status !== 'voided').length || 0;
+
+  // Derived data for POS bill actions
+  const tableOpenBills = useMemo(() => {
+    if (!activeBill?.tableId) return [];
+    return bills.filter((b) => b.tableId === activeBill.tableId && b.status === 'open');
+  }, [bills, activeBill?.tableId]);
+
+  const validActiveItems = useMemo(() => {
+    return (activeBill?.items || []).filter((i) => i.status !== 'voided');
+  }, [activeBill?.items]);
+
+  const totalValidItemQty = useMemo(() => {
+    return validActiveItems.reduce((sum, i) => sum + i.quantity, 0);
+  }, [validActiveItems]);
+
+  const posSplitSelectedQty = useMemo(() => {
+    return Object.values(posItemSplits).reduce((sum, q) => sum + q, 0);
+  }, [posItemSplits]);
+
+  const posSplitPreviewTotal = useMemo(() => {
+    return validActiveItems.reduce((sum, item) => {
+      const q = posItemSplits[item.id] || 0;
+      return sum + item.price * q;
+    }, 0);
+  }, [validActiveItems, posItemSplits]);
+
+  const availableMoveTables = useMemo(() => {
+    return tables.filter((tItem) => tItem.status === 'available' && tItem.id !== activeBill?.tableId);
+  }, [tables, activeBill?.tableId]);
+
+  const otherOpenBills = useMemo(() => {
+    return bills.filter((b) => b.status === 'open' && b.id !== activeBill?.id);
+  }, [bills, activeBill?.id]);
 
   // Active category item count helper with reliable fail-safe
   const totalAvailableDishes = useMemo(() => {
@@ -732,6 +797,145 @@ export const POSView: React.FC = () => {
               </option>
             ))}
           </select>
+        </div>
+
+        {/* Multi-Bill Tabs when table has split bills */}
+        {tableOpenBills.length > 1 && activeBill && (
+          <div className="px-3 py-1.5 border-b border-slate-200 dark:border-slate-800 bg-amber-50/60 dark:bg-amber-950/20 flex items-center gap-1.5 overflow-x-auto no-scrollbar shrink-0">
+            <span className="text-[10px] font-bold text-amber-800 dark:text-amber-300 whitespace-nowrap">
+              บิลแยก ({tableOpenBills.length}):
+            </span>
+            {tableOpenBills.map((b, idx) => {
+              const isCurrent = b.id === activeBill.id;
+              return (
+                <button
+                  key={b.id}
+                  type="button"
+                  onClick={() => {
+                    soundService.playTap();
+                    setActiveBillId(b.id);
+                  }}
+                  className={`px-2 py-1 rounded-lg text-[10px] font-bold whitespace-nowrap transition cursor-pointer ${
+                    isCurrent
+                      ? 'bg-amber-500 text-slate-950 shadow-2xs'
+                      : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:border-amber-400'
+                  }`}
+                >
+                  บิล {idx + 1} ({formatBaht(b.grandTotal)})
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Quick 5-Action Toolbar: ย้ายโต๊ะ / แยกบิล / รวมบิล / ลบบิล / โน้ต */}
+        <div className="px-3 py-2 border-b border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900/80 shrink-0 space-y-1.5">
+          <div className="grid grid-cols-5 gap-1.5">
+            <button
+              type="button"
+              disabled={!activeBill}
+              onClick={() => {
+                soundService.playTap();
+                setShowMoveTableModal(true);
+              }}
+              className="py-1.5 px-1 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-amber-400 hover:text-amber-700 dark:hover:text-amber-300 disabled:opacity-40 disabled:cursor-not-allowed text-[10px] font-bold text-slate-700 dark:text-slate-200 flex flex-col items-center justify-center gap-0.5 transition cursor-pointer"
+              title="ย้ายโต๊ะสำหรับบิลนี้"
+            >
+              <ArrowRightLeft className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
+              <span>ย้ายโต๊ะ</span>
+            </button>
+
+            <button
+              type="button"
+              disabled={!activeBill || totalValidItemQty < 2}
+              onClick={() => {
+                soundService.playTap();
+                setPosItemSplits({});
+                setShowSplitBillModal(true);
+              }}
+              className="py-1.5 px-1 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-amber-400 hover:text-amber-700 dark:hover:text-amber-300 disabled:opacity-40 disabled:cursor-not-allowed text-[10px] font-bold text-slate-700 dark:text-slate-200 flex flex-col items-center justify-center gap-0.5 transition cursor-pointer"
+              title="แยกรายการอาหารออกเป็นบิลใหม่"
+            >
+              <Split className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+              <span>แยกบิล</span>
+            </button>
+
+            <button
+              type="button"
+              disabled={!activeBill || otherOpenBills.length === 0}
+              onClick={() => {
+                soundService.playTap();
+                setMergeSelectedBillIds([]);
+                setShowMergeBillsModal(true);
+              }}
+              className="py-1.5 px-1 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-amber-400 hover:text-amber-700 dark:hover:text-amber-300 disabled:opacity-40 disabled:cursor-not-allowed text-[10px] font-bold text-slate-700 dark:text-slate-200 flex flex-col items-center justify-center gap-0.5 transition cursor-pointer"
+              title="รวมบิลอื่นเข้ามาในบิลนี้"
+            >
+              <Merge className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+              <span>รวมบิล</span>
+            </button>
+
+            <button
+              type="button"
+              disabled={!activeBill}
+              onClick={() => {
+                soundService.playTap();
+                setVoidBillReason('');
+                setVoidBillError('');
+                setShowVoidBillModal(true);
+              }}
+              className="py-1.5 px-1 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-rose-400 hover:text-rose-600 dark:hover:text-rose-400 disabled:opacity-40 disabled:cursor-not-allowed text-[10px] font-bold text-slate-700 dark:text-slate-200 flex flex-col items-center justify-center gap-0.5 transition cursor-pointer"
+              title="ลบ/ยกเลิกบิลนี้"
+            >
+              <Trash2 className="w-3.5 h-3.5 text-rose-500" />
+              <span>ลบบิล</span>
+            </button>
+
+            <button
+              type="button"
+              disabled={!activeBill}
+              onClick={() => {
+                soundService.playTap();
+                setBillNoteDraft(activeBill?.note || '');
+                setShowBillNoteModal(true);
+              }}
+              className={`py-1.5 px-1 rounded-xl border disabled:opacity-40 disabled:cursor-not-allowed text-[10px] font-bold flex flex-col items-center justify-center gap-0.5 transition cursor-pointer ${
+                activeBill?.note
+                  ? 'border-amber-400 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300'
+                  : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-amber-400 text-slate-700 dark:text-slate-200'
+              }`}
+              title="เพิ่มหรือแก้ไขโน้ตของบิล"
+            >
+              <StickyNote className="w-3.5 h-3.5 text-amber-500" />
+              <span>โน้ต</span>
+            </button>
+          </div>
+
+          {activeBill?.note && (
+            <button
+              type="button"
+              onClick={() => {
+                setBillNoteDraft(activeBill.note || '');
+                setShowBillNoteModal(true);
+              }}
+              className="w-full text-left px-2.5 py-1.5 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/60 text-[11px] text-amber-900 dark:text-amber-200 flex items-center gap-1.5 cursor-pointer hover:bg-amber-100/80 transition"
+            >
+              <StickyNote className="w-3.5 h-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+              <span className="truncate font-medium">โน้ตบิล: {activeBill.note}</span>
+            </button>
+          )}
+
+          {actionNotice && (
+            <div
+              className={`px-2.5 py-1.5 rounded-lg text-[11px] font-semibold flex items-center gap-1.5 ${
+                actionNotice.type === 'success'
+                  ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60'
+                  : 'bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800/60'
+              }`}
+            >
+              <span>{actionNotice.message}</span>
+            </div>
+          )}
         </div>
 
         {/* Cart Items List */}
@@ -1192,6 +1396,518 @@ export const POSView: React.FC = () => {
         onClose={() => setQuickEditItem(null)}
         item={quickEditItem}
       />
+
+      {/* Modal 1: Move Table (ย้ายโต๊ะ) */}
+      {showMoveTableModal && activeBill && (
+        <Modal
+          isOpen={true}
+          onClose={() => setShowMoveTableModal(false)}
+          title={
+            activeBill.tableName
+              ? `ย้ายโต๊ะ (จากโต๊ะ ${activeBill.tableName})`
+              : `เลือกโต๊ะสำหรับบิล ${activeBill.billNumber}`
+          }
+          maxWidth="max-w-md"
+        >
+          <div className="space-y-4">
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              {activeBill.tableId
+                ? 'เลือกโต๊ะที่ว่างอยู่เพื่อย้ายรายการอาหารและบิลทั้งหมดไปโต๊ะใหม่ทันที'
+                : 'เลือกโต๊ะที่ว่างอยู่เพื่อผูกบิลนี้เข้ากับโต๊ะ'}
+            </p>
+
+            {availableMoveTables.length === 0 ? (
+              <div className="p-6 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-center text-xs text-slate-500">
+                ไม่มีโต๊ะว่างในขณะนี้ (โต๊ะทั้งหมดมีลูกค้าหรือถูกจองไว้แล้ว)
+              </div>
+            ) : (
+              <div className="grid grid-cols-3 gap-2.5 max-h-64 overflow-y-auto p-1">
+                {availableMoveTables.map((tItem) => (
+                  <button
+                    key={tItem.id}
+                    type="button"
+                    onClick={() => {
+                      if (activeBill.tableId) {
+                        const ok = moveTable(activeBill.tableId, tItem.id);
+                        if (ok) {
+                          soundService.playSuccessTap();
+                          setShowMoveTableModal(false);
+                          showPosNotice('success', `ย้ายไปโต๊ะ ${tItem.number} เรียบร้อยแล้ว`);
+                        } else {
+                          showPosNotice('error', 'ไม่สามารถย้ายโต๊ะได้ กรุณาลองใหม่');
+                        }
+                      } else {
+                        assignTableToBill(activeBill.id, tItem.id);
+                        soundService.playSuccessTap();
+                        setShowMoveTableModal(false);
+                        showPosNotice('success', `กำหนดโต๊ะ ${tItem.number} ให้บิลนี้เรียบร้อยแล้ว`);
+                      }
+                    }}
+                    className="p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:bg-amber-500 hover:text-slate-950 hover:border-amber-600 transition flex flex-col items-center justify-center gap-1 cursor-pointer"
+                  >
+                    <span className="font-bold text-sm">{tItem.number}</span>
+                    <span className="text-[10px] opacity-75">{tItem.capacity} ที่นั่ง</span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div className="flex justify-end pt-2 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setShowMoveTableModal(false)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              >
+                ปิด
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Modal 2: Split Bill (แยกบิล) */}
+      {showSplitBillModal && activeBill && (
+        <Modal
+          isOpen={true}
+          onClose={() => setShowSplitBillModal(false)}
+          title={`แยกบิล (${activeBill.tableName ? `โต๊ะ ${activeBill.tableName} · ` : ''}${activeBill.billNumber})`}
+          maxWidth="max-w-lg"
+        >
+          <div className="space-y-4">
+            <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+              <span>เลือกรายการและจำนวนที่ต้องการแยกออกไปเป็นบิลใหม่</span>
+              {posSplitSelectedQty > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setPosItemSplits({})}
+                  className="text-rose-600 font-semibold hover:underline cursor-pointer"
+                >
+                  ล้างที่เลือก
+                </button>
+              )}
+            </div>
+
+            <div className="max-h-64 overflow-y-auto space-y-2 pr-1">
+              {validActiveItems.map((item) => {
+                const splitQty = posItemSplits[item.id] || 0;
+                const isSelected = splitQty > 0;
+                return (
+                  <div
+                    key={item.id}
+                    className={`p-2.5 rounded-xl border transition flex items-center justify-between gap-2 ${
+                      isSelected
+                        ? 'bg-amber-50/70 dark:bg-amber-950/30 border-amber-400 dark:border-amber-600'
+                        : 'bg-slate-50 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700'
+                    }`}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="text-xs font-bold text-slate-900 dark:text-white truncate">
+                        {getName(item)} <span className="text-slate-400 font-normal">(มี {item.quantity})</span>
+                      </div>
+                      <div className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
+                        {formatBaht(item.price)} / รายการ
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        type="button"
+                        disabled={splitQty <= 0}
+                        onClick={() =>
+                          setPosItemSplits((prev) => ({
+                            ...prev,
+                            [item.id]: Math.max(0, (prev[item.id] || 0) - 1),
+                          }))
+                        }
+                        className="w-7 h-7 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 disabled:opacity-30 flex items-center justify-center cursor-pointer"
+                      >
+                        <Minus className="w-3.5 h-3.5" />
+                      </button>
+                      <span className="w-7 text-center font-mono font-bold text-xs text-slate-900 dark:text-white">
+                        {splitQty}
+                      </span>
+                      <button
+                        type="button"
+                        disabled={splitQty >= item.quantity}
+                        onClick={() =>
+                          setPosItemSplits((prev) => ({
+                            ...prev,
+                            [item.id]: Math.min(item.quantity, (prev[item.id] || 0) + 1),
+                          }))
+                        }
+                        className="w-7 h-7 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 disabled:opacity-30 flex items-center justify-center cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setPosItemSplits((prev) => ({
+                            ...prev,
+                            [item.id]: splitQty === item.quantity ? 0 : item.quantity,
+                          }))
+                        }
+                        className={`px-2 py-1 rounded-lg text-[10px] font-bold cursor-pointer ${
+                          splitQty === item.quantity
+                            ? 'bg-amber-500 text-slate-950'
+                            : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200'
+                        }`}
+                      >
+                        หมด
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {posSplitSelectedQty >= totalValidItemQty && totalValidItemQty > 0 && (
+              <div className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-[11px] text-rose-700 dark:text-rose-300 font-medium">
+                ต้องเหลืออย่างน้อย 1 รายการไว้ในบิลเดิม (ไม่สามารถย้ายออกหมดทุกรายการได้)
+              </div>
+            )}
+
+            <div className="p-3 rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-between text-xs">
+              <span className="text-slate-600 dark:text-slate-300 font-medium">
+                ยอดสินค้าที่แยกออก ({posSplitSelectedQty} ชิ้น):
+              </span>
+              <span className="font-mono font-bold text-sm text-amber-600 dark:text-amber-400">
+                {formatBaht(posSplitPreviewTotal)}
+              </span>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setShowSplitBillModal(false)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                disabled={posSplitSelectedQty <= 0 || posSplitSelectedQty >= totalValidItemQty}
+                onClick={() => {
+                  const payload = Object.entries(posItemSplits)
+                    .filter(([, qty]) => qty > 0)
+                    .map(([itemId, quantity]) => ({ itemId, quantity }));
+                  const res = splitBill(activeBill.id, payload);
+                  if (res) {
+                    soundService.playSuccessTap();
+                    setActiveBillId(res.newBill.id);
+                    setShowSplitBillModal(false);
+                    showPosNotice('success', `แยกบิลเป็น ${res.newBill.billNumber} เรียบร้อยแล้ว`);
+                  }
+                }}
+                className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 disabled:opacity-40 disabled:cursor-not-allowed text-slate-950 font-bold text-xs shadow-xs cursor-pointer"
+              >
+                ยืนยันแยกบิล
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Modal 3: Merge Bills (รวมบิล) */}
+      {showMergeBillsModal && activeBill && (
+        <Modal
+          isOpen={true}
+          onClose={() => setShowMergeBillsModal(false)}
+          title={`รวมบิลเข้ากับ ${activeBill.tableName ? `โต๊ะ ${activeBill.tableName}` : activeBill.billNumber}`}
+          maxWidth="max-w-lg"
+        >
+          <div className="space-y-4">
+            <div className="p-3 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/60 text-xs text-emerald-900 dark:text-emerald-200">
+              <span className="font-bold">บิลปลายทาง:</span>{' '}
+              {activeBill.tableName ? `โต๊ะ ${activeBill.tableName} · ` : ''}
+              {activeBill.billNumber} ({formatBaht(activeBill.grandTotal)})
+            </div>
+
+            {otherOpenBills.length === 0 ? (
+              <div className="p-6 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-center text-xs text-slate-500">
+                ไม่มีบิลอื่นที่เปิดอยู่ให้รวม
+              </div>
+            ) : (
+              <div className="max-h-64 overflow-y-auto space-y-2 pr-1">
+                {otherOpenBills.map((b) => {
+                  const checked = mergeSelectedBillIds.includes(b.id);
+                  const validCount = b.items.filter((i) => i.status !== 'voided').length;
+                  return (
+                    <button
+                      key={b.id}
+                      type="button"
+                      onClick={() =>
+                        setMergeSelectedBillIds((prev) =>
+                          prev.includes(b.id) ? prev.filter((id) => id !== b.id) : [...prev, b.id]
+                        )
+                      }
+                      className={`w-full text-left p-3 rounded-xl border transition flex items-center justify-between gap-3 cursor-pointer ${
+                        checked
+                          ? 'bg-amber-50 dark:bg-amber-950/40 border-amber-500 ring-1 ring-amber-400'
+                          : 'bg-slate-50 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700 hover:border-amber-400'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div
+                          className={`w-5 h-5 rounded-md flex items-center justify-center border shrink-0 ${
+                            checked
+                              ? 'bg-amber-500 border-amber-600 text-slate-950'
+                              : 'bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-600'
+                          }`}
+                        >
+                          {checked && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-xs font-bold text-slate-900 dark:text-white truncate">
+                            {b.tableName ? `โต๊ะ ${b.tableName}` : 'บิลหน้าร้าน/เดลิเวอรี'} · {b.billNumber}
+                          </div>
+                          <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                            {validCount} รายการ
+                            {b.note ? ` · โน้ต: ${b.note}` : ''}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="font-mono font-bold text-xs text-slate-900 dark:text-white shrink-0">
+                        {formatBaht(b.grandTotal)}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setShowMergeBillsModal(false)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                disabled={mergeSelectedBillIds.length === 0}
+                onClick={() => {
+                  const ok = mergeBills(mergeSelectedBillIds, activeBill.id);
+                  if (ok) {
+                    soundService.playSuccessTap();
+                    setShowMergeBillsModal(false);
+                    showPosNotice(
+                      'success',
+                      `รวม ${mergeSelectedBillIds.length} บิลเข้าด้วยกันเรียบร้อยแล้ว`
+                    );
+                  } else {
+                    showPosNotice('error', 'ไม่สามารถรวมบิลได้ กรุณาลองใหม่');
+                  }
+                }}
+                className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-xs shadow-xs cursor-pointer"
+              >
+                ยืนยันรวมบิล ({mergeSelectedBillIds.length})
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Modal 4: Void / Delete Bill (ลบบิล) */}
+      {showVoidBillModal && activeBill && (
+        <Modal
+          isOpen={true}
+          onClose={() => setShowVoidBillModal(false)}
+          title="ยืนยันการลบบิล (Void Bill)"
+          maxWidth="max-w-md"
+        >
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!voidBillReason.trim()) {
+                setVoidBillError('กรุณาเลือกหรือระบุเหตุผลในการลบบิล');
+                return;
+              }
+              const wasDineIn = activeBill.orderType === 'dine_in' && Boolean(activeBill.tableId);
+              voidBill(activeBill.id, voidBillReason.trim());
+              soundService.playTap();
+              setShowVoidBillModal(false);
+              if (wasDineIn) {
+                setActiveNav('tables');
+              } else {
+                showPosNotice('success', `ลบบิล ${activeBill.billNumber} เรียบร้อยแล้ว`);
+              }
+            }}
+            className="space-y-4"
+          >
+            <div className="p-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 text-xs text-rose-800 dark:text-rose-300 space-y-1">
+              <div className="font-bold">
+                บิลเลขที่ {activeBill.billNumber}
+                {activeBill.tableName ? ` (โต๊ะ ${activeBill.tableName})` : ''} · ยอดรวม {formatBaht(activeBill.grandTotal)}
+              </div>
+              <div className="text-[11px] opacity-85">
+                เมื่อยืนยันลบบิลแล้ว รายการในบิลจะถูกยกเลิก และหากโต๊ะไม่มีบิลอื่นเปิดค้างอยู่ สถานะจะกลับเป็นโต๊ะว่างทันที
+              </div>
+            </div>
+
+            {voidBillError && (
+              <div className="text-xs font-semibold text-rose-600 dark:text-rose-400">
+                {voidBillError}
+              </div>
+            )}
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+                เลือกเหตุผลด่วน:
+              </label>
+              <div className="flex flex-wrap gap-1.5 mb-3">
+                {[
+                  'ลูกค้าขอยกเลิก',
+                  'เปิดโต๊ะผิด',
+                  'คีย์บิลซ้ำซ้อน',
+                  'เปลี่ยนใจไม่รับอาหาร',
+                ].map((preset) => (
+                  <button
+                    key={preset}
+                    type="button"
+                    onClick={() => {
+                      setVoidBillReason(preset);
+                      setVoidBillError('');
+                    }}
+                    className={`px-2.5 py-1.5 rounded-lg text-xs transition cursor-pointer ${
+                      voidBillReason === preset
+                        ? 'bg-rose-600 text-white font-semibold'
+                        : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+                    }`}
+                  >
+                    {preset}
+                  </button>
+                ))}
+              </div>
+
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                เหตุผลในการลบบิล <span className="text-rose-500">*</span>:
+              </label>
+              <textarea
+                rows={2}
+                value={voidBillReason}
+                onChange={(e) => {
+                  setVoidBillReason(e.target.value);
+                  setVoidBillError('');
+                }}
+                placeholder="พิมพ์เหตุผลในการลบบิล..."
+                className="w-full px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs focus:ring-2 focus:ring-rose-500"
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setShowVoidBillModal(false)}
+                className="px-4 py-2 text-xs font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl cursor-pointer"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="submit"
+                className="px-5 py-2 text-xs font-bold rounded-xl bg-rose-600 hover:bg-rose-700 text-white shadow-xs cursor-pointer"
+              >
+                ยืนยันลบบิล
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* Modal 5: Bill Note (โน้ต) */}
+      {showBillNoteModal && activeBill && (
+        <Modal
+          isOpen={true}
+          onClose={() => setShowBillNoteModal(false)}
+          title={`โน้ตประจำบิล (${activeBill.tableName ? `โต๊ะ ${activeBill.tableName}` : activeBill.billNumber})`}
+          maxWidth="max-w-md"
+        >
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              updateBillNote(activeBill.id, billNoteDraft);
+              soundService.playSuccessTap();
+              setShowBillNoteModal(false);
+              showPosNotice(
+                'success',
+                billNoteDraft.trim() ? 'บันทึกโน้ตบิลเรียบร้อยแล้ว' : 'ล้างโน้ตบิลเรียบร้อยแล้ว'
+              );
+            }}
+            className="space-y-4"
+          >
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+                ข้อความด่วน:
+              </label>
+              <div className="flex flex-wrap gap-1.5 mb-3">
+                {[
+                  'ขอช้อนส้อมเพิ่ม',
+                  'แยกน้ำจิ้ม',
+                  'ไม่ใส่ผงชูรส',
+                  'แพ้อาหาร / งดถั่ว',
+                  'เร่งออเดอร์ลูกค้า',
+                  'ออกใบกำกับภาษี',
+                ].map((chip) => (
+                  <button
+                    key={chip}
+                    type="button"
+                    onClick={() =>
+                      setBillNoteDraft((prev) =>
+                        prev.trim()
+                          ? prev.includes(chip)
+                            ? prev
+                            : `${prev.trim()}, ${chip}`
+                          : chip
+                      )
+                    }
+                    className="px-2.5 py-1 rounded-lg text-[11px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-amber-100 dark:hover:bg-amber-900/40 hover:text-amber-800 dark:hover:text-amber-200 transition cursor-pointer"
+                  >
+                    + {chip}
+                  </button>
+                ))}
+              </div>
+
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                โน้ต / หมายเหตุบิล:
+              </label>
+              <textarea
+                rows={3}
+                value={billNoteDraft}
+                onChange={(e) => setBillNoteDraft(e.target.value)}
+                placeholder="พิมพ์หมายเหตุเพิ่มเติมสำหรับบิลหรือโต๊ะนี้..."
+                className="w-full px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs focus:ring-2 focus:ring-amber-500"
+              />
+            </div>
+
+            <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setBillNoteDraft('')}
+                className="px-3 py-2 text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-xl cursor-pointer"
+              >
+                ล้างข้อความ
+              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowBillNoteModal(false)}
+                  className="px-4 py-2 text-xs font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl cursor-pointer"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 text-xs font-bold rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 shadow-xs cursor-pointer"
+                >
+                  บันทึกโน้ต
+                </button>
+              </div>
+            </div>
+          </form>
+        </Modal>
+      )}
     </div>
   );
 };

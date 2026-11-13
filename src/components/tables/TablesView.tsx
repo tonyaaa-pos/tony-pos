@@ -342,17 +342,22 @@ export const TablesView: React.FC = () => {
       return;
     }
 
-    if (table.status === 'available') {
-      const defaultGuests = table.capacity || 2;
-      const billId = openTable(table.id, defaultGuests);
-      setActiveBillId(billId);
-      setActiveCategory('all');
-      setActiveNav('pos');
-      soundService.playTap();
-      return;
-    } else {
-      setShowDetailModal(table);
-    }
+    // Go directly to the food ordering / bill screen regardless of whether table is available or occupied
+    const existingOpenBill =
+      (table.currentBillId
+        ? bills.find((b) => b.id === table.currentBillId && b.status === 'open')
+        : undefined) ||
+      bills.find((b) => b.tableId === table.id && b.status === 'open');
+
+    const targetBillId = existingOpenBill
+      ? existingOpenBill.id
+      : openTable(table.id, table.reservation?.partySize || table.guestCount || table.capacity || 2);
+
+    setActiveBillId(targetBillId);
+    setActiveCategory('all');
+    setActiveNav('pos');
+    soundService.playTap();
+    return;
   };
 
   const handleRotate = (table: Table, e: React.MouseEvent) => {

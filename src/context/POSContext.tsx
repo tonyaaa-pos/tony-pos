@@ -172,6 +172,8 @@ interface POSContextType {
   applyMembershipDiscount: (billId: string, memberPhone: string, pointsToRedeem: number) => boolean;
   canPay: (target: Bill | Table | null | undefined) => CanPayResult;
   splitBill: (originalBillId: string, itemSplits: { itemId: string; quantity: number }[]) => { originalBill: Bill; newBill: Bill } | null;
+  mergeBills: (sourceBillIds: string[], targetBillId: string) => boolean;
+  updateBillNote: (billId: string, note: string) => void;
   completeBillPayment: (billId: string, payments: PaymentRecord[]) => { success: boolean; bill: Bill };
   voidBill: (billId: string, reason: string) => void;
   lastCompletedBill: Bill | null;
@@ -2615,6 +2617,10 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const movedItems: OrderItem[] = [];
 
       originalBill.items.forEach((item) => {
+        if (item.status === 'voided') {
+          remainingItems.push(item);
+          return;
+        }
         const splitSpec = itemSplits.find((s) => s.itemId === item.id);
         const splitQty = splitSpec ? Math.min(item.quantity, Math.max(0, splitSpec.quantity)) : 0;
         const remainQty = item.quantity - splitQty;
@@ -2624,7 +2630,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             ...item,
             id: 'ord_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
             quantity: splitQty,
-            isNewUnsent: false,
+            isNewUnsent: item.isNewUnsent,
           });
         }
 
@@ -2684,6 +2690,189 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return { originalBill: updatedOriginal, newBill: createdNewBill };
     },
     [recalculateBill, commitBills]
+  );
+
+  const updateBillNote = useCallback(
+    (billId: string, note: string) => {
+      const nowTs = Date.now();
+      const normalizedNote = note.trim() ? note.trim() : undefined;
+      let updatedBill: Bill | null = null;
+      const nextBills = billsRef.current.map((b) => {
+        if (b.id !== billId) return b;
+        const up: Bill = {
+          ...b,
+          note: normalizedNote,
+          updatedAtMs: nowTs,
+        };
+        updatedBill = up;
+        return up;
+      });
+      commitBills(nextBills);
+      if (updatedBill) {
+        saveBillRemote(updatedBill).catch((err) => console.warn('[Cloud saveBillRemote error]:', err));
+      }
+    },
+    [commitBills]
+  );
+
+  const mergeBills = useCallback(
+    (sourceBillIds: string[], targetBillId: string): boolean => {
+      const currentBills = billsRef.current;
+      const currentTables = tablesRef.current;
+      const targetBill = currentBills.find((b) => b.id === targetBillId && b.status === 'open');
+      if (!targetBill) return false;
+
+      const uniqueSourceIds = Array.from(new Set(sourceBillIds)).filter((id) => id !== targetBillId);
+      const sourceBills = currentBills.filter(
+        (b) => uniqueSourceIds.includes(b.id) && b.status === 'open'
+      );
+      if (sourceBills.length === 0) return false;
+
+      const now = new Date();
+      const nowTs = now.getTime();
+      const nowIso = now.toISOString();
+      const actorName = currentUserRef.current?.name || 'พนักงาน';
+
+      const combinedItems = [
+        ...targetBill.items,
+        ...sourceBills.flatMap((sb) => sb.items),
+      ];
+      const combinedNote =
+        Array.from(
+          new Set(
+            [targetBill.note, ...sourceBills.map((sb) => sb.note)].filter(
+              (n): n is string => Boolean(n && n.trim())
+            )
+          )
+        ).join(' | ') || undefined;
+
+      const recalculatedTargetBill = recalculateBill(
+        {
+          ...targetBill,
+          items: combinedItems,
+          note: combinedNote,
+          updatedAtMs: nowTs,
+        },
+        settingsRef.current
+      );
+
+      const sourceIdSet = new Set(sourceBills.map((sb) => sb.id));
+      const voidedBills: Bill[] = [];
+      const mergeReason = targetBill.tableName
+        ? `รวมเข้ากับโต๊ะ ${targetBill.tableName} (${targetBill.billNumber})`
+        : `รวมเข้ากับบิล ${targetBill.billNumber}`;
+
+      const preBills = currentBills.map((b) => {
+        if (b.id === recalculatedTargetBill.id) return recalculatedTargetBill;
+        if (sourceIdSet.has(b.id)) {
+          const voided: Bill = {
+            ...b,
+            status: 'voided',
+            voidReason: mergeReason,
+            voidedBy: actorName,
+            voidedAt: nowIso,
+            updatedAtMs: nowTs,
+          };
+          voidedBills.push(voided);
+          return voided;
+        }
+        return b;
+      });
+
+      const affectedTableIds = new Set<string>();
+      sourceBills.forEach((sb) => {
+        if (sb.tableId) affectedTableIds.add(sb.tableId);
+      });
+      currentTables.forEach((t) => {
+        if (t.currentBillId && sourceIdSet.has(t.currentBillId)) {
+          affectedTableIds.add(t.id);
+        }
+      });
+
+      const orphanEmptyIdsToVoid = new Set<string>();
+      const updatedTables: Table[] = [];
+      const nextTables = currentTables.map((t) => {
+        if (targetBill.tableId && t.id === targetBill.tableId) {
+          const up: Table = {
+            ...t,
+            status: t.status === 'payment_pending' ? 'payment_pending' : 'occupied',
+            currentBillId: recalculatedTargetBill.id,
+            updatedAtMs: nowTs,
+          };
+          updatedTables.push(up);
+          return up;
+        }
+
+        if (!affectedTableIds.has(t.id)) {
+          return t;
+        }
+
+        const remainingActiveOpen = preBills.filter(
+          (b) =>
+            b.tableId === t.id &&
+            b.status === 'open' &&
+            b.items.some((i) => i.status !== 'voided')
+        );
+
+        if (remainingActiveOpen.length > 0) {
+          const up: Table = {
+            ...t,
+            status: 'occupied',
+            currentBillId: remainingActiveOpen[0].id,
+            updatedAtMs: nowTs,
+          };
+          updatedTables.push(up);
+          return up;
+        }
+
+        preBills
+          .filter((b) => b.tableId === t.id && b.status === 'open')
+          .forEach((ob) => orphanEmptyIdsToVoid.add(ob.id));
+
+        const up: Table = {
+          ...t,
+          status: 'available',
+          currentBillId: undefined,
+          seatedAt: undefined,
+          guestCount: undefined,
+          reservation: undefined,
+          updatedAtMs: nowTs,
+        };
+        updatedTables.push(up);
+        return up;
+      });
+
+      const nextBills = preBills.map((b) => {
+        if (!orphanEmptyIdsToVoid.has(b.id)) return b;
+        const voidedOrphan: Bill = {
+          ...b,
+          status: 'voided',
+          voidReason: mergeReason,
+          voidedBy: actorName,
+          voidedAt: nowIso,
+          updatedAtMs: nowTs,
+        };
+        voidedBills.push(voidedOrphan);
+        return voidedOrphan;
+      });
+
+      commitBills(nextBills, false);
+      commitTables(nextTables);
+      if (activeBillId && sourceIdSet.has(activeBillId)) {
+        setActiveBillId(recalculatedTargetBill.id);
+      }
+      syncService.broadcast('DATA_RELOAD');
+
+      saveBillRemote(recalculatedTargetBill).catch((err) => console.warn('[Cloud saveBillRemote error]:', err));
+      voidedBills.forEach((vb) => {
+        saveBillRemote(vb).catch((err) => console.warn('[Cloud saveBillRemote error]:', err));
+      });
+      updatedTables.forEach((t) => {
+        saveTableRemote(t).catch((err) => console.warn('[Cloud saveTableRemote error]:', err));
+      });
+      return true;
+    },
+    [activeBillId, recalculateBill, commitBills, commitTables]
   );
 
   // Table Floor Plan & Layout Operations
@@ -3642,6 +3831,8 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     applyMembershipDiscount,
     canPay: checkCanPay,
     splitBill,
+    mergeBills,
+    updateBillNote,
     completeBillPayment,
     voidBill,
     lastCompletedBill,

@@ -89,6 +89,11 @@ export const ReceiptPrint: React.FC<ReceiptPrintProps> = ({ bill, settings, onCl
                 : 'เดลิเวอรี (Delivery)'}
             </span>
           </div>
+          {bill.note && (
+            <div className="pt-1 text-[10px] text-amber-700 font-medium break-words">
+              หมายเหตุบิล: {bill.note}
+            </div>
+          )}
         </div>
 
         {/* Item List */}

@@ -164,6 +164,7 @@ export function normalizeBillData(raw: any): Bill {
     tableName: raw?.tableName ?? undefined,
     guestCount: raw?.guestCount ?? undefined,
     deliveryInfo: raw?.deliveryInfo ?? undefined,
+    note: raw?.note ?? undefined,
     closedAt: raw?.closedAt ?? undefined,
     ...(tsMs > 0 ? { updatedAtMs: tsMs } : {}),
   } as Bill;
@@ -566,6 +567,7 @@ export async function saveBillRemote(bill: Bill): Promise<void> {
     ref,
     sanitizeForFirestore({
       ...bill,
+      note: bill.note ?? null,
       updatedAtMs: nowMs,
       clientUpdatedAt: nowMs,
       updatedAt: serverTimestamp(),

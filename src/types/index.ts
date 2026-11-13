@@ -209,6 +209,7 @@ export interface Bill {
   vatIncluded: boolean;
   grandTotal: number;
   payments: PaymentRecord[];
+  note?: string;
   voidReason?: string;
   voidedBy?: string;
   voidedAt?: string;
