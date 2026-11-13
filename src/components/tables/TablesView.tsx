@@ -508,8 +508,9 @@ export const TablesView: React.FC = () => {
   };
 
   const getTableBill = (table: Table) => {
+    if (table.status === 'available' || table.status === 'reserved') return null;
     if (!table.currentBillId) return null;
-    return bills.find((b) => b.id === table.currentBillId) || null;
+    return bills.find((b) => b.id === table.currentBillId && b.status === 'open') || null;
   };
 
   // Helper to render chairs around table - per user requirement: tables created must NOT have chairs around them
@@ -1129,48 +1130,53 @@ export const TablesView: React.FC = () => {
       )}
 
       {/* Modal: Table Details (Occupied, Bills, Move, Merge) */}
-      {showDetailModal && (
-        <TableDetailModal
-          isOpen={true}
-          table={showDetailModal}
-          bill={getTableBill(showDetailModal)}
-          onClose={() => setShowDetailModal(null)}
-          onStartMoveTable={(tbl) => {
-            setMovingSourceTable(tbl);
-            setMergingSourceTable(null);
-          }}
-          onStartMergeTable={(tbl) => {
-            setMergingSourceTable(tbl);
-            setMovingSourceTable(null);
-          }}
-          onOpenPOS={() => {
-            let billId = showDetailModal.currentBillId;
-            if (!billId) {
-              billId = openTable(
-                showDetailModal.id,
-                showDetailModal.guestCount || showDetailModal.capacity || 2
-              );
-            }
-            setActiveBillId(billId);
-            setActiveCategory('all');
-            setActiveNav('pos');
-          }}
-          onOpenPayment={() => {
-            const tableToPay = showDetailModal;
-            setShowDetailModal(null);
-            if (tableToPay) {
-              const check = canPay(tableToPay, bills);
+      {(() => {
+        const liveDetailTable = showDetailModal
+          ? tables.find((t) => t.id === showDetailModal.id) || null
+          : null;
+        if (!liveDetailTable) return null;
+        return (
+          <TableDetailModal
+            isOpen={true}
+            table={liveDetailTable}
+            bill={getTableBill(liveDetailTable)}
+            onClose={() => setShowDetailModal(null)}
+            onStartMoveTable={(tbl) => {
+              setMovingSourceTable(tbl);
+              setMergingSourceTable(null);
+            }}
+            onStartMergeTable={(tbl) => {
+              setMergingSourceTable(tbl);
+              setMovingSourceTable(null);
+            }}
+            onOpenPOS={() => {
+              let billId = liveDetailTable.currentBillId;
+              const hasOpenBill = billId && bills.some((b) => b.id === billId && b.status === 'open');
+              if (!hasOpenBill) {
+                billId = openTable(
+                  liveDetailTable.id,
+                  liveDetailTable.guestCount || liveDetailTable.capacity || 2
+                );
+              }
+              setActiveBillId(billId!);
+              setActiveCategory('all');
+              setActiveNav('pos');
+            }}
+            onOpenPayment={() => {
+              const latestTable = tables.find((t) => t.id === liveDetailTable.id) || liveDetailTable;
+              setShowDetailModal(null);
+              const check = canPay(latestTable, bills);
               if (!check.allowed) {
                 setPayBlockReason(check.reason || 'unsaved_items');
-                setTableForBlockedPay(tableToPay);
+                setTableForBlockedPay(latestTable);
                 setShowBlockedPayDialog(true);
                 return;
               }
-              setShowPaymentModal(tableToPay);
-            }
-          }}
-        />
-      )}
+              setShowPaymentModal(latestTable);
+            }}
+          />
+        );
+      })()}
 
       {/* Blocked payment modal */}
       {showBlockedPayDialog && (
@@ -1192,13 +1198,22 @@ export const TablesView: React.FC = () => {
       )}
 
       {/* Modal: Payment directly from Table view */}
-      {showPaymentModal && showPaymentModal.currentBillId && (
-        <PaymentModal
-          isOpen={true}
-          bill={bills.find((b) => b.id === showPaymentModal.currentBillId)!}
-          onClose={() => setShowPaymentModal(null)}
-        />
-      )}
+      {(() => {
+        const livePaymentTable = showPaymentModal
+          ? tables.find((t) => t.id === showPaymentModal.id) || null
+          : null;
+        const livePaymentBill = livePaymentTable?.currentBillId
+          ? bills.find((b) => b.id === livePaymentTable.currentBillId && b.status === 'open') || null
+          : null;
+        if (!livePaymentTable || !livePaymentBill) return null;
+        return (
+          <PaymentModal
+            isOpen={true}
+            bill={livePaymentBill}
+            onClose={() => setShowPaymentModal(null)}
+          />
+        );
+      })()}
 
       {/* Modal: Add / Edit Table or Chair with Size and Style Customization */}
       {isTableModalOpen && (

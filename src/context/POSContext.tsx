@@ -260,6 +260,136 @@ function loadState<T>(key: string, defaultValue: T): T {
   }
 }
 
+// Normalize a table so available/reserved tables never carry stale customer or bill info
+function normalizeTableState(t: Table): Table {
+  if (t.status === 'available') {
+    if (
+      t.currentBillId !== undefined ||
+      t.seatedAt !== undefined ||
+      t.guestCount !== undefined ||
+      t.reservation !== undefined
+    ) {
+      return {
+        ...t,
+        currentBillId: undefined,
+        seatedAt: undefined,
+        guestCount: undefined,
+        reservation: undefined,
+      };
+    }
+    return t;
+  }
+  if (t.status === 'reserved') {
+    if (
+      t.currentBillId !== undefined ||
+      t.seatedAt !== undefined ||
+      t.guestCount !== undefined
+    ) {
+      return {
+        ...t,
+        currentBillId: undefined,
+        seatedAt: undefined,
+        guestCount: undefined,
+      };
+    }
+    return t;
+  }
+  return t;
+}
+
+// Reconcile tables with bills so paid/voided bills always release tables to available
+function reconcileTablesWithBills(
+  rawTables: Table[],
+  billsList: Bill[]
+): { tables: Table[]; changed: boolean } {
+  let changed = false;
+  const billsById = new Map<string, Bill>(billsList.map((b) => [b.id, b]));
+
+  const reconciled = rawTables.map((rawT) => {
+    const t = normalizeTableState(rawT);
+    if (t !== rawT) changed = true;
+
+    if (t.status === 'occupied' || t.status === 'payment_pending') {
+      const openBillsOnTable = billsList.filter(
+        (b) => b.tableId === t.id && b.status === 'open'
+      );
+      const activeOpenBills = openBillsOnTable.filter((b) =>
+        b.items.some((i) => i.status !== 'voided')
+      );
+
+      if (t.currentBillId) {
+        const linked = billsById.get(t.currentBillId);
+        if (linked && (linked.status === 'paid' || linked.status === 'voided')) {
+          changed = true;
+          const nextBill = activeOpenBills[0];
+          if (nextBill) {
+            return {
+              ...t,
+              status: 'occupied' as const,
+              currentBillId: nextBill.id,
+              updatedAtMs: Math.max(t.updatedAtMs || 0, linked.updatedAtMs || 0, Date.now()),
+            };
+          }
+          return {
+            ...t,
+            status: 'available' as const,
+            currentBillId: undefined,
+            seatedAt: undefined,
+            guestCount: undefined,
+            reservation: undefined,
+            updatedAtMs: Math.max(t.updatedAtMs || 0, linked.updatedAtMs || 0, Date.now()),
+          };
+        }
+      } else if (openBillsOnTable.length === 0) {
+        changed = true;
+        return {
+          ...t,
+          status: 'available' as const,
+          currentBillId: undefined,
+          seatedAt: undefined,
+          guestCount: undefined,
+          reservation: undefined,
+          updatedAtMs: Math.max(t.updatedAtMs || 0, Date.now()),
+        };
+      }
+    }
+
+    return t;
+  });
+
+  return { tables: reconciled, changed };
+}
+
+// Merge remote entities keeping the most recently modified version
+function mergeEntitiesByLatest<T extends { id: string; updatedAtMs?: number }>(
+  currentList: T[],
+  incomingItems: T[],
+  removedIds: string[] = [],
+  shouldPreferIncoming?: (incoming: T, existing: T) => boolean
+): T[] {
+  const map = new Map<string, T>(currentList.map((item) => [item.id, item]));
+  incomingItems.forEach((incoming) => {
+    const existing = map.get(incoming.id);
+    if (!existing) {
+      map.set(incoming.id, incoming);
+      return;
+    }
+    if (shouldPreferIncoming) {
+      if (shouldPreferIncoming(incoming, existing)) {
+        map.set(incoming.id, incoming);
+      }
+      return;
+    }
+    const inTs = incoming.updatedAtMs || 0;
+    const exTs = existing.updatedAtMs || 0;
+    if (inTs === 0 || exTs === 0 || inTs >= exTs) {
+      map.set(incoming.id, incoming);
+    }
+  });
+  removedIds.forEach((id) => map.delete(id));
+  return Array.from(map.values());
+}
+
 // Auto-place tables without positions on a neat grid per zone
 function autoPositionTables(rawTables: Table[]): Table[] {
   const list = Array.isArray(rawTables) ? rawTables : INITIAL_TABLES;
@@ -273,14 +403,14 @@ function autoPositionTables(rawTables: Table[]): Table[] {
     const col = index % 3;
     const row = Math.floor(index / 3);
 
-    return {
+    return normalizeTableState({
       ...t,
       shape: t.shape || (t.isStandaloneChair ? 'standalone_chair' : 'square'),
       chairStyle: t.chairStyle || 'standard',
       x: hasPos ? t.x : 60 + col * 220,
       y: hasPos ? t.y : 60 + row * 160,
       rotation: typeof t.rotation === 'number' ? t.rotation : 0,
-    };
+    });
   });
 }
 
@@ -822,12 +952,24 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch {}
   }, []);
 
+  // Self-healing reconciliation on mount: ensure paid/voided bills never leave tables stuck occupied
+  useEffect(() => {
+    const { tables: reconciled, changed } = reconcileTablesWithBills(
+      tablesRef.current,
+      billsRef.current
+    );
+    if (changed) {
+      commitTables(reconciled, false);
+    }
+  }, [commitTables]);
+
   // Multi-Tab Sync Listener (Reload all STORAGE_KEYS & sync refs)
   useEffect(() => {
     const unsubscribe = syncService.subscribe((msg: SyncMessage) => {
       if (msg.type === 'DATA_RELOAD' || msg.type === 'TABLE_UPDATED') {
-        const nextTables = autoPositionTables(loadState(STORAGE_KEYS.TABLES, INITIAL_TABLES));
+        const rawNextTables = autoPositionTables(loadState(STORAGE_KEYS.TABLES, INITIAL_TABLES));
         const nextBills = loadState(STORAGE_KEYS.BILLS, INITIAL_BILLS);
+        const { tables: nextTables } = reconcileTablesWithBills(rawNextTables, nextBills);
         const nextMenu = normalizeAndSeedMenuItems(loadState(STORAGE_KEYS.MENU, INITIAL_MENU_ITEMS));
         const nextCats = loadState(STORAGE_KEYS.CATEGORIES, INITIAL_CATEGORIES);
         const nextNotifs = loadState(STORAGE_KEYS.NOTIFICATIONS, []);
@@ -1030,10 +1172,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     unsubs.push(
       subscribeCollection<MenuItem>('menuItems', (remoteItems, removedIds) => {
         if ((!remoteItems || remoteItems.length === 0) && removedIds.length === 0) return;
-        const map = new Map<string, MenuItem>(menuItemsRef.current.map((m) => [m.id, m]));
-        remoteItems.forEach((rm) => map.set(rm.id, rm));
-        removedIds.forEach((id) => map.delete(id));
-        commitMenuItems(Array.from(map.values()));
+        commitMenuItems(mergeEntitiesByLatest(menuItemsRef.current, remoteItems, removedIds));
       })
     );
 
@@ -1041,10 +1180,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     unsubs.push(
       subscribeCollection<MenuCategory>('categories', (remoteCats, removedIds) => {
         if ((!remoteCats || remoteCats.length === 0) && removedIds.length === 0) return;
-        const map = new Map<string, MenuCategory>(categoriesRef.current.map((c) => [c.id, c]));
-        remoteCats.forEach((rc) => map.set(rc.id, rc));
-        removedIds.forEach((id) => map.delete(id));
-        commitCategories(Array.from(map.values()));
+        commitCategories(mergeEntitiesByLatest(categoriesRef.current, remoteCats, removedIds));
       })
     );
 
@@ -1052,10 +1188,30 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     unsubs.push(
       subscribeCollection<Table>('tables', (remoteTables, removedIds) => {
         if ((!remoteTables || remoteTables.length === 0) && removedIds.length === 0) return;
-        const map = new Map<string, Table>(tablesRef.current.map((t) => [t.id, t]));
-        remoteTables.forEach((rt) => map.set(rt.id, rt));
-        removedIds.forEach((id) => map.delete(id));
-        commitTables(autoPositionTables(Array.from(map.values())));
+        const merged = mergeEntitiesByLatest<Table>(
+          tablesRef.current,
+          remoteTables,
+          removedIds,
+          (incoming, existing) => {
+            // Do not overwrite an already locally released table with an outdated occupied snapshot for the same paid bill
+            if (
+              existing.status === 'available' &&
+              (incoming.status === 'occupied' || incoming.status === 'payment_pending') &&
+              incoming.currentBillId
+            ) {
+              const linked = billsRef.current.find((b) => b.id === incoming.currentBillId);
+              if (linked && (linked.status === 'paid' || linked.status === 'voided')) {
+                return false;
+              }
+            }
+            const inTs = incoming.updatedAtMs || 0;
+            const exTs = existing.updatedAtMs || 0;
+            return inTs === 0 || exTs === 0 || inTs >= exTs;
+          }
+        );
+        const positioned = autoPositionTables(merged);
+        const { tables: reconciled } = reconcileTablesWithBills(positioned, billsRef.current);
+        commitTables(reconciled);
       })
     );
 
@@ -1063,10 +1219,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     unsubs.push(
       subscribeCollection<TableZoneConfig>('zones', (remoteZones, removedIds) => {
         if ((!remoteZones || remoteZones.length === 0) && removedIds.length === 0) return;
-        const map = new Map<string, TableZoneConfig>(zonesRef.current.map((z) => [z.id, z]));
-        remoteZones.forEach((rz) => map.set(rz.id, rz));
-        removedIds.forEach((id) => map.delete(id));
-        commitZones(Array.from(map.values()));
+        commitZones(mergeEntitiesByLatest(zonesRef.current, remoteZones, removedIds));
       })
     );
 
@@ -1074,10 +1227,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     unsubs.push(
       subscribeCollection<OptionGroup>('optionPresets', (remotePresets, removedIds) => {
         if ((!remotePresets || remotePresets.length === 0) && removedIds.length === 0) return;
-        const map = new Map<string, OptionGroup>(optionPresetsRef.current.map((p) => [p.id, p]));
-        remotePresets.forEach((rp) => map.set(rp.id, rp));
-        removedIds.forEach((id) => map.delete(id));
-        commitOptionPresets(Array.from(map.values()));
+        commitOptionPresets(mergeEntitiesByLatest(optionPresetsRef.current, remotePresets, removedIds));
       })
     );
 
@@ -1085,10 +1235,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     unsubs.push(
       subscribeCollection<Member>('members', (remoteMembers, removedIds) => {
         if ((!remoteMembers || remoteMembers.length === 0) && removedIds.length === 0) return;
-        const map = new Map<string, Member>(membersRef.current.map((m) => [m.id, m]));
-        remoteMembers.forEach((rm) => map.set(rm.id, rm));
-        removedIds.forEach((id) => map.delete(id));
-        commitMembers(Array.from(map.values()));
+        commitMembers(mergeEntitiesByLatest(membersRef.current, remoteMembers, removedIds));
       })
     );
 
@@ -1096,10 +1243,26 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     unsubs.push(
       subscribeRecentBills((remoteRecentBills, removedIds = []) => {
         if ((!remoteRecentBills || remoteRecentBills.length === 0) && removedIds.length === 0) return;
-        const map = new Map<string, Bill>(billsRef.current.map((b) => [b.id, b]));
-        remoteRecentBills.forEach((rb) => map.set(rb.id, rb));
-        removedIds.forEach((id) => map.delete(id));
-        commitBills(Array.from(map.values()));
+        const nextBills = mergeEntitiesByLatest<Bill>(
+          billsRef.current,
+          remoteRecentBills,
+          removedIds,
+          (incoming, existing) => {
+            if (incoming.status !== 'open' && existing.status === 'open') return true;
+            if (existing.status !== 'open' && incoming.status === 'open') return false;
+            const inTs = incoming.updatedAtMs || 0;
+            const exTs = existing.updatedAtMs || 0;
+            return inTs === 0 || exTs === 0 || inTs >= exTs;
+          }
+        );
+        commitBills(nextBills);
+        const { tables: reconciledTables, changed } = reconcileTablesWithBills(
+          tablesRef.current,
+          nextBills
+        );
+        if (changed) {
+          commitTables(reconciledTables);
+        }
       })
     );
 
@@ -1730,10 +1893,11 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     (tableNumber: string) => {
       addNotification('request_bill', 'ลูกค้าขอเช็คบิล!', `โต๊ะ ${tableNumber} ขอยอดชำระเงิน`, tableNumber);
       soundService.playReadyChime();
+      const nowTs = Date.now();
       const updatedTables: Table[] = [];
       const nextTables = tablesRef.current.map((t) => {
         if (t.number !== tableNumber) return t;
-        const up: Table = { ...t, status: 'payment_pending' };
+        const up: Table = { ...t, status: 'payment_pending', updatedAtMs: nowTs };
         updatedTables.push(up);
         return up;
       });
@@ -1749,6 +1913,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const createBillForOrder = useCallback(
     (orderType: OrderType, tableId?: string, guestCount?: number, deliveryInfo?: DeliveryInfo): Bill => {
       const now = new Date();
+      const nowTs = now.getTime();
       const dateStr = now.toISOString().slice(2, 10).replace(/-/g, '');
       const count = billsRef.current.length + 1;
       const billNumber = `B-${dateStr}-${String(count).padStart(3, '0')}`;
@@ -1758,7 +1923,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const actor = currentUserRef.current;
 
       const newBill: Bill = {
-        id: 'bill_' + Date.now(),
+        id: 'bill_' + nowTs,
         billNumber,
         orderType,
         tableId,
@@ -1785,6 +1950,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         vatIncluded: activeSettings.vatInclusive,
         grandTotal: 0,
         payments: [],
+        updatedAtMs: nowTs,
       };
 
       commitBills([...billsRef.current, newBill]);
@@ -1800,7 +1966,9 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             status: 'occupied',
             currentBillId: newBill.id,
             seatedAt: now.toISOString(),
-            guestCount,
+            guestCount: guestCount || t.capacity || 2,
+            reservation: undefined,
+            updatedAtMs: nowTs,
           };
           updatedTable = up;
           return up;
@@ -1820,8 +1988,13 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     (tableId: string, guestCount: number): string => {
       const existingTable = tablesRef.current.find((t) => t.id === tableId);
       if (existingTable?.currentBillId) {
-        setActiveBillId(existingTable.currentBillId);
-        return existingTable.currentBillId;
+        const existingOpenBill = billsRef.current.find(
+          (b) => b.id === existingTable.currentBillId && b.status === 'open'
+        );
+        if (existingOpenBill) {
+          setActiveBillId(existingOpenBill.id);
+          return existingOpenBill.id;
+        }
       }
       const newBill = createBillForOrder('dine_in', tableId, guestCount);
       return newBill.id;
@@ -1832,18 +2005,40 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const assignTableToBill = useCallback(
     (billId: string, tableId: string) => {
       const now = new Date();
+      const nowTs = now.getTime();
       const assignedTable = tablesRef.current.find((t) => t.id === tableId);
       let updatedBill: Bill | null = null;
+      const voidedEmptyBills: Bill[] = [];
+
       const nextBills = billsRef.current.map((b) => {
-        if (b.id !== billId) return b;
-        const up: Bill = {
-          ...b,
-          tableId,
-          tableName: assignedTable?.number,
-          guestCount: b.guestCount || assignedTable?.capacity || 2,
-        };
-        updatedBill = up;
-        return up;
+        if (b.id === billId) {
+          const up: Bill = {
+            ...b,
+            tableId,
+            tableName: assignedTable?.number,
+            guestCount: b.guestCount || assignedTable?.capacity || 2,
+            updatedAtMs: nowTs,
+          };
+          updatedBill = up;
+          return up;
+        }
+        // Clean up any orphan empty open bill left on this table so it never blocks table release on checkout
+        if (
+          b.tableId === tableId &&
+          b.status === 'open' &&
+          !b.items.some((i) => i.status !== 'voided')
+        ) {
+          const voided: Bill = {
+            ...b,
+            status: 'voided',
+            voidReason: 'เปลี่ยนบิลประจำโต๊ะ',
+            voidedAt: now.toISOString(),
+            updatedAtMs: nowTs,
+          };
+          voidedEmptyBills.push(voided);
+          return voided;
+        }
+        return b;
       });
       commitBills(nextBills, false);
 
@@ -1856,6 +2051,8 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           currentBillId: billId,
           seatedAt: t.seatedAt || now.toISOString(),
           guestCount: t.guestCount || assignedTable?.capacity || 2,
+          reservation: undefined,
+          updatedAtMs: nowTs,
         };
         updatedTable = up;
         return up;
@@ -1866,6 +2063,9 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (updatedBill) {
         saveBillRemote(updatedBill).catch((err) => console.warn('[Cloud saveBillRemote error]:', err));
       }
+      voidedEmptyBills.forEach((vb) => {
+        saveBillRemote(vb).catch((err) => console.warn('[Cloud saveBillRemote error]:', err));
+      });
       if (updatedTable) {
         saveTableRemote(updatedTable).catch((err) => console.warn('[Cloud saveTableRemote error]:', err));
       }
@@ -1876,6 +2076,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const updateBillDeliveryInfo = useCallback(
     (billId: string, deliveryInfo: DeliveryInfo) => {
       let updatedBill: Bill | null = null;
+      const nowTs = Date.now();
       const activeSettings = settingsRef.current;
       const nextBills = billsRef.current.map((b) => {
         if (b.id !== billId) return b;
@@ -1888,6 +2089,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             deliveryGpRate: deliveryInfo.gpRate,
             deliveryGpAmount: deliveryInfo.gpAmount,
             packagingCost: deliveryInfo.packagingCost,
+            updatedAtMs: nowTs,
           },
           activeSettings
         );
@@ -1905,11 +2107,12 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const addItemsToBill = useCallback(
     (billId: string, newItems: OrderItem[]) => {
       let updatedBill: Bill | null = null;
+      const nowTs = Date.now();
       const activeSettings = settingsRef.current;
       const nextBills = billsRef.current.map((bill) => {
         if (bill.id !== billId) return bill;
         const updatedItems = [...bill.items, ...newItems];
-        const up = recalculateBill({ ...bill, items: updatedItems }, activeSettings);
+        const up = recalculateBill({ ...bill, items: updatedItems, updatedAtMs: nowTs }, activeSettings);
         updatedBill = up;
         return up;
       });
@@ -1924,13 +2127,14 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const updateBillItemQuantity = useCallback(
     (billId: string, itemId: string, newQty: number) => {
       let updatedBill: Bill | null = null;
+      const nowTs = Date.now();
       const activeSettings = settingsRef.current;
       const nextBills = billsRef.current.map((bill) => {
         if (bill.id !== billId) return bill;
         const updatedItems = bill.items
           .map((item) => (item.id !== itemId ? item : { ...item, quantity: newQty }))
           .filter((item) => item.quantity > 0);
-        const up = recalculateBill({ ...bill, items: updatedItems }, activeSettings);
+        const up = recalculateBill({ ...bill, items: updatedItems, updatedAtMs: nowTs }, activeSettings);
         updatedBill = up;
         return up;
       });
@@ -1945,11 +2149,12 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const removeUnsentItemFromBill = useCallback(
     (billId: string, itemId: string) => {
       let updatedBill: Bill | null = null;
+      const nowTs = Date.now();
       const activeSettings = settingsRef.current;
       const nextBills = billsRef.current.map((bill) => {
         if (bill.id !== billId) return bill;
         const updatedItems = bill.items.filter((item) => item.id !== itemId);
-        const up = recalculateBill({ ...bill, items: updatedItems }, activeSettings);
+        const up = recalculateBill({ ...bill, items: updatedItems, updatedAtMs: nowTs }, activeSettings);
         updatedBill = up;
         return up;
       });
@@ -1966,6 +2171,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     (billId: string) => {
       let affectedTableId: string | undefined;
       let updatedBillObj: Bill | null = null;
+      const nowTs = Date.now();
 
       const nextBills = billsRef.current.map((b) => {
         if (b.id !== billId) return b;
@@ -1980,7 +2186,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
           return item;
         });
-        const up = { ...b, items: updatedItems };
+        const up = { ...b, items: updatedItems, updatedAtMs: nowTs };
         updatedBillObj = up;
         return up;
       });
@@ -1994,6 +2200,10 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             ...t,
             status: t.status === 'payment_pending' ? 'payment_pending' : 'occupied',
             currentBillId: billId,
+            seatedAt: t.seatedAt || new Date(nowTs).toISOString(),
+            guestCount: t.guestCount || updatedBillObj?.guestCount || t.capacity || 2,
+            reservation: undefined,
+            updatedAtMs: nowTs,
           };
           updatedTableObj = up;
           return up;
@@ -2020,6 +2230,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const voidOrderItem = useCallback(
     (billId: string, itemId: string, reason: string) => {
       let updatedBillObj: Bill | null = null;
+      const nowTs = Date.now();
       const activeSettings = settingsRef.current;
       const actorName = currentUserRef.current?.name || 'พนักงาน';
 
@@ -2032,15 +2243,16 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             status: 'voided' as const,
             voidReason: reason,
             voidedBy: actorName,
-            voidedAt: new Date().toISOString(),
+            voidedAt: new Date(nowTs).toISOString(),
           };
         });
 
         const activeItems = updatedItems.filter((i) => i.status !== 'voided');
-        const recalculated = recalculateBill({ ...b, items: activeItems }, activeSettings);
+        const recalculated = recalculateBill({ ...b, items: activeItems, updatedAtMs: nowTs }, activeSettings);
         const finalBill: Bill = {
           ...recalculated,
           items: updatedItems,
+          updatedAtMs: nowTs,
         };
         updatedBillObj = finalBill;
         return finalBill;
@@ -2057,6 +2269,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const applyBillDiscount = useCallback(
     (billId: string, type: 'percentage' | 'fixed', value: number) => {
       let updatedBillObj: Bill | null = null;
+      const nowTs = Date.now();
       const activeSettings = settingsRef.current;
 
       const nextBills = billsRef.current.map((bill) => {
@@ -2066,6 +2279,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             ...bill,
             discountType: type,
             discountValue: Math.max(0, value),
+            updatedAtMs: nowTs,
           },
           activeSettings
         );
@@ -2087,6 +2301,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (!member || member.points < pointsToRedeem) return false;
 
       let updatedBillObj: Bill | null = null;
+      const nowTs = Date.now();
       const activeSettings = settingsRef.current;
       const nextBills = billsRef.current.map((b) => {
         if (b.id !== billId) return b;
@@ -2095,6 +2310,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             ...b,
             membershipPhone: memberPhone,
             membershipDiscountPoints: pointsToRedeem,
+            updatedAtMs: nowTs,
           },
           activeSettings
         );
@@ -2125,6 +2341,9 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (!targetBill) {
         throw new Error('ไม่พบบิล');
       }
+      if (targetBill.status === 'paid') {
+        return { success: true, bill: targetBill };
+      }
 
       // Re-check rule inside the final "confirm payment" action
       const payCheck = canPay(targetBill, currentBills);
@@ -2132,12 +2351,14 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return { success: false, bill: targetBill };
       }
 
-      const closedAt = new Date().toISOString();
+      const nowTs = Date.now();
+      const closedAt = new Date(nowTs).toISOString();
       const updatedBill: Bill = {
         ...targetBill,
         payments,
         status: 'paid',
         closedAt,
+        updatedAtMs: nowTs,
       };
 
       // Add points to membership if applicable
@@ -2150,42 +2371,86 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           const nextPoints = Math.max(0, m.points - pointsSpent + pointsEarned);
           const nextTotalSpent = m.totalSpent + targetBill.grandTotal;
           memberUpdate = { id: m.id, points: nextPoints, totalSpent: nextTotalSpent };
-          return { ...m, points: nextPoints, totalSpent: nextTotalSpent };
+          return { ...m, points: nextPoints, totalSpent: nextTotalSpent, updatedAtMs: nowTs };
         });
         commitMembers(nextMembers, false);
       }
 
-      // Free the table only if no other open bills remain for this table
-      const otherOpenBills = targetBill.tableId
-        ? currentBills.filter((b) => b.tableId === targetBill.tableId && b.id !== billId && b.status === 'open')
-        : [];
-      const isTableReleased = otherOpenBills.length === 0;
-      const nextTableBillId = otherOpenBills[0]?.id;
+      // Resolve associated table (by targetBill.tableId OR any table pointing to this bill)
+      const resolvedTableId =
+        targetBill.tableId ||
+        tablesRef.current.find((t) => t.currentBillId === billId)?.id;
 
-      if (targetBill.tableId) {
+      // Only active open bills (with non-voided items) keep the table occupied; empty orphan open bills are auto-voided
+      const otherActiveOpenBills = resolvedTableId
+        ? currentBills.filter(
+            (b) =>
+              b.tableId === resolvedTableId &&
+              b.id !== billId &&
+              b.status === 'open' &&
+              b.items.some((i) => i.status !== 'voided')
+          )
+        : [];
+      const emptyOrphanBills = resolvedTableId
+        ? currentBills.filter(
+            (b) =>
+              b.tableId === resolvedTableId &&
+              b.id !== billId &&
+              b.status === 'open' &&
+              !b.items.some((i) => i.status !== 'voided')
+          )
+        : [];
+
+      const isTableReleased = otherActiveOpenBills.length === 0;
+      const nextTableBillId = otherActiveOpenBills[0]?.id;
+      const voidedEmptyBills: Bill[] = isTableReleased
+        ? emptyOrphanBills.map((eb) => ({
+            ...eb,
+            status: 'voided' as const,
+            voidReason: 'ปิดโต๊ะหลังชำระเงิน',
+            voidedAt: closedAt,
+            updatedAtMs: nowTs,
+          }))
+        : [];
+      const voidedEmptyMap = new Map(voidedEmptyBills.map((eb) => [eb.id, eb]));
+
+      const releasedOrUpdatedTables: Table[] = [];
+      if (resolvedTableId || tablesRef.current.some((t) => t.currentBillId === billId)) {
         const nextTables = tablesRef.current.map((t) => {
-          if (t.id !== targetBill.tableId) return t;
-          if (!isTableReleased) {
-            return {
+          const matchesTable =
+            (resolvedTableId && t.id === resolvedTableId) || t.currentBillId === billId;
+          if (!matchesTable) return t;
+          if (!isTableReleased && t.id === resolvedTableId) {
+            const up: Table = {
               ...t,
-              status: 'occupied' as const,
+              status: 'occupied',
               currentBillId: nextTableBillId,
+              updatedAtMs: nowTs,
             };
+            releasedOrUpdatedTables.push(up);
+            return up;
           }
-          return {
+          const released: Table = {
             ...t,
-            status: 'available' as const,
+            status: 'available',
             currentBillId: undefined,
             seatedAt: undefined,
             guestCount: undefined,
+            reservation: undefined,
+            updatedAtMs: nowTs,
           };
+          releasedOrUpdatedTables.push(released);
+          return released;
         });
         commitTables(nextTables, false);
         syncService.broadcast('TABLE_UPDATED');
       }
 
       commitBills(
-        currentBills.map((b) => (b.id === billId ? updatedBill : b)),
+        currentBills.map((b) => {
+          if (b.id === billId) return updatedBill;
+          return voidedEmptyMap.get(b.id) || b;
+        }),
         true
       );
       setLastCompletedBill(updatedBill);
@@ -2199,11 +2464,21 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (db && cloudUser) {
         atomicPayBillAndReleaseTable({
           bill: updatedBill,
-          tableId: targetBill.tableId,
+          tableId: resolvedTableId,
           isTableReleased,
           nextTableBillId,
+          voidEmptyBills: voidedEmptyBills,
           memberUpdate,
         }).catch((err) => console.warn('[Cloud sync atomicPayBill error]:', err));
+
+        // Also sync any extra tables whose currentBillId happened to reference this billId
+        releasedOrUpdatedTables
+          .filter((t) => t.id !== resolvedTableId)
+          .forEach((extraTbl) => {
+            saveTableRemote(extraTbl).catch((err) =>
+              console.warn('[Cloud sync extra table release error]:', err)
+            );
+          });
       }
 
       return { success: true, bill: updatedBill };
@@ -2217,32 +2492,86 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const targetBill = currentBills.find((b) => b.id === billId);
       if (!targetBill) return;
 
-      const voidedAt = new Date().toISOString();
+      const nowTs = Date.now();
+      const voidedAt = new Date(nowTs).toISOString();
       const updatedBill: Bill = {
         ...targetBill,
         status: 'voided',
         voidReason: reason,
         voidedBy: currentUserRef.current?.name || 'พนักงาน',
         voidedAt,
+        updatedAtMs: nowTs,
       };
 
-      if (targetBill.tableId) {
-        const nextTables = tablesRef.current.map((t) =>
-          t.id === targetBill.tableId
-            ? {
-                ...t,
-                status: 'available' as const,
-                currentBillId: undefined,
-                seatedAt: undefined,
-                guestCount: undefined,
-              }
-            : t
-        );
+      const resolvedTableId =
+        targetBill.tableId ||
+        tablesRef.current.find((t) => t.currentBillId === billId)?.id;
+
+      const otherActiveOpenBills = resolvedTableId
+        ? currentBills.filter(
+            (b) =>
+              b.tableId === resolvedTableId &&
+              b.id !== billId &&
+              b.status === 'open' &&
+              b.items.some((i) => i.status !== 'voided')
+          )
+        : [];
+      const emptyOrphanBills = resolvedTableId
+        ? currentBills.filter(
+            (b) =>
+              b.tableId === resolvedTableId &&
+              b.id !== billId &&
+              b.status === 'open' &&
+              !b.items.some((i) => i.status !== 'voided')
+          )
+        : [];
+
+      const isTableReleased = otherActiveOpenBills.length === 0;
+      const nextTableBillId = otherActiveOpenBills[0]?.id;
+      const voidedEmptyBills: Bill[] = isTableReleased
+        ? emptyOrphanBills.map((eb) => ({
+            ...eb,
+            status: 'voided' as const,
+            voidReason: 'ปิดโต๊ะหลังยกเลิกบิล',
+            voidedAt,
+            updatedAtMs: nowTs,
+          }))
+        : [];
+      const voidedEmptyMap = new Map(voidedEmptyBills.map((eb) => [eb.id, eb]));
+
+      if (resolvedTableId || tablesRef.current.some((t) => t.currentBillId === billId)) {
+        const nextTables = tablesRef.current.map((t) => {
+          const matchesTable =
+            (resolvedTableId && t.id === resolvedTableId) || t.currentBillId === billId;
+          if (!matchesTable) return t;
+          if (!isTableReleased && t.id === resolvedTableId) {
+            return {
+              ...t,
+              status: 'occupied' as const,
+              currentBillId: nextTableBillId,
+              updatedAtMs: nowTs,
+            };
+          }
+          return {
+            ...t,
+            status: 'available' as const,
+            currentBillId: undefined,
+            seatedAt: undefined,
+            guestCount: undefined,
+            reservation: undefined,
+            updatedAtMs: nowTs,
+          };
+        });
         commitTables(nextTables, false);
         syncService.broadcast('TABLE_UPDATED');
       }
 
-      commitBills(currentBills.map((b) => (b.id === billId ? updatedBill : b)));
+      commitBills(
+        currentBills.map((b) => {
+          if (b.id === billId) return updatedBill;
+          return voidedEmptyMap.get(b.id) || b;
+        })
+      );
       if (activeBillId === billId) {
         setActiveBillId(null);
       }
@@ -2251,8 +2580,10 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (db && cloudUser) {
         atomicVoidBillAndReleaseTable({
           bill: updatedBill,
-          tableId: targetBill.tableId,
-          isTableReleased: true,
+          tableId: resolvedTableId,
+          isTableReleased,
+          nextTableBillId,
+          voidEmptyBills: voidedEmptyBills,
         }).catch((err) => console.warn('[Cloud sync atomicVoidBill error]:', err));
       }
     },
@@ -2271,6 +2602,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (!originalBill) return null;
 
       const now = new Date();
+      const nowTs = now.getTime();
       // Calculate suffix, e.g. -B, -C, etc.
       const existingSplitsCount = currentBills.filter(
         (b) => b.tableId && b.tableId === originalBill.tableId
@@ -2306,11 +2638,14 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       if (movedItems.length === 0) return null;
 
-      const updatedOriginal = recalculateBill({ ...originalBill, items: remainingItems }, activeSettings);
+      const updatedOriginal = recalculateBill(
+        { ...originalBill, items: remainingItems, updatedAtMs: nowTs },
+        activeSettings
+      );
 
       const createdNewBill: Bill = recalculateBill(
         {
-          id: 'bill_' + Date.now() + '_split',
+          id: 'bill_' + nowTs + '_split',
           billNumber: newBillNumber,
           orderType: originalBill.orderType,
           tableId: originalBill.tableId,
@@ -2332,6 +2667,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           vatIncluded: originalBill.vatIncluded,
           grandTotal: 0,
           payments: [],
+          updatedAtMs: nowTs,
         },
         activeSettings
       );
@@ -2361,6 +2697,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return false;
       }
 
+      const nowTs = Date.now();
       let billId = fromTable.currentBillId;
       if (!billId) {
         const existingBill = currentBills.find(
@@ -2375,7 +2712,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (billId) {
         const nextBills = currentBills.map((b) => {
           if (b.id !== billId) return b;
-          const up = { ...b, tableId: toTableId, tableName: toTable.number };
+          const up = { ...b, tableId: toTableId, tableName: toTable.number, updatedAtMs: nowTs };
           updatedBillObj = up;
           return up;
         });
@@ -2392,6 +2729,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             seatedAt: undefined,
             guestCount: undefined,
             reservation: undefined,
+            updatedAtMs: nowTs,
           };
           updatedTables.push(up);
           return up;
@@ -2401,8 +2739,10 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             ...t,
             status: fromTable.status === 'payment_pending' ? 'payment_pending' : 'occupied',
             currentBillId: billId,
-            seatedAt: fromTable.seatedAt || new Date().toISOString(),
+            seatedAt: fromTable.seatedAt || new Date(nowTs).toISOString(),
             guestCount: fromTable.guestCount || toTable.capacity,
+            reservation: undefined,
+            updatedAtMs: nowTs,
           };
           updatedTables.push(up);
           return up;
@@ -2434,6 +2774,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         targetBill = createBillForOrder('dine_in', targetTableId, targetTable.capacity);
       }
 
+      const nowTs = Date.now();
       const currentBills = billsRef.current;
       const sourceBills = currentBills.filter(
         (b) => sourceTableIds.includes(b.tableId || '') && b.id !== targetBill?.id && b.status === 'open'
@@ -2445,7 +2786,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
 
       const recalculatedTargetBill = recalculateBill(
-        { ...targetBill, items: combinedItems },
+        { ...targetBill, items: combinedItems, updatedAtMs: nowTs },
         settingsRef.current
       );
       const voidedBills: Bill[] = [];
@@ -2459,6 +2800,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             status: 'voided',
             voidReason: `รวมเข้ากับโต๊ะ ${targetTable.number}`,
             voidedBy: actorName,
+            updatedAtMs: nowTs,
           };
           voidedBills.push(voided);
           return voided;
@@ -2476,6 +2818,8 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             currentBillId: undefined,
             seatedAt: undefined,
             guestCount: undefined,
+            reservation: undefined,
+            updatedAtMs: nowTs,
           };
           updatedTables.push(up);
           return up;
@@ -2485,6 +2829,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             ...t,
             status: 'occupied',
             currentBillId: recalculatedTargetBill.id,
+            updatedAtMs: nowTs,
           };
           updatedTables.push(up);
           return up;
@@ -2509,9 +2854,10 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const requestTableBill = useCallback(
     (tableId: string) => {
       let updatedTable: Table | null = null;
+      const nowTs = Date.now();
       const nextTables = tablesRef.current.map((t) => {
         if (t.id !== tableId) return t;
-        const up: Table = { ...t, status: 'payment_pending' };
+        const up: Table = { ...t, status: 'payment_pending', updatedAtMs: nowTs };
         updatedTable = up;
         return up;
       });
@@ -2526,9 +2872,18 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const reserveTable = useCallback(
     (tableId: string, reservation: ReservationInfo) => {
       let updatedTable: Table | null = null;
+      const nowTs = Date.now();
       const nextTables = tablesRef.current.map((t) => {
         if (t.id !== tableId) return t;
-        const up: Table = { ...t, status: 'reserved', reservation };
+        const up: Table = {
+          ...t,
+          status: 'reserved',
+          currentBillId: undefined,
+          seatedAt: undefined,
+          guestCount: undefined,
+          reservation,
+          updatedAtMs: nowTs,
+        };
         updatedTable = up;
         return up;
       });
@@ -2543,9 +2898,18 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const cancelReservation = useCallback(
     (tableId: string) => {
       let updatedTable: Table | null = null;
+      const nowTs = Date.now();
       const nextTables = tablesRef.current.map((t) => {
         if (t.id !== tableId) return t;
-        const up: Table = { ...t, status: 'available', reservation: undefined };
+        const up: Table = {
+          ...t,
+          status: 'available',
+          currentBillId: undefined,
+          seatedAt: undefined,
+          guestCount: undefined,
+          reservation: undefined,
+          updatedAtMs: nowTs,
+        };
         updatedTable = up;
         return up;
       });
@@ -2559,15 +2923,17 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const addTable = useCallback(
     (tableData: Omit<Table, 'id' | 'status'>) => {
+      const nowTs = Date.now();
       const newTable: Table = {
         ...tableData,
-        id: 'tbl_' + Date.now(),
+        id: 'tbl_' + nowTs,
         status: 'available',
         shape: tableData.shape || 'square',
         chairStyle: tableData.chairStyle || 'standard',
         x: typeof tableData.x === 'number' ? tableData.x : 60,
         y: typeof tableData.y === 'number' ? tableData.y : 60,
         rotation: tableData.rotation || 0,
+        updatedAtMs: nowTs,
       };
       commitTables([...tablesRef.current, newTable]);
       saveTableRemote(newTable).catch((err) => console.warn('[Cloud saveTableRemote error]:', err));
@@ -2578,9 +2944,10 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const updateTable = useCallback(
     (id: string, updates: Partial<Table>) => {
       let updatedTable: Table | null = null;
+      const nowTs = Date.now();
       const nextTables = tablesRef.current.map((t) => {
         if (t.id !== id) return t;
-        const up = { ...t, ...updates };
+        const up = normalizeTableState({ ...t, ...updates, updatedAtMs: nowTs });
         updatedTable = up;
         return up;
       });
@@ -2603,6 +2970,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const updateTablePosition = useCallback(
     (id: string, x: number, y: number, rotation?: number) => {
       let updatedTable: Table | null = null;
+      const nowTs = Date.now();
       const nextTables = tablesRef.current.map((t) => {
         if (t.id !== id) return t;
         const up = {
@@ -2610,6 +2978,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           x: Math.round(x),
           y: Math.round(y),
           ...(typeof rotation === 'number' ? { rotation } : {}),
+          updatedAtMs: nowTs,
         };
         updatedTable = up;
         return up;
@@ -2625,9 +2994,11 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Menu & Categories
   const addMenuItem = useCallback(
     (itemData: Omit<MenuItem, 'id'>) => {
+      const nowTs = Date.now();
       const newItem: MenuItem = {
         ...itemData,
-        id: 'dish_' + Date.now(),
+        id: 'dish_' + nowTs,
+        updatedAtMs: nowTs,
       };
       commitMenuItems([...menuItemsRef.current, newItem]);
       saveMenuItemRemote(newItem).catch((err) => console.warn('[Cloud saveMenuItemRemote error]:', err));
@@ -2638,9 +3009,10 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const updateMenuItem = useCallback(
     (id: string, updates: Partial<MenuItem>) => {
       let updatedItem: MenuItem | null = null;
+      const nowTs = Date.now();
       const nextItems = menuItemsRef.current.map((m) => {
         if (m.id !== id) return m;
-        const up = { ...m, ...updates };
+        const up = { ...m, ...updates, updatedAtMs: nowTs };
         updatedItem = up;
         return up;
       });
@@ -2663,9 +3035,10 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const toggleSoldOut = useCallback(
     (id: string) => {
       let updatedItem: MenuItem | null = null;
+      const nowTs = Date.now();
       const nextItems = menuItemsRef.current.map((m) => {
         if (m.id !== id) return m;
-        const up = { ...m, isSoldOut: !m.isSoldOut };
+        const up = { ...m, isSoldOut: !m.isSoldOut, updatedAtMs: nowTs };
         updatedItem = up;
         return up;
       });
@@ -2679,13 +3052,15 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const addCategory = useCallback(
     (name: string, icon?: string, color?: string, nameEn?: string) => {
+      const nowTs = Date.now();
       const newCat: MenuCategory = {
-        id: 'cat_' + Date.now(),
+        id: 'cat_' + nowTs,
         name: name.trim(),
         nameEn: nameEn?.trim() || '',
         icon: icon || '🍽️',
         color: color || '#f59e0b',
         sortOrder: categoriesRef.current.length + 1,
+        updatedAtMs: nowTs,
       };
       commitCategories([...categoriesRef.current, newCat]);
       saveCategoryRemote(newCat).catch((err) => console.warn('[Cloud saveCategoryRemote error]:', err));
@@ -2696,6 +3071,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const updateCategory = useCallback(
     (id: string, name: string, icon?: string, color?: string, nameEn?: string) => {
       let updatedCat: MenuCategory | null = null;
+      const nowTs = Date.now();
       const nextCats = categoriesRef.current.map((c) => {
         if (c.id !== id) return c;
         const up = {
@@ -2704,6 +3080,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           ...(nameEn !== undefined ? { nameEn: nameEn.trim() } : {}),
           ...(icon ? { icon } : {}),
           ...(color ? { color } : {}),
+          updatedAtMs: nowTs,
         };
         updatedCat = up;
         return up;
@@ -2734,16 +3111,18 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             icon: '📦',
             color: '#94a3b8',
             sortOrder: 999,
+            updatedAtMs: Date.now(),
           };
           nextCats = [...nextCats, uncategorizedCat];
           saveCategoryRemote(uncategorizedCat).catch((err) => console.warn('[Cloud saveCategoryRemote error]:', err));
         }
         commitCategories(nextCats, false);
 
+        const nowTs = Date.now();
         const reassignedItems: MenuItem[] = [];
         const nextItems = currentItems.map((m) => {
           if (m.categoryId !== id) return m;
-          const up = { ...m, categoryId: targetUncategorizedId };
+          const up = { ...m, categoryId: targetUncategorizedId, updatedAtMs: nowTs };
           reassignedItems.push(up);
           return up;
         });
@@ -2766,10 +3145,11 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const reorderCategories = useCallback(
     (startIndex: number, endIndex: number) => {
       if (startIndex === endIndex) return;
+      const nowTs = Date.now();
       const next = [...categoriesRef.current];
       const [moved] = next.splice(startIndex, 1);
       next.splice(endIndex, 0, moved);
-      const updated = next.map((cat, idx) => ({ ...cat, sortOrder: idx + 1 }));
+      const updated = next.map((cat, idx) => ({ ...cat, sortOrder: idx + 1, updatedAtMs: nowTs }));
       commitCategories(updated);
       updated.forEach((cat) => {
         saveCategoryRemote(cat).catch((err) => console.warn('[Cloud saveCategoryRemote error]:', err));
@@ -2785,9 +3165,11 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Option Presets Management (หมวด set เมนูย่อย)
   const addOptionPreset = useCallback(
     (presetData: Omit<OptionGroup, 'id'>) => {
+      const nowTs = Date.now();
       const newPreset: OptionGroup = {
         ...presetData,
-        id: 'preset_' + Date.now(),
+        id: 'preset_' + nowTs,
+        updatedAtMs: nowTs,
       };
       commitOptionPresets([...optionPresetsRef.current, newPreset]);
       saveOptionPresetRemote(newPreset).catch((err) => console.warn('[Cloud saveOptionPresetRemote error]:', err));
@@ -2798,9 +3180,10 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const updateOptionPreset = useCallback(
     (id: string, updates: Partial<OptionGroup>) => {
       let updatedPreset: OptionGroup | null = null;
+      const nowTs = Date.now();
       const nextPresets = optionPresetsRef.current.map((p) => {
         if (p.id !== id) return p;
-        const up = { ...p, ...updates };
+        const up = { ...p, ...updates, updatedAtMs: nowTs };
         updatedPreset = up;
         return up;
       });
@@ -3149,9 +3532,11 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       if (data.tables && Array.isArray(data.tables)) {
         const positionedTables = autoPositionTables(data.tables);
-        tablesRef.current = positionedTables;
-        setTables(positionedTables);
-        localStorage.setItem(STORAGE_KEYS.TABLES, JSON.stringify(positionedTables));
+        const importedBills: Bill[] = Array.isArray(data.bills) ? data.bills : billsRef.current;
+        const { tables: reconciledTables } = reconcileTablesWithBills(positionedTables, importedBills);
+        tablesRef.current = reconciledTables;
+        setTables(reconciledTables);
+        localStorage.setItem(STORAGE_KEYS.TABLES, JSON.stringify(reconciledTables));
       }
 
       if (data.bills && Array.isArray(data.bills)) {

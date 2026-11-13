@@ -127,7 +127,13 @@ export const TableDetailModal: React.FC<TableDetailModalProps> = ({
               <div className="flex items-center gap-3 text-xs text-slate-500 dark:text-slate-400">
                 <span className="flex items-center gap-1">
                   <Users className="w-3.5 h-3.5" />
-                  <span className="tabular-nums font-medium">{table.guestCount || table.capacity} ท่าน</span>
+                  <span className="tabular-nums font-medium">
+                    {table.status === 'occupied' || table.status === 'payment_pending'
+                      ? `${table.guestCount || table.capacity} ท่าน`
+                      : table.status === 'reserved' && table.reservation
+                      ? `${table.reservation.partySize} ท่าน`
+                      : `${table.capacity} ที่นั่ง (ว่าง)`}
+                  </span>
                 </span>
                 {table.seatedAt && (
                   <span className="flex items-center gap-1 font-mono">

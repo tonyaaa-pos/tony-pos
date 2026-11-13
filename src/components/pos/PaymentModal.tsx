@@ -60,9 +60,11 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
   // Active bill tracking (supporting split bills for the same table)
   const [activeBillId, setActiveBillId] = useState<string>(bill.id);
   const activeBill = bills.find((b) => b.id === activeBillId) || bill;
+  const didFinalizeRef = React.useRef<boolean>(false);
 
   // Sync activeBillId if prop bill changes
   useEffect(() => {
+    didFinalizeRef.current = false;
     setActiveBillId(bill.id);
     setPayments([]);
     setCashReceived('');
@@ -70,7 +72,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
     setTransferRef('');
     setItemSplits({});
     setSplitMode('single');
-  }, [bill.id]);
+  }, [bill.id, isOpen]);
 
   // Payments list (supporting mixed payments!)
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
@@ -189,6 +191,9 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
 
   // Complete entire bill without receipt preview: finish task, record payment, and return to Tables floor plan directly
   const handleFinalize = () => {
+    if (activeBill.status === 'paid' || didFinalizeRef.current) {
+      return;
+    }
     const check = canPay(activeBill);
     if (!check.allowed) {
       setFinalizeError(
@@ -213,6 +218,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
 
     const result = completeBillPayment(activeBill.id, finalPayments);
     if (result.success) {
+      didFinalizeRef.current = true;
       // Notify customer-facing display of payment completion
       customerDisplayService.setCompleted(result.bill);
 
@@ -398,8 +404,8 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, bil
       );
     }
     return () => {
-      // Revert to ordering when closing without paying
-      if (isOpen && activeBill) {
+      // Revert to ordering ONLY when closing without paying
+      if (isOpen && activeBill && !didFinalizeRef.current && activeBill.status !== 'paid') {
         customerDisplayService.setOrdering(activeBill);
       }
     };

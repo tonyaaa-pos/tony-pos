@@ -67,6 +67,109 @@ export function getDeviceId(): string {
 }
 
 /**
+ * Recursively strips `undefined` values from plain objects and arrays before writing to Firestore,
+ * while preserving `null`, `Date`, and Firestore `FieldValue` / `Timestamp` sentinels.
+ */
+export function sanitizeForFirestore<T>(val: T): T {
+  if (val === null || val === undefined || typeof val !== 'object') {
+    return val;
+  }
+  if (Array.isArray(val)) {
+    return val
+      .filter((item) => item !== undefined)
+      .map((item) => sanitizeForFirestore(item)) as unknown as T;
+  }
+  const proto = Object.getPrototypeOf(val);
+  if (proto !== Object.prototype && proto !== null) {
+    return val;
+  }
+  const result: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(val as Record<string, unknown>)) {
+    if (entry !== undefined) {
+      result[key] = sanitizeForFirestore(entry);
+    }
+  }
+  return result as T;
+}
+
+/**
+ * Extracts a comparable millisecond timestamp from a local or Firestore document.
+ */
+export function extractTimestampMs(raw: any): number {
+  if (!raw || typeof raw !== 'object') return 0;
+  if (typeof raw.updatedAtMs === 'number' && Number.isFinite(raw.updatedAtMs)) {
+    return raw.updatedAtMs;
+  }
+  if (typeof raw.clientUpdatedAt === 'number' && Number.isFinite(raw.clientUpdatedAt)) {
+    return raw.clientUpdatedAt;
+  }
+  const ts = raw.updatedAt;
+  if (ts) {
+    if (typeof ts.toMillis === 'function') {
+      try {
+        return ts.toMillis();
+      } catch {
+        // ignore
+      }
+    }
+    if (typeof ts.seconds === 'number') {
+      return ts.seconds * 1000 + Math.floor((ts.nanoseconds || 0) / 1e6);
+    }
+    if (typeof ts === 'number' && Number.isFinite(ts)) {
+      return ts;
+    }
+    if (typeof ts === 'string') {
+      const parsed = Date.parse(ts);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+  return 0;
+}
+
+/**
+ * Normalizes a Table document from Firestore or localStorage so `null` fields become `undefined`
+ * and available/reserved tables never carry stale guest/bill data.
+ */
+export function normalizeTableData(raw: any): Table {
+  const status = (raw?.status || 'available') as Table['status'];
+  const isAvailable = status === 'available';
+  const isReserved = status === 'reserved';
+  const tsMs = extractTimestampMs(raw);
+
+  return {
+    ...raw,
+    status,
+    currentBillId: isAvailable || isReserved ? undefined : (raw?.currentBillId ?? undefined),
+    seatedAt: isAvailable || isReserved ? undefined : (raw?.seatedAt ?? undefined),
+    guestCount:
+      isAvailable || isReserved
+        ? undefined
+        : typeof raw?.guestCount === 'number' && raw.guestCount > 0
+        ? raw.guestCount
+        : undefined,
+    reservation: isAvailable ? undefined : (raw?.reservation ?? undefined),
+    ...(tsMs > 0 ? { updatedAtMs: tsMs } : {}),
+  } as Table;
+}
+
+/**
+ * Normalizes a Bill document from Firestore so `null` optional fields become `undefined`
+ * and preserves the document's latest timestamp.
+ */
+export function normalizeBillData(raw: any): Bill {
+  const tsMs = extractTimestampMs(raw);
+  return {
+    ...raw,
+    tableId: raw?.tableId ?? undefined,
+    tableName: raw?.tableName ?? undefined,
+    guestCount: raw?.guestCount ?? undefined,
+    deliveryInfo: raw?.deliveryInfo ?? undefined,
+    closedAt: raw?.closedAt ?? undefined,
+    ...(tsMs > 0 ? { updatedAtMs: tsMs } : {}),
+  } as Bill;
+}
+
+/**
  * Checks and compresses base64 data to stay under Firestore document limit (~700 KB)
  */
 export async function ensureImageUnderLimit(
@@ -124,14 +227,17 @@ export async function saveShopBundle(
 
   // Settings
   const settingsRef = doc(db, 'users', (getCloudUser()?.uid || '_'), 'settings', 'shop');
+  const nowMs = bundle.settings.updatedAtMs || Date.now();
   batch.set(
     settingsRef,
-    {
+    sanitizeForFirestore({
       ...bundle.settings,
       logoUrl: bundle.logo !== undefined ? bundle.logo : (bundle.settings.logoUrl || ''),
+      updatedAtMs: nowMs,
+      clientUpdatedAt: nowMs,
       updatedAt: serverTimestamp(),
       updatedBy: deviceId,
-    },
+    }),
     { merge: true }
   );
 
@@ -302,15 +408,18 @@ export async function saveMenuItemRemote(item: MenuItem): Promise<void> {
     image = checked || '';
   }
 
+  const nowMs = item.updatedAtMs || Date.now();
   const ref = doc(db, 'users', (getCloudUser()?.uid || '_'), 'menuItems', item.id);
   await setDoc(
     ref,
-    {
+    sanitizeForFirestore({
       ...item,
       image,
+      updatedAtMs: nowMs,
+      clientUpdatedAt: nowMs,
       updatedAt: serverTimestamp(),
       updatedBy: getDeviceId(),
-    },
+    }),
     { merge: true }
   );
 }
@@ -323,14 +432,17 @@ export async function deleteMenuItemRemote(id: string): Promise<void> {
 
 export async function saveCategoryRemote(category: MenuCategory): Promise<void> {
   if (!db || !getCloudUser()) return;
+  const nowMs = category.updatedAtMs || Date.now();
   const ref = doc(db, 'users', (getCloudUser()?.uid || '_'), 'categories', category.id);
   await setDoc(
     ref,
-    {
+    sanitizeForFirestore({
       ...category,
+      updatedAtMs: nowMs,
+      clientUpdatedAt: nowMs,
       updatedAt: serverTimestamp(),
       updatedBy: getDeviceId(),
-    },
+    }),
     { merge: true }
   );
 }
@@ -348,13 +460,23 @@ export async function deleteCategoryRemote(id: string): Promise<void> {
 export async function saveTableRemote(table: Table): Promise<void> {
   if (!db || !getCloudUser()) return;
   const ref = doc(db, 'users', (getCloudUser()?.uid || '_'), 'tables', table.id);
+  const nowMs = table.updatedAtMs || Date.now();
+  const isAvailable = table.status === 'available';
+  const isReserved = table.status === 'reserved';
+
   await setDoc(
     ref,
-    {
+    sanitizeForFirestore({
       ...table,
+      currentBillId: isAvailable || isReserved ? null : (table.currentBillId ?? null),
+      seatedAt: isAvailable || isReserved ? null : (table.seatedAt ?? null),
+      guestCount: isAvailable || isReserved ? null : (table.guestCount ?? null),
+      reservation: isAvailable ? null : (table.reservation ?? null),
+      updatedAtMs: nowMs,
+      clientUpdatedAt: nowMs,
       updatedAt: serverTimestamp(),
       updatedBy: getDeviceId(),
-    },
+    }),
     { merge: true }
   );
 }
@@ -367,14 +489,17 @@ export async function deleteTableRemote(id: string): Promise<void> {
 
 export async function saveZoneRemote(zone: TableZoneConfig): Promise<void> {
   if (!db || !getCloudUser()) return;
+  const nowMs = zone.updatedAtMs || Date.now();
   const ref = doc(db, 'users', (getCloudUser()?.uid || '_'), 'zones', zone.id);
   await setDoc(
     ref,
-    {
+    sanitizeForFirestore({
       ...zone,
+      updatedAtMs: nowMs,
+      clientUpdatedAt: nowMs,
       updatedAt: serverTimestamp(),
       updatedBy: getDeviceId(),
-    },
+    }),
     { merge: true }
   );
 }
@@ -391,14 +516,17 @@ export async function deleteZoneRemote(id: string): Promise<void> {
 
 export async function saveOptionPresetRemote(preset: OptionGroup): Promise<void> {
   if (!db || !getCloudUser()) return;
+  const nowMs = preset.updatedAtMs || Date.now();
   const ref = doc(db, 'users', (getCloudUser()?.uid || '_'), 'optionPresets', preset.id);
   await setDoc(
     ref,
-    {
+    sanitizeForFirestore({
       ...preset,
+      updatedAtMs: nowMs,
+      clientUpdatedAt: nowMs,
       updatedAt: serverTimestamp(),
       updatedBy: getDeviceId(),
-    },
+    }),
     { merge: true }
   );
 }
@@ -411,14 +539,17 @@ export async function deleteOptionPresetRemote(id: string): Promise<void> {
 
 export async function saveMemberRemote(member: Member): Promise<void> {
   if (!db || !getCloudUser()) return;
+  const nowMs = member.updatedAtMs || Date.now();
   const ref = doc(db, 'users', (getCloudUser()?.uid || '_'), 'members', member.id);
   await setDoc(
     ref,
-    {
+    sanitizeForFirestore({
       ...member,
+      updatedAtMs: nowMs,
+      clientUpdatedAt: nowMs,
       updatedAt: serverTimestamp(),
       updatedBy: getDeviceId(),
-    },
+    }),
     { merge: true }
   );
 }
@@ -429,14 +560,17 @@ export async function saveMemberRemote(member: Member): Promise<void> {
 
 export async function saveBillRemote(bill: Bill): Promise<void> {
   if (!db || !getCloudUser()) return;
+  const nowMs = bill.updatedAtMs || Date.now();
   const ref = doc(db, 'users', (getCloudUser()?.uid || '_'), 'bills', bill.id);
   await setDoc(
     ref,
-    {
+    sanitizeForFirestore({
       ...bill,
+      updatedAtMs: nowMs,
+      clientUpdatedAt: nowMs,
       updatedAt: serverTimestamp(),
       updatedBy: getDeviceId(),
-    },
+    }),
     { merge: true }
   );
 }
@@ -449,57 +583,103 @@ export async function atomicPayBillAndReleaseTable(params: {
   tableId?: string;
   isTableReleased: boolean;
   nextTableBillId?: string;
+  voidEmptyBills?: Bill[];
   memberUpdate?: { id: string; points: number; totalSpent: number };
 }): Promise<void> {
   if (!db || !getCloudUser()) return;
 
+  const uid = getCloudUser()?.uid || '_';
   const batch = writeBatch(db);
   const deviceId = getDeviceId();
+  const nowMs = params.bill.updatedAtMs || Date.now();
 
   // 1. Update Bill to paid
-  const billRef = doc(db, 'users', (getCloudUser()?.uid || '_'), 'bills', params.bill.id);
+  const billRef = doc(db, 'users', uid, 'bills', params.bill.id);
   batch.set(
     billRef,
-    {
+    sanitizeForFirestore({
       ...params.bill,
       status: 'paid',
+      updatedAtMs: nowMs,
+      clientUpdatedAt: nowMs,
       updatedAt: serverTimestamp(),
       updatedBy: deviceId,
-    },
+    }),
     { merge: true }
   );
 
-  // 2. Update Table status
+  // 1b. Void any orphan empty open bills left on the released table
+  if (params.voidEmptyBills && params.voidEmptyBills.length > 0) {
+    for (const emptyBill of params.voidEmptyBills) {
+      const emptyBillRef = doc(db, 'users', uid, 'bills', emptyBill.id);
+      batch.set(
+        emptyBillRef,
+        sanitizeForFirestore({
+          ...emptyBill,
+          status: 'voided',
+          updatedAtMs: nowMs,
+          clientUpdatedAt: nowMs,
+          updatedAt: serverTimestamp(),
+          updatedBy: deviceId,
+        }),
+        { merge: true }
+      );
+    }
+  }
+
+  // 2. Update Table status using merge set (never batch.update so newly created/demo docs never fail NOT_FOUND)
   if (params.tableId) {
-    const tableRef = doc(db, 'users', (getCloudUser()?.uid || '_'), 'tables', params.tableId);
+    const tableRef = doc(db, 'users', uid, 'tables', params.tableId);
     if (params.isTableReleased) {
-      batch.update(tableRef, {
-        status: 'available',
-        currentBillId: null,
-        seatedAt: null,
-        guestCount: null,
-        updatedAt: serverTimestamp(),
-        updatedBy: deviceId,
-      });
+      batch.set(
+        tableRef,
+        {
+          id: params.tableId,
+          status: 'available',
+          currentBillId: null,
+          seatedAt: null,
+          guestCount: null,
+          reservation: null,
+          updatedAtMs: nowMs,
+          clientUpdatedAt: nowMs,
+          updatedAt: serverTimestamp(),
+          updatedBy: deviceId,
+        },
+        { merge: true }
+      );
     } else if (params.nextTableBillId) {
-      batch.update(tableRef, {
-        status: 'occupied',
-        currentBillId: params.nextTableBillId,
-        updatedAt: serverTimestamp(),
-        updatedBy: deviceId,
-      });
+      batch.set(
+        tableRef,
+        {
+          id: params.tableId,
+          status: 'occupied',
+          currentBillId: params.nextTableBillId,
+          updatedAtMs: nowMs,
+          clientUpdatedAt: nowMs,
+          updatedAt: serverTimestamp(),
+          updatedBy: deviceId,
+        },
+        { merge: true }
+      );
     }
   }
 
   // 3. Update Member points & total spent if applicable
   if (params.memberUpdate) {
-    const memberRef = doc(db, 'users', (getCloudUser()?.uid || '_'), 'members', params.memberUpdate.id);
-    batch.update(memberRef, {
-      points: params.memberUpdate.points,
-      totalSpent: params.memberUpdate.totalSpent,
-      updatedAt: serverTimestamp(),
-      updatedBy: deviceId,
-    });
+    const memberRef = doc(db, 'users', uid, 'members', params.memberUpdate.id);
+    batch.set(
+      memberRef,
+      {
+        id: params.memberUpdate.id,
+        points: params.memberUpdate.points,
+        totalSpent: params.memberUpdate.totalSpent,
+        updatedAtMs: nowMs,
+        clientUpdatedAt: nowMs,
+        updatedAt: serverTimestamp(),
+        updatedBy: deviceId,
+      },
+      { merge: true }
+    );
   }
 
   await batch.commit();
@@ -512,34 +692,82 @@ export async function atomicVoidBillAndReleaseTable(params: {
   bill: Bill;
   tableId?: string;
   isTableReleased: boolean;
+  nextTableBillId?: string;
+  voidEmptyBills?: Bill[];
 }): Promise<void> {
   if (!db || !getCloudUser()) return;
 
+  const uid = getCloudUser()?.uid || '_';
   const batch = writeBatch(db);
   const deviceId = getDeviceId();
+  const nowMs = params.bill.updatedAtMs || Date.now();
 
-  const billRef = doc(db, 'users', (getCloudUser()?.uid || '_'), 'bills', params.bill.id);
+  const billRef = doc(db, 'users', uid, 'bills', params.bill.id);
   batch.set(
     billRef,
-    {
+    sanitizeForFirestore({
       ...params.bill,
       status: 'voided',
+      updatedAtMs: nowMs,
+      clientUpdatedAt: nowMs,
       updatedAt: serverTimestamp(),
       updatedBy: deviceId,
-    },
+    }),
     { merge: true }
   );
 
-  if (params.tableId && params.isTableReleased) {
-    const tableRef = doc(db, 'users', (getCloudUser()?.uid || '_'), 'tables', params.tableId);
-    batch.update(tableRef, {
-      status: 'available',
-      currentBillId: null,
-      seatedAt: null,
-      guestCount: null,
-      updatedAt: serverTimestamp(),
-      updatedBy: deviceId,
-    });
+  if (params.voidEmptyBills && params.voidEmptyBills.length > 0) {
+    for (const emptyBill of params.voidEmptyBills) {
+      const emptyBillRef = doc(db, 'users', uid, 'bills', emptyBill.id);
+      batch.set(
+        emptyBillRef,
+        sanitizeForFirestore({
+          ...emptyBill,
+          status: 'voided',
+          updatedAtMs: nowMs,
+          clientUpdatedAt: nowMs,
+          updatedAt: serverTimestamp(),
+          updatedBy: deviceId,
+        }),
+        { merge: true }
+      );
+    }
+  }
+
+  if (params.tableId) {
+    const tableRef = doc(db, 'users', uid, 'tables', params.tableId);
+    if (params.isTableReleased) {
+      batch.set(
+        tableRef,
+        {
+          id: params.tableId,
+          status: 'available',
+          currentBillId: null,
+          seatedAt: null,
+          guestCount: null,
+          reservation: null,
+          updatedAtMs: nowMs,
+          clientUpdatedAt: nowMs,
+          updatedAt: serverTimestamp(),
+          updatedBy: deviceId,
+        },
+        { merge: true }
+      );
+    } else if (params.nextTableBillId) {
+      batch.set(
+        tableRef,
+        {
+          id: params.tableId,
+          status: 'occupied',
+          currentBillId: params.nextTableBillId,
+          updatedAtMs: nowMs,
+          clientUpdatedAt: nowMs,
+          updatedAt: serverTimestamp(),
+          updatedBy: deviceId,
+        },
+        { merge: true }
+      );
+    }
   }
 
   await batch.commit();
@@ -580,28 +808,38 @@ export async function saveShiftRemote(shift: Shift | null): Promise<void> {
   if (!db || !getCloudUser()) return;
   const activeShiftRef = doc(db, 'users', (getCloudUser()?.uid || '_'), 'shifts', 'active');
   const deviceId = getDeviceId();
+  const nowMs = shift?.updatedAtMs || Date.now();
 
   if (shift) {
-    await setDoc(activeShiftRef, {
-      shift,
-      updatedAt: serverTimestamp(),
-      updatedBy: deviceId,
-    });
+    await setDoc(
+      activeShiftRef,
+      sanitizeForFirestore({
+        shift,
+        updatedAtMs: nowMs,
+        clientUpdatedAt: nowMs,
+        updatedAt: serverTimestamp(),
+        updatedBy: deviceId,
+      })
+    );
 
     // Also record into shift history collection
     const shiftHistoryRef = doc(db, 'users', (getCloudUser()?.uid || '_'), 'shiftRecords', shift.id);
     await setDoc(
       shiftHistoryRef,
-      {
+      sanitizeForFirestore({
         ...shift,
+        updatedAtMs: nowMs,
+        clientUpdatedAt: nowMs,
         updatedAt: serverTimestamp(),
         updatedBy: deviceId,
-      },
+      }),
       { merge: true }
     );
   } else {
     await setDoc(activeShiftRef, {
       shift: null,
+      updatedAtMs: nowMs,
+      clientUpdatedAt: nowMs,
       updatedAt: serverTimestamp(),
       updatedBy: deviceId,
     });
@@ -610,14 +848,16 @@ export async function saveShiftRemote(shift: Shift | null): Promise<void> {
 
 export async function saveNotificationRemote(notif: AppNotification): Promise<void> {
   if (!db || !getCloudUser()) return;
+  const nowMs = Date.now();
   const ref = doc(db, 'users', (getCloudUser()?.uid || '_'), 'notifications', notif.id);
   await setDoc(
     ref,
-    {
+    sanitizeForFirestore({
       ...notif,
+      clientUpdatedAt: nowMs,
       updatedAt: serverTimestamp(),
       updatedBy: getDeviceId(),
-    },
+    }),
     { merge: true }
   );
 }
@@ -717,7 +957,12 @@ export function subscribeCollection<T extends { id: string }>(
         if (data.updatedBy === deviceId) {
           return;
         }
-        items.push(data as T);
+        if (collectionName === 'tables') {
+          items.push(normalizeTableData(data) as unknown as T);
+        } else {
+          const tsMs = extractTimestampMs(data);
+          items.push((tsMs > 0 ? { ...data, updatedAtMs: tsMs } : data) as T);
+        }
       });
 
       const removedIds: string[] = snapshot
@@ -762,7 +1007,7 @@ export function subscribeRecentBills(
         if (docSnap.metadata.hasPendingWrites) return;
         const data = docSnap.data() as Bill & { updatedBy?: string };
         if (data.updatedBy === deviceId) return;
-        bills.push(data);
+        bills.push(normalizeBillData(data));
       });
 
       const removedIds: string[] = snapshot

@@ -60,6 +60,7 @@ if (typeof window !== 'undefined' && isFirebaseConfigured()) {
       db = initializeFirestore(
         app,
         {
+          ignoreUndefinedProperties: true,
           localCache: persistentLocalCache({
             tabManager: persistentMultipleTabManager(),
           }),

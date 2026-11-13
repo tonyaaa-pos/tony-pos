@@ -40,6 +40,9 @@ export const BillsView: React.FC = () => {
   const [billToVoid, setBillToVoid] = useState<Bill | null>(null);
   const [voidReason, setVoidReason] = useState('');
 
+  const liveSelectedBill = selectedBill ? bills.find((b) => b.id === selectedBill.id) || selectedBill : null;
+  const livePayingBill = payingBill ? bills.find((b) => b.id === payingBill.id) || payingBill : null;
+
   const handleStartPayment = (bill: Bill) => {
     const check = canPay(bill);
     if (!check.allowed) {
@@ -317,11 +320,11 @@ export const BillsView: React.FC = () => {
       </div>
 
       {/* Bill Detail Modal */}
-      {selectedBill && (
+      {liveSelectedBill && (
         <Modal
           isOpen={true}
           onClose={() => setSelectedBill(null)}
-          title={`รายละเอียดบิล: ${selectedBill.billNumber}`}
+          title={`รายละเอียดบิล: ${liveSelectedBill.billNumber}`}
           maxWidth="max-w-lg"
         >
           <div className="space-y-4">
@@ -330,35 +333,35 @@ export const BillsView: React.FC = () => {
               <div>
                 <span className="text-slate-400">ประเภท:</span>{' '}
                 <span className="font-bold text-slate-800 dark:text-slate-200">
-                  {selectedBill.tableName ? `โต๊ะ ${selectedBill.tableName}` : selectedBill.orderType}
+                  {liveSelectedBill.tableName ? `โต๊ะ ${liveSelectedBill.tableName}` : liveSelectedBill.orderType}
                 </span>
               </div>
               <div>
                 <span className="text-slate-400">เวลาเปิดบิล:</span>{' '}
-                <span className="font-mono">{formatThaiDateTime(selectedBill.createdAt)}</span>
+                <span className="font-mono">{formatThaiDateTime(liveSelectedBill.createdAt)}</span>
               </div>
               <div>
                 <span className="text-slate-400">พนักงานเปิด:</span>{' '}
-                <span>{selectedBill.createdByName}</span>
+                <span>{liveSelectedBill.createdByName}</span>
               </div>
               <div>
                 <span className="text-slate-400">สถานะ:</span>{' '}
-                <span className="font-bold uppercase">{selectedBill.status}</span>
+                <span className="font-bold uppercase">{liveSelectedBill.status}</span>
               </div>
             </div>
 
             {/* Void detail if voided */}
-            {selectedBill.status === 'voided' && (
+            {liveSelectedBill.status === 'voided' && (
               <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 text-rose-800 dark:text-rose-300 text-xs border border-rose-200 dark:border-rose-900">
                 <div className="font-bold">บิลนี้ถูกยกเลิก (Voided):</div>
-                <div>เหตุผล: {selectedBill.voidReason || 'ไม่ระบุ'}</div>
-                <div>โดย: {selectedBill.voidedBy} ({selectedBill.voidedAt && formatThaiDateTime(selectedBill.voidedAt)})</div>
+                <div>เหตุผล: {liveSelectedBill.voidReason || 'ไม่ระบุ'}</div>
+                <div>โดย: {liveSelectedBill.voidedBy} ({liveSelectedBill.voidedAt && formatThaiDateTime(liveSelectedBill.voidedAt)})</div>
               </div>
             )}
 
             {/* Item list */}
             <div className="border border-slate-200 dark:border-slate-800 rounded-xl divide-y divide-slate-100 dark:divide-slate-800 text-xs">
-              {selectedBill.items.map((item) => (
+              {liveSelectedBill.items.map((item) => (
                 <div key={item.id} className="p-2.5 flex items-center justify-between">
                   <div>
                     <div className="font-medium text-slate-800 dark:text-slate-200">
@@ -381,30 +384,30 @@ export const BillsView: React.FC = () => {
             <div className="space-y-1 text-xs pt-2">
               <div className="flex justify-between">
                 <span>ยอดรวมอาหาร:</span>
-                <span className="font-mono">{formatBaht(selectedBill.subtotal)}</span>
+                <span className="font-mono">{formatBaht(liveSelectedBill.subtotal)}</span>
               </div>
-              {selectedBill.discountAmount > 0 && (
+              {liveSelectedBill.discountAmount > 0 && (
                 <div className="flex justify-between text-rose-600">
                   <span>ส่วนลด:</span>
-                  <span className="font-mono">-{formatBaht(selectedBill.discountAmount)}</span>
+                  <span className="font-mono">-{formatBaht(liveSelectedBill.discountAmount)}</span>
                 </div>
               )}
-              {selectedBill.serviceChargeAmount > 0 && (
+              {liveSelectedBill.serviceChargeAmount > 0 && (
                 <div className="flex justify-between">
-                  <span>ค่าบริการ ({selectedBill.serviceChargeRate}%):</span>
-                  <span className="font-mono">{formatBaht(selectedBill.serviceChargeAmount)}</span>
+                  <span>ค่าบริการ ({liveSelectedBill.serviceChargeRate}%):</span>
+                  <span className="font-mono">{formatBaht(liveSelectedBill.serviceChargeAmount)}</span>
                 </div>
               )}
-              {selectedBill.vatRate > 0 && (
+              {liveSelectedBill.vatRate > 0 && (
                 <div className="flex justify-between text-slate-400">
-                  <span>VAT ({selectedBill.vatRate}%):</span>
-                  <span className="font-mono">{formatBaht(selectedBill.vatAmount)}</span>
+                  <span>VAT ({liveSelectedBill.vatRate}%):</span>
+                  <span className="font-mono">{formatBaht(liveSelectedBill.vatAmount)}</span>
                 </div>
               )}
               <div className="flex justify-between text-base font-bold text-slate-900 dark:text-white pt-2 border-t border-slate-200 dark:border-slate-800">
                 <span>ยอดสุทธิ:</span>
                 <span className="font-mono text-amber-600 dark:text-amber-400">
-                  {formatBaht(selectedBill.grandTotal)}
+                  {formatBaht(liveSelectedBill.grandTotal)}
                 </span>
               </div>
             </div>
@@ -413,7 +416,7 @@ export const BillsView: React.FC = () => {
               <button
                 type="button"
                 onClick={() => {
-                  setShowPrintModal(selectedBill);
+                  setShowPrintModal(liveSelectedBill);
                 }}
                 className="px-4 py-2 rounded-xl bg-slate-900 text-white dark:bg-white dark:text-slate-900 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
               >
@@ -421,11 +424,11 @@ export const BillsView: React.FC = () => {
                 <span>พิมพ์ใบเสร็จ</span>
               </button>
 
-              {selectedBill.status === 'open' && (
+              {liveSelectedBill.status === 'open' && (
                 <button
                   type="button"
                   onClick={() => {
-                    const bill = selectedBill;
+                    const bill = liveSelectedBill;
                     setSelectedBill(null);
                     handleStartPayment(bill);
                   }}
@@ -462,10 +465,10 @@ export const BillsView: React.FC = () => {
       )}
 
       {/* Payment Modal */}
-      {payingBill && (
+      {livePayingBill && livePayingBill.status === 'open' && (
         <PaymentModal
           isOpen={true}
-          bill={payingBill}
+          bill={livePayingBill}
           onClose={() => setPayingBill(null)}
         />
       )}

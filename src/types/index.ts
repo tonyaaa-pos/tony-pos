@@ -18,6 +18,7 @@ export interface TableZoneConfig {
   name: string;
   nameEn?: string;
   color?: string;
+  updatedAtMs?: number;
 }
 export type TableStatus = 'available' | 'occupied' | 'payment_pending' | 'reserved';
 export type TableShape = 'square' | 'round' | 'rectangle' | 'counter' | 'standalone_chair';
@@ -52,6 +53,7 @@ export interface Table {
   seatedAt?: string;
   guestCount?: number;
   reservation?: ReservationInfo;
+  updatedAtMs?: number;
 }
 
 export interface OptionChoice {
@@ -69,6 +71,7 @@ export interface OptionGroup {
   type: 'single' | 'multiple';
   required: boolean;
   choices: OptionChoice[];
+  updatedAtMs?: number;
 }
 
 export interface ItemVariantOption {
@@ -105,6 +108,7 @@ export interface MenuItem {
   costMenuName?: string;
   optionGroups?: OptionGroup[];
   variants?: ItemVariantOption[];
+  updatedAtMs?: number;
 }
 
 export interface MenuCategory {
@@ -114,6 +118,7 @@ export interface MenuCategory {
   icon?: string;
   color?: string;
   sortOrder: number;
+  updatedAtMs?: number;
 }
 
 export interface SelectedOption {
@@ -207,6 +212,7 @@ export interface Bill {
   voidReason?: string;
   voidedBy?: string;
   voidedAt?: string;
+  updatedAtMs?: number;
 }
 
 export interface Shift {
@@ -221,6 +227,7 @@ export interface Shift {
   difference?: number;
   status: 'open' | 'closed';
   note?: string;
+  updatedAtMs?: number;
 }
 
 export interface Member {
@@ -230,6 +237,7 @@ export interface Member {
   points: number;
   totalSpent: number;
   registeredAt: string;
+  updatedAtMs?: number;
 }
 
 export interface PaymentQrImage {
@@ -256,6 +264,7 @@ export interface ShopSettings {
   allowedPaymentMethods: PaymentMethod[];
   pointsEarnRate: number; // e.g. 1 point per 50 THB
   pointsRedeemRate: number; // e.g. 1 point = 1 THB
+  updatedAtMs?: number;
 }
 
 export type NotificationType = 'new_order' | 'call_waiter' | 'request_bill';
