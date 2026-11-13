@@ -63,6 +63,30 @@ import { CostProfitSyncModal } from '../cost/CostProfitSyncModal';
 
 export type TimeFilterPeriod = 'today' | 'week' | 'month' | 'year' | 'custom';
 export type DashboardTab = 'overview' | 'breakeven' | 'menu_profit' | 'shifts' | 'bills';
+
+function getOrderItemUnitCost(item: OrderItem, menuItems: MenuItem[]): number {
+  if (item.cost !== undefined && item.cost > 0) {
+    return item.cost;
+  }
+  const matchedMenu = menuItems.find((m) => m.id === item.menuItemId);
+  const matchedVariant = matchedMenu?.variants?.find(
+    (v) => v.id === item.variantId || v.name === item.variantName
+  );
+  const baseCost = matchedVariant?.cost ?? matchedMenu?.cost ?? 0;
+
+  const optionsCost = (item.selectedOptions || []).reduce((sum, opt) => {
+    if (opt.costDelta !== undefined) {
+      return sum + (Number(opt.costDelta) || 0);
+    }
+    const matchedGroup = matchedMenu?.optionGroups?.find((g) => g.id === opt.groupId);
+    const matchedChoice = matchedGroup?.choices?.find(
+      (c) => c.id === opt.choiceId || c.name === opt.choiceName
+    );
+    return sum + (Number(matchedChoice?.costDelta) || 0);
+  }, 0);
+
+  return Math.round((baseCost + optionsCost) * 100) / 100;
+}
 export type ChannelFilter = 'all' | 'dine_in' | 'delivery' | 'grab' | 'lineman' | 'shopeefood';
 
 interface OpExSettings {
@@ -285,12 +309,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ defaultTab = 'over
             dineInGrossSales += lineTotal;
           }
 
-          // Accurate COGS calculation: unit cost from item, or fallback to matching MenuItem cost
-          let unitCost = item.cost;
-          if (unitCost === undefined || unitCost === 0) {
-            const matched = menuItems.find((m) => m.id === item.menuItemId);
-            unitCost = matched?.cost || 0;
-          }
+          // Accurate COGS calculation: unit cost from item/variant + sub-options
+          const unitCost = getOrderItemUnitCost(item, menuItems);
           totalCogs += unitCost * item.quantity;
         }
       });
@@ -399,8 +419,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ defaultTab = 'over
       b.items.forEach((it) => {
         if (it.status !== 'voided') {
           billGross += it.price * it.quantity;
-          const matched = menuItems.find((m) => m.id === it.menuItemId);
-          billCogs += (it.cost || matched?.cost || 0) * it.quantity;
+          billCogs += getOrderItemUnitCost(it, menuItems) * it.quantity;
         }
       });
       ch.gross += billGross;
@@ -561,8 +580,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ defaultTab = 'over
           let billCogs = 0;
           b.items.forEach((it) => {
             if (it.status !== 'voided') {
-              const matched = menuItems.find((m) => m.id === it.menuItemId);
-              billCogs += (it.cost || matched?.cost || 0) * it.quantity;
+              billCogs += getOrderItemUnitCost(it, menuItems) * it.quantity;
             }
           });
           hourly[hour].sales += billNet;
@@ -602,8 +620,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ defaultTab = 'over
           let billCogs = 0;
           b.items.forEach((it) => {
             if (it.status !== 'voided') {
-              const matched = menuItems.find((m) => m.id === it.menuItemId);
-              billCogs += (it.cost || matched?.cost || 0) * it.quantity;
+              billCogs += getOrderItemUnitCost(it, menuItems) * it.quantity;
             }
           });
           point.sales += billNet;
@@ -633,8 +650,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ defaultTab = 'over
           let billCogs = 0;
           b.items.forEach((it) => {
             if (it.status !== 'voided') {
-              const matched = menuItems.find((m) => m.id === it.menuItemId);
-              billCogs += (it.cost || matched?.cost || 0) * it.quantity;
+              billCogs += getOrderItemUnitCost(it, menuItems) * it.quantity;
             }
           });
           monthly[m].sales += billNet;
@@ -671,12 +687,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ defaultTab = 'over
     paidBills.forEach((b) => {
       b.items.forEach((item) => {
         if (item.status !== 'voided') {
-          const key = item.menuItemId || item.name;
+          const variantKey = item.variantId || item.variantName || 'std';
+          const key = `${item.menuItemId || item.name}__${variantKey}`;
+          const itemUnitCost = getOrderItemUnitCost(item, menuItems);
+
           if (!map[key]) {
-            const matched = menuItems.find((m) => m.id === item.menuItemId);
-            const unitCost = item.cost || matched?.cost || 0;
             map[key] = {
-              id: item.menuItemId,
+              id: key,
               name: item.name,
               nameEn: item.nameEn,
               qty: 0,
@@ -684,15 +701,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ defaultTab = 'over
               cogs: 0,
               profit: 0,
               unitPrice: item.price,
-              unitCost,
+              unitCost: itemUnitCost,
             };
           }
           const itemRev = item.price * item.quantity;
-          const itemCost = map[key].unitCost * item.quantity;
+          const itemCost = itemUnitCost * item.quantity;
           map[key].qty += item.quantity;
           map[key].revenue += itemRev;
           map[key].cogs += itemCost;
           map[key].profit += itemRev - itemCost;
+          if (map[key].qty > 0) {
+            map[key].unitPrice = map[key].revenue / map[key].qty;
+            map[key].unitCost = map[key].cogs / map[key].qty;
+          }
         }
       });
     });

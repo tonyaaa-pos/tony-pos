@@ -61,24 +61,32 @@ export const ItemCustomizerModal: React.FC<ItemCustomizerModalProps> = ({
   const [selectedMultipleOptions, setSelectedMultipleOptions] = useState<Record<string, string[]>>({});
   const [note, setNote] = useState('');
 
-  // Calculate add-on deltas
+  // Calculate add-on price & cost deltas
   let addOnsDelta = 0;
+  let optionsCostDelta = 0;
   menuItem.optionGroups?.forEach((group) => {
     if (group.type === 'single') {
       const choiceId = selectedSingleOptions[group.id];
       const choice = group.choices.find((c) => c.id === choiceId);
-      if (choice) addOnsDelta += choice.priceDelta;
+      if (choice) {
+        addOnsDelta += choice.priceDelta;
+        optionsCostDelta += Number(choice.costDelta) || 0;
+      }
     } else if (group.type === 'multiple') {
       const choiceIds = selectedMultipleOptions[group.id] || [];
       choiceIds.forEach((cId) => {
         const choice = group.choices.find((c) => c.id === cId);
-        if (choice) addOnsDelta += choice.priceDelta;
+        if (choice) {
+          addOnsDelta += choice.priceDelta;
+          optionsCostDelta += Number(choice.costDelta) || 0;
+        }
       });
     }
   });
 
   const selectedVariant = variants.find((v) => v.id === selectedVariantId) || variants[0];
   const unitPrice = selectedVariant.price + addOnsDelta;
+  const unitCost = Math.round(((Number(selectedVariant.cost) || 0) + optionsCostDelta) * 100) / 100;
   const totalPrice = unitPrice * quantity;
 
   const handleConfirmAdd = () => {
@@ -102,6 +110,7 @@ export const ItemCustomizerModal: React.FC<ItemCustomizerModalProps> = ({
             choiceName: choice.name,
             choiceNameEn: choice.nameEn,
             priceDelta: choice.priceDelta,
+            costDelta: Number(choice.costDelta) || 0,
           });
         }
       } else if (group.type === 'multiple') {
@@ -117,6 +126,7 @@ export const ItemCustomizerModal: React.FC<ItemCustomizerModalProps> = ({
               choiceName: choice.name,
               choiceNameEn: choice.nameEn,
               priceDelta: choice.priceDelta,
+              costDelta: Number(choice.costDelta) || 0,
             });
           }
         });
@@ -139,7 +149,7 @@ export const ItemCustomizerModal: React.FC<ItemCustomizerModalProps> = ({
       name: fullDisplayName,
       nameEn: `${menuItem.nameEn || menuItem.name} (${selectedVariant.nameEn || selectedVariant.name})`,
       price: unitPrice,
-      cost: selectedVariant.cost,
+      cost: unitCost,
       quantity,
       selectedOptions: allSelectedOptions,
       note: note.trim(),

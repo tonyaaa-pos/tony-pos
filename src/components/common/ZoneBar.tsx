@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { usePOS } from '../../context/POSContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { ZoneManagementModal } from '../tables/ZoneManagementModal';
@@ -24,23 +24,17 @@ export const ZoneBar: React.FC<ZoneBarProps> = ({ className = '', showManageButt
     soundService.playTap();
   };
 
+  useEffect(() => {
+    if (zones.length > 0 && (selectedZone === 'all' || !zones.some((z) => z.id === selectedZone))) {
+      setSelectedZone(zones[0].id);
+    }
+  }, [zones, selectedZone, setSelectedZone]);
+
   return (
     <>
       <div
         className={`flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar scroll-smooth ${className}`}
       >
-        {/* All Zones Button */}
-        <button
-          type="button"
-          onClick={() => setSelectedZone('all')}
-          className={`px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer select-none shrink-0 ${
-            selectedZone === 'all'
-              ? 'bg-amber-500 text-slate-950 shadow-xs'
-              : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
-          }`}
-        >
-          {t('zone_all')} ({tables.length})
-        </button>
 
         {/* Dynamic User-Configured Zones (Movable with Drag-and-Drop & Arrow Buttons) */}
         {zones.map((zone, index) => {

@@ -26,6 +26,8 @@ import {
   PlusCircle,
   ChevronLeft,
   ChevronRight,
+  Calculator,
+  Link2,
 } from 'lucide-react';
 import { formatBaht } from '../../utils/formatters';
 import { soundService } from '../../utils/audio';
@@ -34,6 +36,13 @@ import { ConfirmDialog } from '../common/ConfirmDialog';
 import { compressImageFile } from '../../utils/imageCompressor';
 import { isDishInCategory } from '../pos/POSView';
 import { BilingualNameInput } from '../common/BilingualNameInput';
+import { FoodCostVariantPickerModal } from './FoodCostVariantPickerModal';
+import {
+  getCachedCostBundle,
+  findMatchingCostMenu,
+  fetchRemoteCostManagementStatus,
+  type TonysKitchenMenu,
+} from '../../services/costSyncService';
 
 export const MenuManagementView: React.FC = () => {
   const {
@@ -58,7 +67,10 @@ export const MenuManagementView: React.FC = () => {
 
   const { t, getName, getDescription } = useLanguage();
 
-  const currentCategory = activeCategory || 'all';
+  const currentCategory =
+    activeCategory && categories.some((c) => c.id === activeCategory)
+      ? activeCategory
+      : categories[0]?.id || 'all';
   const [searchQuery, setSearchQuery] = useState('');
 
   // Category Pills Bar drag-and-drop state
@@ -97,6 +109,24 @@ export const MenuManagementView: React.FC = () => {
   const [dragOverOptionGroupIndex, setDragOverOptionGroupIndex] = useState<number | null>(null);
   const [showOptionPickerModal, setShowOptionPickerModal] = useState(false);
 
+  // Food Cost System (หลักสากล) link & variant picker state
+  const [showFoodCostVariantPicker, setShowFoodCostVariantPicker] = useState(false);
+  const [costMenus, setCostMenus] = useState<TonysKitchenMenu[]>(
+    () => getCachedCostBundle()?.payload?.menus || []
+  );
+
+  const refreshCachedCostMenus = async () => {
+    setCostMenus(getCachedCostBundle()?.payload?.menus || []);
+    try {
+      const res = await fetchRemoteCostManagementStatus();
+      if (res.status === 'found' && res.data?.payload?.menus) {
+        setCostMenus(res.data.payload.menus);
+      }
+    } catch {
+      // Keep cached menus
+    }
+  };
+
   // Master Option Presets Modal
   const [showOptionPresetsModal, setShowOptionPresetsModal] = useState(false);
   const [editingPreset, setEditingPreset] = useState<OptionGroup | null>(null);
@@ -126,6 +156,7 @@ export const MenuManagementView: React.FC = () => {
   const handleOpenAdd = () => {
     setIsNewItem(true);
     setStorageError(null);
+    void refreshCachedCostMenus();
     const defaultCatId =
       currentCategory !== 'all' && categories.some((c) => c.id === currentCategory)
         ? currentCategory
@@ -139,6 +170,8 @@ export const MenuManagementView: React.FC = () => {
       price: 80,
       cost: 40,
       categoryId: defaultCatId,
+      costMenuId: '',
+      costMenuName: '',
       image:
         'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=600&q=80',
       isAvailable: true,
@@ -163,6 +196,7 @@ export const MenuManagementView: React.FC = () => {
   const handleOpenEdit = (item: MenuItem) => {
     setIsNewItem(false);
     setStorageError(null);
+    void refreshCachedCostMenus();
     // Ensure item has variants
     const variants =
       item.variants && item.variants.length > 0
@@ -179,8 +213,15 @@ export const MenuManagementView: React.FC = () => {
             },
           ];
 
+    const latestCostMenus = getCachedCostBundle()?.payload?.menus || [];
+    const autoCostMenu = item.costMenuId
+      ? latestCostMenus.find((m) => m.id === item.costMenuId)
+      : findMatchingCostMenu(item.name, latestCostMenus, undefined, item.id);
+
     setEditingItem({
       ...item,
+      costMenuId: item.costMenuId || autoCostMenu?.id || '',
+      costMenuName: item.costMenuName || autoCostMenu?.name || '',
       variants,
       optionGroups: item.optionGroups ? JSON.parse(JSON.stringify(item.optionGroups)) : [],
     });
@@ -372,6 +413,33 @@ export const MenuManagementView: React.FC = () => {
     setDragOverOptionGroupIndex(null);
   };
 
+  const handleAddCustomOptionGroup = () => {
+    setEditingItem((prev) => {
+      if (!prev) return prev;
+      const newGroup: OptionGroup = {
+        id: 'opt_custom_' + Date.now(),
+        name: '',
+        nameEn: '',
+        type: 'single',
+        required: false,
+        choices: [
+          {
+            id: 'ch_' + Date.now() + '_1',
+            name: '',
+            nameEn: '',
+            priceDelta: 0,
+            costDelta: 0,
+          },
+        ],
+      };
+      return {
+        ...prev,
+        optionGroups: [...(prev.optionGroups || []), newGroup],
+      };
+    });
+    soundService.playTap();
+  };
+
   const handleAddChoiceToGroup = (groupIdx: number) => {
     if (!editingItem || !editingItem.optionGroups) return;
     const updated = [...editingItem.optionGroups];
@@ -381,6 +449,7 @@ export const MenuManagementView: React.FC = () => {
       name: '',
       nameEn: '',
       priceDelta: 0,
+      costDelta: 0,
     };
     updated[groupIdx] = {
       ...targetGroup,
@@ -498,6 +567,7 @@ export const MenuManagementView: React.FC = () => {
         name: c.name.trim(),
         nameEn: c.nameEn?.trim() || '',
         priceDelta: Number(c.priceDelta) || 0,
+        costDelta: Number(c.costDelta) || 0,
       }));
 
     if (validChoices.length === 0) {
@@ -527,6 +597,7 @@ export const MenuManagementView: React.FC = () => {
       name: '',
       nameEn: '',
       priceDelta: 0,
+      costDelta: 0,
     };
     setEditingPreset({
       ...editingPreset,
@@ -582,6 +653,7 @@ export const MenuManagementView: React.FC = () => {
             name: c.name.trim(),
             nameEn: c.nameEn?.trim() || '',
             priceDelta: Number(c.priceDelta) || 0,
+            costDelta: Number(c.costDelta) || 0,
           })),
       }));
 
@@ -591,6 +663,8 @@ export const MenuManagementView: React.FC = () => {
       nameEn: editingItem.nameEn?.trim() || '',
       description: editingItem.description?.trim() || '',
       descriptionEn: editingItem.descriptionEn?.trim() || '',
+      costMenuId: editingItem.costMenuId || '',
+      costMenuName: editingItem.costMenuName || '',
       price: primaryPrice,
       cost: primaryCost,
       variants: validVariants,
@@ -675,21 +749,6 @@ export const MenuManagementView: React.FC = () => {
 
         {/* Categories Pills with Drag & Drop and Left/Right Arrow Reordering */}
         <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scroll-smooth">
-          <button
-            type="button"
-            onClick={() => {
-              setActiveCategory('all');
-              soundService.playTap();
-            }}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer shadow-2xs shrink-0 ${
-              currentCategory === 'all'
-                ? 'bg-amber-500 text-slate-950 shadow-2xs font-extrabold'
-                : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
-            }`}
-          >
-            {t('all')} ({menuItems.length})
-          </button>
-
           {categories.map((c, index) => {
             const count = menuItems.filter((m) => isDishInCategory(m, c.id, categories)).length;
             const isSelected = currentCategory === c.id;
@@ -1128,21 +1187,49 @@ export const MenuManagementView: React.FC = () => {
               </div>
             </div>
 
+            {/* Food Cost System (หลักสากล) Menu Link Dropdown */}
+            <div className="p-3 rounded-2xl bg-amber-500/5 dark:bg-slate-800/70 border border-amber-200/80 dark:border-slate-700 space-y-1.5">
+              <label className="flex items-center gap-1.5 text-xs font-bold text-slate-800 dark:text-slate-200">
+                <Calculator className="w-3.5 h-3.5 text-amber-500" />
+                <span>รายการเมนูอาหารที่เชื่อมโยง (Food Cost System)</span>
+              </label>
+              <select
+                value={editingItem.costMenuId || ''}
+                onChange={(e) => {
+                  const chosen = costMenus.find((m) => m.id === e.target.value);
+                  setEditingItem((prev) => ({
+                    ...prev,
+                    costMenuId: chosen?.id || '',
+                    costMenuName: chosen?.name || '',
+                  }));
+                  soundService.playTap();
+                }}
+                className="w-full px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-bold text-slate-900 dark:text-white focus:ring-2 focus:ring-amber-500"
+              >
+                <option value="">-- เลือกรายการเมนูอาหาร (เพื่อดึงตัวเลือกและต้นทุนจากแอปคำนวณต้นทุน) --</option>
+                {costMenus.map((cm) => (
+                  <option key={cm.id} value={cm.id}>
+                    {cm.name} ({cm.variants?.length || 0} ตัวเลือก)
+                  </option>
+                ))}
+              </select>
+            </div>
+
             {/* Options / Variants List Section (Prices belong here) */}
             <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-3">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2">
                 <div>
                   <h4 className="text-xs font-bold text-slate-900 dark:text-white">
                     {t('menu_form_options_header')}
                   </h4>
                   <p className="text-[11px] text-slate-400">
-                    กำหนดตัวเลือก เช่น หมูสับ, ไก่, ทะเล พร้อมราคาและต้นทุนของแต่ละตัวเลือก
+                    กด &ldquo;{t('menu_form_add_option_btn')}&rdquo; เพื่อเลือกตัวเลือกเนื้อสัตว์จาก Food Cost System ของเมนูนี้โดยอัตโนมัติ
                   </p>
                 </div>
                 <button
                   type="button"
-                  onClick={handleAddVariant}
-                  className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs shadow-xs transition cursor-pointer"
+                  onClick={() => setShowFoodCostVariantPicker(true)}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs shadow-xs transition cursor-pointer shrink-0"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   <span>{t('menu_form_add_option_btn')}</span>
@@ -1261,32 +1348,44 @@ export const MenuManagementView: React.FC = () => {
                       </div>
 
                       {/* Live Profit and Food Cost percentage indicators */}
-                      {varPrice > 0 && (
-                        <div className="flex items-center justify-between text-[11px] pt-1.5 border-t border-slate-100 dark:border-slate-800 text-slate-500 pl-7 pr-2">
-                          <div className="flex items-center gap-1.5">
-                            <span>กำไรขั้นต้น/จาน:</span>
-                            <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
-                              +{formatBaht(varProfit)}
-                            </span>
-                            <span className="text-slate-400 text-[10px]">
-                              (Margin: {varMarginPct.toFixed(0)}%)
-                            </span>
+                      {(varPrice > 0 || variant.costVariantId) && (
+                        <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] pt-1.5 border-t border-slate-100 dark:border-slate-800 text-slate-500 pl-7 pr-2">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {variant.costVariantId && (
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 text-[10px] font-bold">
+                                <Link2 className="w-2.5 h-2.5" />
+                                <span>เชื่อมสูตร: {variant.costVariantName || variant.name}</span>
+                              </span>
+                            )}
+                            {varPrice > 0 && (
+                              <div className="flex items-center gap-1.5">
+                                <span>กำไรขั้นต้น/จาน:</span>
+                                <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                                  +{formatBaht(varProfit)}
+                                </span>
+                                <span className="text-slate-400 text-[10px]">
+                                  (Margin: {varMarginPct.toFixed(0)}%)
+                                </span>
+                              </div>
+                            )}
                           </div>
-                          <div className="flex items-center gap-1.5">
-                            <span>Food Cost:</span>
-                            <span
-                              className={`font-mono font-bold ${
-                                varFoodCostPct <= 35
-                                  ? 'text-emerald-600 dark:text-emerald-400'
-                                  : 'text-amber-600'
-                              }`}
-                            >
-                              {varFoodCostPct.toFixed(1)}%
-                            </span>
-                            <span className="text-[10px] text-slate-400">
-                              {varFoodCostPct <= 35 ? '(✅ อยู่ในเกณฑ์ 28-35%)' : '(⚠️ สูงกว่าเกณฑ์สากล)'}
-                            </span>
-                          </div>
+                          {varPrice > 0 && (
+                            <div className="flex items-center gap-1.5">
+                              <span>Food Cost:</span>
+                              <span
+                                className={`font-mono font-bold ${
+                                  varFoodCostPct <= 35
+                                    ? 'text-emerald-600 dark:text-emerald-400'
+                                    : 'text-amber-600'
+                                }`}
+                              >
+                                {varFoodCostPct.toFixed(1)}%
+                              </span>
+                              <span className="text-[10px] text-slate-400">
+                                {varFoodCostPct <= 35 ? '(✅ อยู่ในเกณฑ์ 28-35%)' : '(⚠️ สูงกว่าเกณฑ์สากล)'}
+                              </span>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -1389,42 +1488,32 @@ export const MenuManagementView: React.FC = () => {
                               #{gIdx + 1}
                             </span>
 
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-center gap-1.5 flex-wrap">
-                                <span className="font-bold text-xs px-2.5 py-0.5 rounded-lg bg-amber-500 text-slate-950 shadow-xs truncate">
-                                  {group.name}
-                                </span>
-                                {group.nameEn && (
-                                  <span className="text-[10px] text-slate-400 truncate hidden sm:inline">
-                                    ({group.nameEn})
-                                  </span>
-                                )}
-                                <span
-                                  className={`px-1.5 py-0.5 rounded text-[9px] font-semibold shrink-0 ${
-                                    group.type === 'single'
-                                      ? 'bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300'
-                                      : 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300'
-                                  }`}
+                            <div className="min-w-0 flex-1 space-y-2">
+                              <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                                <div className="flex-1 min-w-0">
+                                  <BilingualNameInput
+                                    compact
+                                    placeholderTh="ชื่อกลุ่มตัวเลือก (ภาษาไทย)"
+                                    placeholderEn="Group Name (EN)"
+                                    valueTh={group.name || ''}
+                                    valueEn={group.nameEn || ''}
+                                    onChangeTh={(val) => handleUpdateOptionGroup(gIdx, { name: val })}
+                                    onChangeEn={(val) => handleUpdateOptionGroup(gIdx, { nameEn: val })}
+                                    required
+                                  />
+                                </div>
+                                <select
+                                  value={group.type}
+                                  onChange={(e) =>
+                                    handleUpdateOptionGroup(gIdx, {
+                                      type: e.target.value as 'single' | 'multiple',
+                                    })
+                                  }
+                                  className="px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-[11px] font-semibold text-slate-700 dark:text-slate-200 shrink-0"
                                 >
-                                  {group.type === 'single' ? 'เลือกได้ 1 อย่าง' : 'เลือกได้หลายอย่าง'}
-                                </span>
-                              </div>
-
-                              {/* Choices preview pills */}
-                              <div className="flex flex-wrap gap-1 mt-1">
-                                {(group.choices || []).map((c) => (
-                                  <span
-                                    key={c.id}
-                                    className="px-2 py-0.5 rounded-md text-[9px] font-medium bg-amber-50 dark:bg-amber-950/40 text-amber-950 dark:text-amber-200 border border-amber-200/80 dark:border-amber-800/60"
-                                  >
-                                    {c.name}
-                                    {c.priceDelta > 0 && (
-                                      <span className="text-amber-600 dark:text-amber-400 font-bold ml-1 font-mono">
-                                        +{c.priceDelta}฿
-                                      </span>
-                                    )}
-                                  </span>
-                                ))}
+                                  <option value="single">เลือกได้ 1 อย่าง</option>
+                                  <option value="multiple">เลือกได้หลายอย่าง</option>
+                                </select>
                               </div>
                             </div>
                           </div>
@@ -1432,11 +1521,95 @@ export const MenuManagementView: React.FC = () => {
                           <button
                             type="button"
                             onClick={() => handleDeleteOptionGroup(gIdx)}
-                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer shrink-0"
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer shrink-0 self-start"
                             title="ลบตัวเลือกย่อยนี้ออกจากเมนู"
                           >
                             <X className="w-4 h-4" />
                           </button>
+                        </div>
+
+                        {/* Editable Bilingual Sub-Options List */}
+                        <div className="mt-2.5 pt-2.5 border-t border-slate-100 dark:border-slate-800 space-y-1.5 pl-1 sm:pl-6">
+                          <div className="flex items-center justify-between text-[10px] font-bold text-slate-500">
+                            <span>รายการตัวเลือกย่อย (ไทย / อังกฤษ)</span>
+                            <button
+                              type="button"
+                              onClick={() => handleAddChoiceToGroup(gIdx)}
+                              className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400 hover:underline cursor-pointer"
+                            >
+                              <Plus className="w-3 h-3" />
+                              <span>เพิ่มตัวเลือกย่อย</span>
+                            </button>
+                          </div>
+
+                          {(group.choices || []).map((c, cIdx) => (
+                            <div
+                              key={c.id || cIdx}
+                              className="flex flex-col sm:flex-row sm:items-center gap-1.5 p-1.5 rounded-lg bg-slate-50 dark:bg-slate-800/70 border border-slate-200/70 dark:border-slate-700/70"
+                            >
+                              <div className="flex-1 min-w-0">
+                                <BilingualNameInput
+                                  compact
+                                  placeholderTh="ชื่อตัวเลือก (ไทย)"
+                                  placeholderEn="Option Name (EN)"
+                                  valueTh={c.name || ''}
+                                  valueEn={c.nameEn || ''}
+                                  onChangeTh={(val) =>
+                                    handleUpdateChoiceInGroup(gIdx, cIdx, { name: val })
+                                  }
+                                  onChangeEn={(val) =>
+                                    handleUpdateChoiceInGroup(gIdx, cIdx, { nameEn: val })
+                                  }
+                                  required
+                                />
+                              </div>
+
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <div className="flex items-center gap-1 w-22">
+                                  <span className="text-[10px] text-slate-400 font-mono">+฿</span>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    placeholder="0"
+                                    value={c.priceDelta ?? 0}
+                                    onChange={(e) =>
+                                      handleUpdateChoiceInGroup(gIdx, cIdx, {
+                                        priceDelta: Number(e.target.value),
+                                      })
+                                    }
+                                    className="w-full px-1.5 py-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-mono font-bold text-amber-600 dark:text-amber-400"
+                                    title="ราคาขายเพิ่ม (฿)"
+                                  />
+                                </div>
+                                <div className="flex items-center gap-1 w-24">
+                                  <span className="text-[10px] text-slate-400">ทุน</span>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    placeholder="0"
+                                    value={c.costDelta ?? 0}
+                                    onChange={(e) =>
+                                      handleUpdateChoiceInGroup(gIdx, cIdx, {
+                                        costDelta: Number(e.target.value),
+                                      })
+                                    }
+                                    className="w-full px-1.5 py-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-mono text-rose-500"
+                                    title="ต้นทุนวัตถุดิบเพิ่ม (฿)"
+                                  />
+                                </div>
+                                {(group.choices?.length || 0) > 1 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteChoiceFromGroup(gIdx, cIdx)}
+                                    className="p-1 text-slate-400 hover:text-rose-500 cursor-pointer"
+                                    title="ลบตัวเลือกนี้"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          ))}
                         </div>
                       </div>
                     );
@@ -1444,19 +1617,29 @@ export const MenuManagementView: React.FC = () => {
                 </div>
               )}
 
-              {/* Button at the bottom to open Option Sets Selector */}
-              <button
-                type="button"
-                onClick={() => setShowOptionPickerModal(true)}
-                className="w-full py-2.5 px-3 rounded-xl border border-dashed border-amber-400 dark:border-amber-600/70 bg-amber-50/60 dark:bg-amber-950/20 hover:bg-amber-100/70 dark:hover:bg-amber-950/40 text-amber-800 dark:text-amber-300 font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer"
-              >
-                <Plus className="w-4 h-4 text-amber-600 dark:text-amber-400" />
-                <span>
-                  {editingItem.optionGroups && editingItem.optionGroups.length > 0
-                    ? 'เพิ่มหรือเลือก set เมนูย่อยเพิ่มเติม'
-                    : 'เพิ่มตัวเลือกย่อย (เลือกจาก set เมนูย่อย)'}
-                </span>
-              </button>
+              {/* Bottom actions to add Option Sets or custom group */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowOptionPickerModal(true)}
+                  className="py-2.5 px-3 rounded-xl border border-dashed border-amber-400 dark:border-amber-600/70 bg-amber-50/60 dark:bg-amber-950/20 hover:bg-amber-100/70 dark:hover:bg-amber-950/40 text-amber-800 dark:text-amber-300 font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer"
+                >
+                  <Plus className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                  <span>
+                    {editingItem.optionGroups && editingItem.optionGroups.length > 0
+                      ? 'เลือกจาก set เมนูย่อยเพิ่มเติม'
+                      : 'เลือกจาก set เมนูย่อย'}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleAddCustomOptionGroup}
+                  className="py-2.5 px-3 rounded-xl border border-dashed border-slate-300 dark:border-slate-600 bg-white/80 dark:bg-slate-900/60 hover:border-amber-400 text-slate-700 dark:text-slate-200 font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer"
+                >
+                  <PlusCircle className="w-4 h-4 text-amber-500" />
+                  <span>สร้างกลุ่มตัวเลือกใหม่เอง</span>
+                </button>
+              </div>
             </div>
 
             <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
@@ -1476,6 +1659,31 @@ export const MenuManagementView: React.FC = () => {
             </div>
           </form>
         </Modal>
+      )}
+
+      {/* Food Cost Variant Picker Modal */}
+      {showFoodCostVariantPicker && editingItem && (
+        <FoodCostVariantPickerModal
+          isOpen={showFoodCostVariantPicker}
+          onClose={() => setShowFoodCostVariantPicker(false)}
+          selectedCostMenuId={editingItem.costMenuId}
+          onSelectCostMenuId={(costMenuId, costMenuName) => {
+            setEditingItem((prev) => (prev ? { ...prev, costMenuId, costMenuName } : prev));
+          }}
+          existingVariants={editingItem.variants || []}
+          onPickVariant={(pickedVariant) => {
+            setEditingItem((prev) => {
+              if (!prev) return prev;
+              const current = prev.variants || [];
+              return {
+                ...prev,
+                costMenuId: pickedVariant.costMenuId || prev.costMenuId,
+                variants: [...current, pickedVariant],
+              };
+            });
+          }}
+          onAddCustomVariant={handleAddVariant}
+        />
       )}
 
       {/* Option Sets Selector Modal */}
@@ -2034,7 +2242,7 @@ export const MenuManagementView: React.FC = () => {
                       required
                     />
 
-                    <div className="flex items-center gap-1 w-24 shrink-0">
+                    <div className="flex items-center gap-1 w-22 shrink-0">
                       <span className="text-[11px] text-slate-400 font-mono">+฿</span>
                       <input
                         type="number"
@@ -2048,6 +2256,23 @@ export const MenuManagementView: React.FC = () => {
                         }
                         className="w-full px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-mono font-bold text-amber-600 dark:text-amber-400"
                         title="ราคาบวกเพิ่ม (0 = ฟรี)"
+                      />
+                    </div>
+
+                    <div className="flex items-center gap-1 w-22 shrink-0">
+                      <span className="text-[10px] text-slate-400">ทุน</span>
+                      <input
+                        type="number"
+                        min={0}
+                        placeholder="0"
+                        value={choice.costDelta ?? 0}
+                        onChange={(e) =>
+                          handleUpdateChoiceInEditingPreset(cIdx, {
+                            costDelta: Number(e.target.value),
+                          })
+                        }
+                        className="w-full px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-mono text-rose-500"
+                        title="ต้นทุนเพิ่ม (฿)"
                       />
                     </div>
 

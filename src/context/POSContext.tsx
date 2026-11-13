@@ -379,13 +379,17 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Active Category filter for POS & Bottom Bar (null = none active)
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
 
-  // Selected Zone for Table Layout & POS Table Dropdown ('all' = all zones)
-  const [selectedZone, setSelectedZone] = useState<string>('all');
-
   // Table Zones configuration with persistence
   const [zones, setZones] = useState<TableZoneConfig[]>(() => {
     const loaded = loadState<TableZoneConfig[]>(STORAGE_KEYS.ZONES, INITIAL_ZONES);
     return Array.isArray(loaded) && loaded.length > 0 ? loaded : INITIAL_ZONES;
+  });
+
+  // Selected Zone for Table Layout & POS Table Dropdown (defaults to first zone)
+  const [selectedZone, setSelectedZone] = useState<string>(() => {
+    const loaded = loadState<TableZoneConfig[]>(STORAGE_KEYS.ZONES, INITIAL_ZONES);
+    const validZones = Array.isArray(loaded) && loaded.length > 0 ? loaded : INITIAL_ZONES;
+    return validZones[0]?.id || 'indoor';
   });
 
   useEffect(() => {
@@ -446,7 +450,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         prev.map((t) => (t.zone === id ? { ...t, zone: targetZoneId } : t))
       );
 
-      setSelectedZone((prev) => (prev === id ? 'all' : prev));
+      setSelectedZone((prev) => (prev === id ? targetZoneId : prev));
       setZones(remainingZones);
       soundService.playTap();
       deleteZoneRemote(id).catch((err) => console.warn('[Cloud deleteZoneRemote error]:', err));
@@ -2547,7 +2551,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setCurrentShift(INITIAL_SHIFT);
     setNotifications([]);
     setActiveCategory(null);
-    setSelectedZone('all');
+    setSelectedZone(INITIAL_ZONES[0]?.id || 'indoor');
     setZones(INITIAL_ZONES);
     setActiveNav('tables');
 

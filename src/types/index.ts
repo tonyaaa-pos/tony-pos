@@ -59,6 +59,7 @@ export interface OptionChoice {
   name: string;
   nameEn?: string;
   priceDelta: number;
+  costDelta?: number;
 }
 
 export interface OptionGroup {
@@ -78,6 +79,9 @@ export interface ItemVariantOption {
   cost: number;
   isAvailable: boolean;
   isSoldOut?: boolean;
+  costMenuId?: string;
+  costVariantId?: string;
+  costVariantName?: string;
 }
 
 export interface MenuItem {
@@ -96,6 +100,8 @@ export interface MenuItem {
   isFeatured?: boolean;
   promoPrice?: number;
   promoActive?: boolean;
+  costMenuId?: string;
+  costMenuName?: string;
   optionGroups?: OptionGroup[];
   variants?: ItemVariantOption[];
 }
@@ -117,6 +123,7 @@ export interface SelectedOption {
   choiceName: string;
   choiceNameEn?: string;
   priceDelta: number;
+  costDelta?: number;
 }
 
 export interface OrderItem {

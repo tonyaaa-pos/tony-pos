@@ -177,6 +177,51 @@ export interface CostFirestoreSaveResult {
 }
 
 export const OPEX_STORAGE_KEY = 'kind_pos_opex_settings_v4';
+export const COST_BUNDLE_CACHE_KEY = 'kind_pos_cost_bundle_cache_v1';
+
+export function saveCachedCostBundle(payload: TonysKitchenPayload): void {
+  try {
+    if (typeof localStorage !== 'undefined' && payload && payload.payload) {
+      localStorage.setItem(COST_BUNDLE_CACHE_KEY, JSON.stringify(payload));
+    }
+  } catch (err) {
+    console.warn('[saveCachedCostBundle] Failed:', err);
+  }
+}
+
+export function getCachedCostBundle(): TonysKitchenPayload {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const raw = localStorage.getItem(COST_BUNDLE_CACHE_KEY);
+      if (raw) {
+        const parsed = parseCostAndProfitPayload(raw);
+        if (parsed?.payload?.menus && parsed.payload.menus.length > 0) {
+          return parsed;
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[getCachedCostBundle] Failed:', err);
+  }
+  return TONYS_KITCHEN_SAMPLE_DATA;
+}
+
+export function getVariantRecipeCost(variant?: TonysKitchenVariant | null): number {
+  if (!variant) return 0;
+  const raw =
+    variant.recipeCost ??
+    variant.foodCostPerUnit ??
+    variant.calculatedCost ??
+    variant.cost ??
+    0;
+  return Math.round(Number(raw) * 100) / 100;
+}
+
+export function getVariantSellingPrice(variant?: TonysKitchenVariant | null): number {
+  if (!variant) return 0;
+  const raw = variant.sellingPrice ?? variant.price ?? 0;
+  return Math.round(Number(raw) * 100) / 100;
+}
 
 /**
  * Exact payload provided by Tony's Kitchen Cost Management app
@@ -517,6 +562,41 @@ function doesVariantMatch(posVarName: string, costVarName: string, posVarId: str
   );
 }
 
+export function findMatchingCostMenu(
+  posName: string,
+  costMenus: TonysKitchenMenu[],
+  costMenuId?: string,
+  posId?: string
+): TonysKitchenMenu | undefined {
+  if (costMenuId) {
+    const byLink = costMenus.find((cm) => cm.id === costMenuId);
+    if (byLink) return byLink;
+  }
+  return costMenus.find((cm) => doesMenuMatch(posName, cm.name, posId || '', cm.id));
+}
+
+export function findMatchingCostVariant(
+  posVarName: string,
+  costVariants: TonysKitchenVariant[],
+  costVariantId?: string,
+  posVarId?: string,
+  fallbackDishName?: string
+): TonysKitchenVariant | undefined {
+  if (costVariantId) {
+    const byLink = costVariants.find((cv) => cv.id === costVariantId);
+    if (byLink) return byLink;
+  }
+  return costVariants.find((cv) =>
+    doesVariantMatch(
+      posVarName,
+      cv.name || cv.variantName || '',
+      posVarId || '',
+      cv.id,
+      fallbackDishName
+    )
+  );
+}
+
 /**
  * Syncs Cost & Profit data into KinD POS menu items, OpEx, and Firestore
  */
@@ -563,13 +643,19 @@ export async function applyCostDataToPOS(
     updateSettings({ shopName: settings.restaurantName });
   }
 
+  // Cache latest Cost & Profit bundle locally for Menu Management & Food Cost pickers
+  saveCachedCostBundle(payload);
+
   // 5. Match and Update Menu Items & Variants
   const syncedDishes: CostSyncSummary['syncedDishes'] = [];
   let updatedVariantsTotal = 0;
 
   currentMenuItems.forEach((posItem) => {
-    const matchedCostMenu = costMenus.find((cm) =>
-      doesMenuMatch(posItem.name, cm.name, posItem.id, cm.id)
+    const matchedCostMenu = findMatchingCostMenu(
+      posItem.name,
+      costMenus,
+      posItem.costMenuId,
+      posItem.id
     );
 
     if (!matchedCostMenu) return;
@@ -583,27 +669,24 @@ export async function applyCostDataToPOS(
     // Check if dish has variants in POS
     if (posItem.variants && posItem.variants.length > 0 && matchedCostMenu.variants) {
       const updatedVariants: ItemVariantOption[] = posItem.variants.map((posVar) => {
-        const matchedCostVar = matchedCostMenu.variants?.find((cv) =>
-          doesVariantMatch(
-            posVar.name,
-            cv.name || cv.variantName || '',
-            posVar.id,
-            cv.id,
-            posItem.name
-          )
+        const matchedCostVar = findMatchingCostVariant(
+          posVar.name,
+          matchedCostMenu.variants || [],
+          posVar.costVariantId,
+          posVar.id,
+          posItem.name
         );
 
         if (matchedCostVar) {
-          const varCost =
-            matchedCostVar.recipeCost ??
-            matchedCostVar.foodCostPerUnit ??
-            matchedCostVar.calculatedCost ??
-            matchedCostVar.cost ??
-            posVar.cost;
+          const varCost = getVariantRecipeCost(matchedCostVar) || posVar.cost;
 
           itemMatchedAnyVariant = true;
           const oldVcost = posVar.cost;
-          if (varCost !== oldVcost) {
+          if (
+            varCost !== oldVcost ||
+            posVar.costVariantId !== matchedCostVar.id ||
+            posVar.costMenuId !== matchedCostMenu.id
+          ) {
             itemCostUpdated = true;
           }
           updatedVariantsTotal++;
@@ -614,24 +697,37 @@ export async function applyCostDataToPOS(
             sellingPrice: posVar.price,
             foodCostPct: posVar.price > 0 ? (varCost / posVar.price) * 100 : 0,
           });
-          return { ...posVar, cost: varCost };
+          return {
+            ...posVar,
+            cost: varCost,
+            costMenuId: matchedCostMenu.id,
+            costVariantId: matchedCostVar.id,
+            costVariantName: matchedCostVar.name || matchedCostVar.variantName || posVar.name,
+          };
         }
         return posVar;
       });
 
-      if (itemCostUpdated) {
+      if (itemCostUpdated || posItem.costMenuId !== matchedCostMenu.id) {
         // Compute new average base cost
         const validCosts = updatedVariants.map((v) => v.cost).filter((c) => c > 0);
         if (validCosts.length > 0) {
           newBaseCost = Math.round((validCosts.reduce((a, b) => a + b, 0) / validCosts.length) * 100) / 100;
         }
 
-        const updatedItem = {
+        const updatedItem: MenuItem = {
           ...posItem,
           cost: newBaseCost,
+          costMenuId: matchedCostMenu.id,
+          costMenuName: matchedCostMenu.name,
           variants: updatedVariants,
         };
-        updateMenuItem(posItem.id, { cost: newBaseCost, variants: updatedVariants });
+        updateMenuItem(posItem.id, {
+          cost: newBaseCost,
+          costMenuId: matchedCostMenu.id,
+          costMenuName: matchedCostMenu.name,
+          variants: updatedVariants,
+        });
         saveMenuItemRemote(updatedItem).catch((err) =>
           console.warn('[applyCostDataToPOS] Remote sync failed for:', posItem.id, err)
         );
@@ -651,14 +747,22 @@ export async function applyCostDataToPOS(
       const singleVar = matchedCostMenu.variants?.[0];
       const singleCost =
         matchedCostMenu.recipeCost ??
-        singleVar?.recipeCost ??
-        singleVar?.foodCostPerUnit ??
+        (singleVar ? getVariantRecipeCost(singleVar) : undefined) ??
         posItem.cost;
 
-      if (singleCost !== posItem.cost) {
+      if (singleCost !== posItem.cost || posItem.costMenuId !== matchedCostMenu.id) {
         newBaseCost = singleCost;
-        const updatedItem = { ...posItem, cost: newBaseCost };
-        updateMenuItem(posItem.id, { cost: newBaseCost });
+        const updatedItem: MenuItem = {
+          ...posItem,
+          cost: newBaseCost,
+          costMenuId: matchedCostMenu.id,
+          costMenuName: matchedCostMenu.name,
+        };
+        updateMenuItem(posItem.id, {
+          cost: newBaseCost,
+          costMenuId: matchedCostMenu.id,
+          costMenuName: matchedCostMenu.name,
+        });
         saveMenuItemRemote(updatedItem).catch((err) =>
           console.warn('[applyCostDataToPOS] Remote sync failed for:', posItem.id, err)
         );
@@ -748,6 +852,7 @@ export async function saveCostBundleToFirestore(
       },
       { merge: true }
     );
+    saveCachedCostBundle(payload);
     return { savedToCloud: true, docPath };
   } catch (err) {
     if (isPermissionDeniedError(err)) {
@@ -775,6 +880,7 @@ export async function fetchRemoteCostManagementStatus(): Promise<CostFirestoreFe
     const snap = await getDoc(costDocRef);
     if (snap.exists()) {
       const parsed = parseCostAndProfitPayload(snap.data());
+      saveCachedCostBundle(parsed);
       return {
         status: 'found',
         data: parsed,
@@ -789,9 +895,11 @@ export async function fetchRemoteCostManagementStatus(): Promise<CostFirestoreFe
     for (const d of colSnap.docs) {
       const raw = d.data();
       if (raw && (raw.payload || raw.menus || raw.settings)) {
+        const parsed = parseCostAndProfitPayload(raw);
+        saveCachedCostBundle(parsed);
         return {
           status: 'found',
-          data: parseCostAndProfitPayload(raw),
+          data: parsed,
           docPath: `${colPath}/${d.id}`,
           uid: user.uid,
         };
@@ -838,7 +946,9 @@ export function subscribeCostManagementData(
       costDocRef,
       (snap) => {
         if (snap.exists()) {
-          onUpdate(parseCostAndProfitPayload(snap.data()));
+          const parsed = parseCostAndProfitPayload(snap.data());
+          saveCachedCostBundle(parsed);
+          onUpdate(parsed);
         }
       },
       (err) => {
