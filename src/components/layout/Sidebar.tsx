@@ -19,7 +19,7 @@ interface SidebarProps {
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
-  const { activeNav, setActiveNav, currentUser, bills, setActiveCategory } = usePOS();
+  const { activeNav, setActiveNav, currentUser, bills, setActiveCategory, categories } = usePOS();
   const { t, getName } = useLanguage();
 
   // Active open bills count
@@ -151,7 +151,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
                   if (item.id !== 'pos') {
                     setActiveCategory(null);
                   } else {
-                    setActiveCategory('all');
+                    setActiveCategory(categories[0]?.id || 'cat_1');
                   }
                   onClose();
                 }}

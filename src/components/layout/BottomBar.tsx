@@ -252,26 +252,6 @@ export const BottomBar: React.FC = () => {
             );
           })}
 
-          {/* All Categories Button */}
-          <button
-            type="button"
-            onClick={() => {
-              if (isEditMode) return;
-              setActiveCategory('all');
-              if (activeNav !== 'menu') {
-                setActiveNav('pos');
-              }
-            }}
-            className={`shrink-0 flex items-center gap-1.5 px-3 py-2.5 rounded-2xl border text-xs font-semibold whitespace-nowrap transition cursor-pointer ${
-              activeCategory === 'all'
-                ? 'bg-amber-500 text-slate-950 border-amber-600 ring-2 ring-amber-400/50 font-bold'
-                : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-amber-400'
-            }`}
-          >
-            <span>✨</span>
-            <span>{t('bottom_all_categories')}</span>
-          </button>
-
           {/* Manage / Delete Mode Toggle Button */}
           {categories.length > 0 && (
             <button

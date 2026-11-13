@@ -49,28 +49,19 @@ export const canPay = (
 };
 
 /**
- * A table counts as "with customers" only when it has an opened/active bill with saved items
- * or was opened with a guest count; a table that only has an unsaved draft cart in the POS screen
- * is still shown as available (green).
+ * A table counts as "with customers" (occupied) ONLY when it has at least one active (non-voided)
+ * ordered food item on an open bill. Opening a table without ordering keeps it available.
  */
 export const isTableWithCustomers = (table: Table, billsList: Bill[]): boolean => {
   if (table.status === 'reserved') return false;
 
-  const bill = table.currentBillId
-    ? billsList.find((b) => b.id === table.currentBillId && b.status === 'open')
-    : null;
-
-  const hasSavedItems = Boolean(
-    bill && bill.items.some((item) => !item.isNewUnsent && item.status !== 'voided')
+  const tableOpenBills = billsList.filter(
+    (b) =>
+      b.status === 'open' &&
+      (b.tableId === table.id || (table.currentBillId && b.id === table.currentBillId))
   );
 
-  const hasGuestCount = Boolean(
-    table.guestCount && table.guestCount > 0 && table.seatedAt
+  return tableOpenBills.some((b) =>
+    (b.items || []).some((item) => item.status !== 'voided')
   );
-
-  if (table.status === 'occupied' || table.status === 'payment_pending') {
-    return hasSavedItems || hasGuestCount;
-  }
-
-  return false;
 };

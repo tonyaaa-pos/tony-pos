@@ -1955,53 +1955,193 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updatedAtMs: nowTs,
       };
 
-      commitBills([...billsRef.current, newBill]);
+      const nextBills = [...billsRef.current, newBill];
+      commitBills(nextBills);
       setActiveBillId(newBill.id);
-      saveBillRemote(newBill).catch((err) => console.warn('[Cloud saveBillRemote error]:', err));
+      if (deliveryInfo) {
+        saveBillRemote(newBill).catch((err) => console.warn('[Cloud saveBillRemote error]:', err));
+      }
 
-      if (tableId) {
-        let updatedTable: Table | null = null;
-        const nextTables = tablesRef.current.map((t) => {
-          if (t.id !== tableId) return t;
+      // Table stays 'available' when bill has 0 ordered items; becomes 'occupied' once an item is added.
+      return newBill;
+    },
+    [commitBills]
+  );
+
+  const syncTableOccupancyForBill = useCallback(
+    (bill: Bill | null, nextBills: Bill[], nowTs: number) => {
+      const targetTableId = bill?.tableId;
+      if (!targetTableId) return;
+
+      const activeOpenOnTable = nextBills.filter(
+        (b) =>
+          b.tableId === targetTableId &&
+          b.status === 'open' &&
+          (b.items || []).some((i) => i.status !== 'voided')
+      );
+
+      let updatedTable: Table | null = null;
+      const nextTables = tablesRef.current.map((t) => {
+        if (t.id !== targetTableId) return t;
+        if (activeOpenOnTable.length > 0) {
+          const desiredBillId =
+            bill && activeOpenOnTable.some((b) => b.id === bill.id)
+              ? bill.id
+              : activeOpenOnTable[0].id;
+          const desiredStatus: Table['status'] =
+            t.status === 'payment_pending' ? 'payment_pending' : 'occupied';
+          if (
+            t.status === desiredStatus &&
+            t.currentBillId === desiredBillId &&
+            t.seatedAt &&
+            t.guestCount
+          ) {
+            return t;
+          }
           const up: Table = {
             ...t,
-            status: 'occupied',
-            currentBillId: newBill.id,
-            seatedAt: now.toISOString(),
-            guestCount: guestCount || t.capacity || 2,
+            status: desiredStatus,
+            currentBillId: desiredBillId,
+            seatedAt: t.seatedAt || new Date(nowTs).toISOString(),
+            guestCount: t.guestCount || bill?.guestCount || t.capacity || 2,
             reservation: undefined,
             updatedAtMs: nowTs,
           };
           updatedTable = up;
           return up;
+        }
+
+        // No ordered food items remain on this table -> always mark available
+        if (t.status === 'available' && !t.currentBillId && !t.seatedAt && !t.guestCount) {
+          return t;
+        }
+        const up: Table = {
+          ...t,
+          status: t.status === 'reserved' ? 'reserved' : 'available',
+          currentBillId: undefined,
+          seatedAt: undefined,
+          guestCount: undefined,
+          updatedAtMs: nowTs,
+        };
+        updatedTable = up;
+        return up;
+      });
+
+      if (updatedTable) {
+        commitTables(nextTables, false);
+        syncService.broadcast('TABLE_UPDATED');
+        saveTableRemote(updatedTable).catch((err) => console.warn('[Cloud saveTableRemote error]:', err));
+      }
+    },
+    [commitTables]
+  );
+
+  const navigateTo = useCallback(
+    (nav: string) => {
+      if (nav !== 'pos') {
+        const currentBills = billsRef.current;
+        const emptyDraftIds = new Set(
+          currentBills
+            .filter(
+              (b) =>
+                b.status === 'open' &&
+                (b.items || []).length === 0 &&
+                !b.note &&
+                !b.deliveryInfo &&
+                (b.payments || []).length === 0
+            )
+            .map((b) => b.id)
+        );
+
+        if (emptyDraftIds.size > 0) {
+          const cleanedBills = currentBills.filter((b) => !emptyDraftIds.has(b.id));
+          commitBills(cleanedBills, false);
+          if (activeBillId && emptyDraftIds.has(activeBillId)) {
+            setActiveBillId(null);
+          }
+        }
+
+        const remainingBills =
+          emptyDraftIds.size > 0
+            ? billsRef.current
+            : currentBills;
+        const tablesToReset: Table[] = [];
+        const nowTs = Date.now();
+        const checkedTables = tablesRef.current.map((t) => {
+          if (t.status === 'reserved' || t.status === 'available') return t;
+          const hasOrdered = remainingBills.some(
+            (b) =>
+              b.status === 'open' &&
+              (b.tableId === t.id || (t.currentBillId && b.id === t.currentBillId)) &&
+              (b.items || []).some((i) => i.status !== 'voided')
+          );
+          if (hasOrdered) return t;
+          const resetTable: Table = {
+            ...t,
+            status: 'available',
+            currentBillId: undefined,
+            seatedAt: undefined,
+            guestCount: undefined,
+            updatedAtMs: nowTs,
+          };
+          tablesToReset.push(resetTable);
+          return resetTable;
         });
-        commitTables(nextTables);
-        if (updatedTable) {
-          saveTableRemote(updatedTable).catch((err) => console.warn('[Cloud saveTableRemote error]:', err));
+
+        if (tablesToReset.length > 0) {
+          commitTables(checkedTables, false);
+          syncService.broadcast('TABLE_UPDATED');
+          tablesToReset.forEach((tbl) => {
+            saveTableRemote(tbl).catch((err) => console.warn('[Cloud saveTableRemote error]:', err));
+          });
         }
       }
-
-      return newBill;
+      setActiveNav(nav);
     },
-    [commitBills, commitTables]
+    [activeBillId, commitBills, commitTables]
   );
 
   const openTable = useCallback(
     (tableId: string, guestCount: number): string => {
-      const existingTable = tablesRef.current.find((t) => t.id === tableId);
-      if (existingTable?.currentBillId) {
-        const existingOpenBill = billsRef.current.find(
-          (b) => b.id === existingTable.currentBillId && b.status === 'open'
+      // Prune unused 0-item empty drafts from other tables so empty clicks never accumulate
+      const emptyOtherDraftIds = new Set(
+        billsRef.current
+          .filter(
+            (b) =>
+              b.status === 'open' &&
+              b.tableId !== tableId &&
+              (b.items || []).length === 0 &&
+              !b.note &&
+              !b.deliveryInfo &&
+              (b.payments || []).length === 0
+          )
+          .map((b) => b.id)
+      );
+      if (emptyOtherDraftIds.size > 0) {
+        commitBills(
+          billsRef.current.filter((b) => !emptyOtherDraftIds.has(b.id)),
+          false
         );
-        if (existingOpenBill) {
-          setActiveBillId(existingOpenBill.id);
-          return existingOpenBill.id;
-        }
       }
+
+      const existingTable = tablesRef.current.find((t) => t.id === tableId);
+      const existingOpenBill =
+        (existingTable?.currentBillId
+          ? billsRef.current.find(
+              (b) => b.id === existingTable.currentBillId && b.status === 'open'
+            )
+          : undefined) ||
+        billsRef.current.find((b) => b.tableId === tableId && b.status === 'open');
+
+      if (existingOpenBill) {
+        setActiveBillId(existingOpenBill.id);
+        return existingOpenBill.id;
+      }
+
       const newBill = createBillForOrder('dine_in', tableId, guestCount);
       return newBill.id;
     },
-    [createBillForOrder]
+    [createBillForOrder, commitBills]
   );
 
   const assignTableToBill = useCallback(
@@ -2044,25 +2184,32 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
       commitBills(nextBills, false);
 
+      const resolvedBill = nextBills.find((b) => b.id === billId);
+      const billHasOrderedItems = Boolean(
+        resolvedBill?.items?.some((i) => i.status !== 'voided')
+      );
+
       let updatedTable: Table | null = null;
-      const nextTables = tablesRef.current.map((t) => {
-        if (t.id !== tableId) return t;
-        const up: Table = {
-          ...t,
-          status: 'occupied',
-          currentBillId: billId,
-          seatedAt: t.seatedAt || now.toISOString(),
-          guestCount: t.guestCount || assignedTable?.capacity || 2,
-          reservation: undefined,
-          updatedAtMs: nowTs,
-        };
-        updatedTable = up;
-        return up;
-      });
-      commitTables(nextTables);
+      if (billHasOrderedItems) {
+        const nextTables = tablesRef.current.map((t) => {
+          if (t.id !== tableId) return t;
+          const up: Table = {
+            ...t,
+            status: 'occupied',
+            currentBillId: billId,
+            seatedAt: t.seatedAt || now.toISOString(),
+            guestCount: t.guestCount || assignedTable?.capacity || 2,
+            reservation: undefined,
+            updatedAtMs: nowTs,
+          };
+          updatedTable = up;
+          return up;
+        });
+        commitTables(nextTables);
+      }
       syncService.broadcast('DATA_RELOAD');
 
-      if (updatedBill) {
+      if (updatedBill && billHasOrderedItems) {
         saveBillRemote(updatedBill).catch((err) => console.warn('[Cloud saveBillRemote error]:', err));
       }
       voidedEmptyBills.forEach((vb) => {
@@ -2121,9 +2268,10 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       commitBills(nextBills);
       if (updatedBill) {
         saveBillRemote(updatedBill).catch((err) => console.warn('[Cloud saveBillRemote error]:', err));
+        syncTableOccupancyForBill(updatedBill, nextBills, nowTs);
       }
     },
-    [recalculateBill, commitBills]
+    [recalculateBill, commitBills, syncTableOccupancyForBill]
   );
 
   const updateBillItemQuantity = useCallback(
@@ -2143,9 +2291,10 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       commitBills(nextBills);
       if (updatedBill) {
         saveBillRemote(updatedBill).catch((err) => console.warn('[Cloud saveBillRemote error]:', err));
+        syncTableOccupancyForBill(updatedBill, nextBills, nowTs);
       }
     },
-    [recalculateBill, commitBills]
+    [recalculateBill, commitBills, syncTableOccupancyForBill]
   );
 
   const removeUnsentItemFromBill = useCallback(
@@ -2163,9 +2312,10 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       commitBills(nextBills);
       if (updatedBill) {
         saveBillRemote(updatedBill).catch((err) => console.warn('[Cloud saveBillRemote error]:', err));
+        syncTableOccupancyForBill(updatedBill, nextBills, nowTs);
       }
     },
-    [recalculateBill, commitBills]
+    [recalculateBill, commitBills, syncTableOccupancyForBill]
   );
 
   // "Confirm order" saves new unsent items to bill without kitchen status flow
@@ -2263,9 +2413,10 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       commitBills(nextBills);
       if (updatedBillObj) {
         saveBillRemote(updatedBillObj).catch((err) => console.warn('[Cloud saveBillRemote error]:', err));
+        syncTableOccupancyForBill(updatedBillObj, nextBills, nowTs);
       }
     },
-    [recalculateBill, commitBills]
+    [recalculateBill, commitBills, syncTableOccupancyForBill]
   );
 
   const applyBillDiscount = useCallback(
@@ -2897,16 +3048,20 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
       }
 
-      let updatedBillObj: Bill | null = null;
+      let movedBillObj: Bill | undefined;
       if (billId) {
         const nextBills = currentBills.map((b) => {
           if (b.id !== billId) return b;
           const up = { ...b, tableId: toTableId, tableName: toTable.number, updatedAtMs: nowTs };
-          updatedBillObj = up;
           return up;
         });
+        movedBillObj = nextBills.find((b) => b.id === billId);
         commitBills(nextBills, false);
       }
+
+      const movedHasItems = Boolean(
+        movedBillObj?.items?.some((i) => i.status !== 'voided')
+      );
 
       const updatedTables: Table[] = [];
       const nextTables = currentTables.map((t) => {
@@ -2924,6 +3079,9 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           return up;
         }
         if (t.id === toTableId) {
+          if (!movedHasItems) {
+            return t;
+          }
           const up: Table = {
             ...t,
             status: fromTable.status === 'payment_pending' ? 'payment_pending' : 'occupied',
@@ -2941,8 +3099,8 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       commitTables(nextTables);
       syncService.broadcast('DATA_RELOAD');
 
-      if (updatedBillObj) {
-        saveBillRemote(updatedBillObj).catch((err) => console.warn('[Cloud saveBillRemote error]:', err));
+      if (movedBillObj && movedHasItems) {
+        saveBillRemote(movedBillObj).catch((err) => console.warn('[Cloud saveBillRemote error]:', err));
       }
       updatedTables.forEach((t) => {
         saveTableRemote(t).catch((err) => console.warn('[Cloud saveTableRemote error]:', err));
@@ -3773,7 +3931,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     theme,
     toggleTheme,
     activeNav,
-    setActiveNav,
+    setActiveNav: navigateTo,
 
     activeCategory,
     setActiveCategory,

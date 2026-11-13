@@ -85,6 +85,7 @@ export const TablesView: React.FC = () => {
     zones,
     confirmOrder,
     setActiveCategory,
+    categories,
   } = usePOS();
   const { t } = useLanguage();
 
@@ -295,7 +296,7 @@ export const TablesView: React.FC = () => {
         return;
       }
 
-      const hasCustomers = isTableWithCustomers(table, bills) || table.status === 'occupied' || Boolean(table.currentBillId);
+      const hasCustomers = isTableWithCustomers(table, bills);
 
       if (!hasCustomers) {
         soundService.playTap();
@@ -354,7 +355,7 @@ export const TablesView: React.FC = () => {
       : openTable(table.id, table.reservation?.partySize || table.guestCount || table.capacity || 2);
 
     setActiveBillId(targetBillId);
-    setActiveCategory('all');
+    setActiveCategory(categories[0]?.id || 'cat_1');
     setActiveNav('pos');
     soundService.playTap();
     return;
@@ -501,7 +502,7 @@ export const TablesView: React.FC = () => {
     const billId = openTable(showOpenModal.id, Number(guestCountInput) || 2);
     setActiveBillId(billId);
     setShowOpenModal(null);
-    setActiveCategory('all');
+    setActiveCategory(categories[0]?.id || 'cat_1');
     setActiveNav('pos');
   };
 
@@ -513,9 +514,19 @@ export const TablesView: React.FC = () => {
   };
 
   const getTableBill = (table: Table) => {
-    if (table.status === 'available' || table.status === 'reserved') return null;
-    if (!table.currentBillId) return null;
-    return bills.find((b) => b.id === table.currentBillId && b.status === 'open') || null;
+    if (table.status === 'reserved') return null;
+    if (table.currentBillId) {
+      const byId = bills.find((b) => b.id === table.currentBillId && b.status === 'open');
+      if (byId && (byId.items || []).some((i) => i.status !== 'voided')) return byId;
+    }
+    return (
+      bills.find(
+        (b) =>
+          b.tableId === table.id &&
+          b.status === 'open' &&
+          (b.items || []).some((i) => i.status !== 'voided')
+      ) || null
+    );
   };
 
   // Helper to render chairs around table - per user requirement: tables created must NOT have chairs around them
@@ -578,7 +589,7 @@ export const TablesView: React.FC = () => {
           <button
             type="button"
             onClick={() => {
-              setActiveCategory('all');
+              setActiveCategory(categories[0]?.id || 'cat_1');
               setActiveNav('pos');
             }}
             className="px-4 py-2 rounded-xl bg-slate-950 text-white hover:bg-slate-900 text-xs font-bold shadow-xs transition cursor-pointer self-start sm:self-auto shrink-0"
@@ -792,9 +803,7 @@ export const TablesView: React.FC = () => {
 
             const isMergeSource = mergingSourceTable?.id === table.id;
             const isMergeTarget = Boolean(
-              mergingSourceTable &&
-                !isMergeSource &&
-                (withCustomers || table.status === 'occupied' || Boolean(table.currentBillId))
+              mergingSourceTable && !isMergeSource && withCustomers
             );
             const isMergeBlocked = Boolean(mergingSourceTable && !isMergeSource && !isMergeTarget);
 
@@ -906,8 +915,15 @@ export const TablesView: React.FC = () => {
                         {table.number}
                       </div>
 
-                      {/* Bottom Info: Seated Time or Bill Grand Total */}
-                      {table.status === 'occupied' && bill ? (
+                      {/* Bottom Info: Seated Time or Bill Grand Total (only when table has ordered items) */}
+                      {withCustomers && table.status === 'payment_pending' && bill ? (
+                        <div className="mt-0.5 leading-tight">
+                          <div className="text-[10px] font-bold">รอเช็คบิล</div>
+                          <div className="text-[11px] font-extrabold tabular-nums">
+                            {formatBaht(bill.grandTotal)}
+                          </div>
+                        </div>
+                      ) : withCustomers && bill ? (
                         <div className="mt-0.5 leading-tight">
                           <div className="text-[11px] font-bold tabular-nums">
                             {formatBaht(bill.grandTotal)}
@@ -918,13 +934,6 @@ export const TablesView: React.FC = () => {
                               <span>{formatElapsedTime(table.seatedAt).text}</span>
                             </div>
                           )}
-                        </div>
-                      ) : table.status === 'payment_pending' && bill ? (
-                        <div className="mt-0.5 leading-tight">
-                          <div className="text-[10px] font-bold">รอเช็คบิล</div>
-                          <div className="text-[11px] font-extrabold tabular-nums">
-                            {formatBaht(bill.grandTotal)}
-                          </div>
                         </div>
                       ) : table.status === 'reserved' && table.reservation ? (
                         <div className="text-[10px] truncate max-w-[90%] font-medium">
@@ -1164,7 +1173,7 @@ export const TablesView: React.FC = () => {
                 );
               }
               setActiveBillId(billId!);
-              setActiveCategory('all');
+              setActiveCategory(categories[0]?.id || 'cat_1');
               setActiveNav('pos');
             }}
             onOpenPayment={() => {
