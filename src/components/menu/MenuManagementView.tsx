@@ -46,6 +46,7 @@ import {
   buildVariantsFromCostMenu,
   syncSellingPriceUpdatesToCostBundle,
   fetchRemoteCostManagementStatus,
+  COST_BUNDLE_UPDATED_EVENT,
   type TonysKitchenMenu,
 } from '../../services/costSyncService';
 
@@ -131,6 +132,18 @@ export const MenuManagementView: React.FC = () => {
       // Keep cached menus
     }
   };
+
+  React.useEffect(() => {
+    const syncFromCache = () => {
+      setCostMenus(getCachedCostBundle()?.payload?.menus || []);
+    };
+    window.addEventListener(COST_BUNDLE_UPDATED_EVENT, syncFromCache);
+    window.addEventListener('storage', syncFromCache);
+    return () => {
+      window.removeEventListener(COST_BUNDLE_UPDATED_EVENT, syncFromCache);
+      window.removeEventListener('storage', syncFromCache);
+    };
+  }, []);
 
   // Master Option Presets Modal
   const [showOptionPresetsModal, setShowOptionPresetsModal] = useState(false);

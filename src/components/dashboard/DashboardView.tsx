@@ -60,6 +60,12 @@ import { ReceiptPrint } from '../pos/ReceiptPrint';
 import { soundService } from '../../utils/audio';
 import { FinancialReportModal } from './FinancialReportModal';
 import { CostProfitSyncModal } from '../cost/CostProfitSyncModal';
+import {
+  OPEX_STORAGE_KEY,
+  OPEX_UPDATED_EVENT,
+  notifyOpExUpdated,
+} from '../../services/costSyncService';
+import { syncService } from '../../services/syncService';
 
 export type TimeFilterPeriod = 'today' | 'week' | 'month' | 'year' | 'custom';
 export type DashboardTab = 'overview' | 'breakeven' | 'menu_profit' | 'shifts' | 'bills';
@@ -100,8 +106,6 @@ interface OpExSettings {
   monthlyFixedSalaries: number; // e.g. 35000 Baht/month
   monthlyUtilitiesFixed: number; // e.g. 10000 Baht/month
 }
-
-const OPEX_STORAGE_KEY = 'kind_pos_opex_settings_v4';
 
 const DEFAULT_OPEX: OpExSettings = {
   laborPct: 20,
@@ -170,6 +174,40 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ defaultTab = 'over
   const [showReportModal, setShowReportModal] = useState(false);
   const [showCostProfitModal, setShowCostProfitModal] = useState(false);
   const [simulatedTargetProfit, setSimulatedTargetProfit] = useState<number>(30000);
+
+  // Real-time OpEx sync across Cloud updates, Cost & Profit syncs, and browser tabs
+  React.useEffect(() => {
+    const refreshOpEx = () => {
+      try {
+        const saved = localStorage.getItem(OPEX_STORAGE_KEY);
+        if (saved) {
+          const next = { ...DEFAULT_OPEX, ...JSON.parse(saved) };
+          setOpExSettings(next);
+          setTempOpEx(next);
+        }
+      } catch {}
+    };
+
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === OPEX_STORAGE_KEY) {
+        refreshOpEx();
+      }
+    };
+
+    window.addEventListener(OPEX_UPDATED_EVENT, refreshOpEx);
+    window.addEventListener('storage', handleStorage);
+    const unsubSync = syncService.subscribe((msg) => {
+      if (msg.type === 'DATA_RELOAD') {
+        refreshOpEx();
+      }
+    });
+
+    return () => {
+      window.removeEventListener(OPEX_UPDATED_EVENT, refreshOpEx);
+      window.removeEventListener('storage', handleStorage);
+      unsubSync();
+    };
+  }, []);
 
   // Shift Modals
   const [showOpenShiftModal, setShowOpenShiftModal] = useState(false);
@@ -750,6 +788,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ defaultTab = 'over
   const handleSaveOpEx = () => {
     setOpExSettings(tempOpEx);
     localStorage.setItem(OPEX_STORAGE_KEY, JSON.stringify(tempOpEx));
+    notifyOpExUpdated();
+    syncService.broadcast('DATA_RELOAD');
     setShowOpExModal(false);
     soundService.playSuccessTap();
   };

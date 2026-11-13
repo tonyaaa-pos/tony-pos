@@ -28,6 +28,8 @@ import {
   parseCostAndProfitPayload,
   applyCostDataToPOS,
   TONYS_KITCHEN_SAMPLE_DATA,
+  getCachedCostBundle,
+  COST_BUNDLE_UPDATED_EVENT,
   fetchRemoteCostManagementStatus,
   saveCostBundleToFirestore,
   subscribeCostManagementData,
@@ -53,7 +55,7 @@ export const CostProfitSyncModal: React.FC<CostProfitSyncModalProps> = ({
   const { menuItems, updateMenuItem, updateSettings, cloudUser, loginCloudWithGoogle } = usePOS();
 
   const [activeTab, setActiveTab] = useState<'overview' | 'sync' | 'recipes' | 'expenses'>('overview');
-  const [payload, setPayload] = useState<TonysKitchenPayload>(TONYS_KITCHEN_SAMPLE_DATA);
+  const [payload, setPayload] = useState<TonysKitchenPayload>(() => getCachedCostBundle() || TONYS_KITCHEN_SAMPLE_DATA);
   const [jsonInput, setJsonInput] = useState('');
   const [isApplying, setIsApplying] = useState(false);
   const [syncResult, setSyncResult] = useState<CostSyncSummary | null>(null);
@@ -65,7 +67,7 @@ export const CostProfitSyncModal: React.FC<CostProfitSyncModalProps> = ({
   } | null>(null);
   const [remoteLoading, setRemoteLoading] = useState(false);
   const [isSigningInGoogle, setIsSigningInGoogle] = useState(false);
-  const [autoSyncCloud, setAutoSyncCloud] = useState(false);
+  const [autoSyncCloud, setAutoSyncCloud] = useState(true);
 
   // Calculated OpEx from current payload
   const currentOpEx = calculateFixedMonthlyOpEx(payload);
@@ -73,7 +75,20 @@ export const CostProfitSyncModal: React.FC<CostProfitSyncModalProps> = ({
   const menus = payload.payload?.menus || [];
   const employees = payload.payload?.employees || [];
 
-  // Listen to remote Firestore cost document only when authenticated and live sync is enabled
+  // Keep payload synced with latest cache & COST_BUNDLE_UPDATED_EVENT when modal opens
+  useEffect(() => {
+    if (!isOpen) return;
+    setPayload(getCachedCostBundle());
+    const handleUpdate = () => setPayload(getCachedCostBundle());
+    window.addEventListener(COST_BUNDLE_UPDATED_EVENT, handleUpdate);
+    window.addEventListener('storage', handleUpdate);
+    return () => {
+      window.removeEventListener(COST_BUNDLE_UPDATED_EVENT, handleUpdate);
+      window.removeEventListener('storage', handleUpdate);
+    };
+  }, [isOpen]);
+
+  // Listen to remote Firestore cost document when authenticated and live sync is enabled
   useEffect(() => {
     if (!isOpen || !autoSyncCloud || !isFirebaseConfigured() || !cloudUser) return;
 

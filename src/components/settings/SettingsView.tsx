@@ -265,6 +265,13 @@ export const SettingsView: React.FC = () => {
     }
   }, [settings, isFormEditingShop]);
 
+  // Ensure editing lock resets when navigating away from Settings
+  React.useEffect(() => {
+    return () => {
+      setIsFormEditingShop(false);
+    };
+  }, [setIsFormEditingShop]);
+
   const handleFieldChange = () => {
     if (!isFormEditingShop) {
       setIsFormEditingShop(true);
@@ -312,8 +319,6 @@ export const SettingsView: React.FC = () => {
       pointsRedeemRate: Number(pointsRedeemRate),
       allowedPaymentMethods,
     };
-
-    updateSettings(updatedSettings);
 
     await saveShopData({
       settings: updatedSettings,

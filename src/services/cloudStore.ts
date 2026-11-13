@@ -197,8 +197,16 @@ export async function fetchRemoteShopBundle(): Promise<RemoteShopData | null> {
   if (!db || !getCloudUser()) return null;
 
   try {
-    const settingsRef = doc(db, 'users', (getCloudUser()?.uid || '_'), 'settings', 'shop');
-    const settingsSnap = await getDoc(settingsRef);
+    const uid = getCloudUser()?.uid || '_';
+    const settingsRef = doc(db, 'users', uid, 'settings', 'shop');
+    const qrColRef = collection(db, 'users', uid, 'qrImages');
+    const logoRef = doc(db, 'users', uid, 'media', 'logo');
+
+    const [settingsSnap, qrSnap, logoSnap] = await Promise.all([
+      getDoc(settingsRef),
+      getDocs(qrColRef),
+      getDoc(logoRef),
+    ]);
 
     if (!settingsSnap.exists()) {
       return null;
@@ -209,8 +217,6 @@ export async function fetchRemoteShopBundle(): Promise<RemoteShopData | null> {
       updatedBy?: string;
     };
 
-    const qrColRef = collection(db, 'users', (getCloudUser()?.uid || '_'), 'qrImages');
-    const qrSnap = await getDocs(qrColRef);
     const qrImages: PaymentQrImage[] = [];
     qrSnap.forEach((docSnap) => {
       const q = docSnap.data();
@@ -224,8 +230,6 @@ export async function fetchRemoteShopBundle(): Promise<RemoteShopData | null> {
       }
     });
 
-    const logoRef = doc(db, 'users', (getCloudUser()?.uid || '_'), 'media', 'logo');
-    const logoSnap = await getDoc(logoRef);
     const logoUrl = logoSnap.exists() ? (logoSnap.data().logoUrl as string) : settingsData.logoUrl || '';
 
     return {
@@ -272,9 +276,10 @@ export function subscribeShop(
     settingsRef,
     { includeMetadataChanges: true },
     async (snapshot) => {
-      if (snapshot.metadata.hasPendingWrites || !snapshot.exists()) return;
+      if (!snapshot.exists()) return;
       const data = snapshot.data();
       if (data.updatedBy === deviceId) return;
+      if (snapshot.metadata.hasPendingWrites) return;
 
       const fullBundle = await fetchRemoteShopBundle();
       if (fullBundle) {
@@ -704,10 +709,9 @@ export function subscribeCollection<T extends { id: string }>(
     q,
     { includeMetadataChanges: true },
     (snapshot: any) => {
-      if (snapshot.metadata.hasPendingWrites) return;
-
       const items: T[] = [];
       snapshot.forEach((docSnap: any) => {
+        if (docSnap.metadata?.hasPendingWrites) return;
         const data = docSnap.data();
         // Skip document if it was updated by this device (echo prevention)
         if (data.updatedBy === deviceId) {
@@ -734,7 +738,9 @@ export function subscribeCollection<T extends { id: string }>(
 /**
  * Real-time subscription for active bills and bills created within the last 30 days
  */
-export function subscribeRecentBills(onUpdate: (recentBills: Bill[]) => void): Unsubscribe {
+export function subscribeRecentBills(
+  onUpdate: (recentBills: Bill[], removedIds?: string[]) => void
+): Unsubscribe {
   if (!db || !isFirebaseConfigured() || !getCloudUser()) {
     return () => {};
   }
@@ -751,16 +757,22 @@ export function subscribeRecentBills(onUpdate: (recentBills: Bill[]) => void): U
     q,
     { includeMetadataChanges: true },
     (snapshot) => {
-      if (snapshot.metadata.hasPendingWrites) return;
-
       const bills: Bill[] = [];
       snapshot.forEach((docSnap) => {
+        if (docSnap.metadata.hasPendingWrites) return;
         const data = docSnap.data() as Bill & { updatedBy?: string };
         if (data.updatedBy === deviceId) return;
         bills.push(data);
       });
 
-      onUpdate(bills);
+      const removedIds: string[] = snapshot
+        .docChanges()
+        .filter((c) => c.type === 'removed')
+        .map((c) => c.doc.id);
+
+      if (bills.length > 0 || removedIds.length > 0) {
+        onUpdate(bills, removedIds);
+      }
     },
     (err) => console.warn('[subscribeRecentBills Error]:', err)
   );
@@ -781,9 +793,9 @@ export function subscribeActiveShift(onUpdate: (shift: Shift | null) => void): U
     shiftRef,
     { includeMetadataChanges: true },
     (snapshot) => {
-      if (snapshot.metadata.hasPendingWrites || !snapshot.exists()) return;
+      if (!snapshot.exists()) return;
       const data = snapshot.data();
-      if (data.updatedBy === deviceId) return;
+      if (data.updatedBy === deviceId || snapshot.metadata.hasPendingWrites) return;
       onUpdate(data.shift || null);
     },
     (err) => console.warn('[subscribeActiveShift Error]:', err)

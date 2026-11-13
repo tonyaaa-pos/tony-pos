@@ -6,6 +6,7 @@ import {
   fetchRemoteCostManagementStatus,
   getVariantRecipeCost,
   getVariantSellingPrice,
+  COST_BUNDLE_UPDATED_EVENT,
   type TonysKitchenMenu,
   type TonysKitchenVariant,
   type TonysKitchenPayload,
@@ -51,6 +52,12 @@ export const FoodCostVariantPickerModal: React.FC<FoodCostVariantPickerModalProp
     setCostBundle(getCachedCostBundle());
     setRefreshMessage(null);
 
+    const handleBundleUpdate = () => {
+      setCostBundle(getCachedCostBundle());
+    };
+    window.addEventListener(COST_BUNDLE_UPDATED_EVENT, handleBundleUpdate);
+    window.addEventListener('storage', handleBundleUpdate);
+
     // Refresh silently from Firestore if user is signed in
     let active = true;
     (async () => {
@@ -66,6 +73,8 @@ export const FoodCostVariantPickerModal: React.FC<FoodCostVariantPickerModalProp
 
     return () => {
       active = false;
+      window.removeEventListener(COST_BUNDLE_UPDATED_EVENT, handleBundleUpdate);
+      window.removeEventListener('storage', handleBundleUpdate);
     };
   }, [isOpen]);
 

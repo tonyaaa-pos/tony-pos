@@ -7,7 +7,8 @@ import {
   OperationType,
   handleFirestoreError,
 } from './firebase';
-import { saveMenuItemRemote } from './cloudStore';
+import { saveMenuItemRemote, getDeviceId } from './cloudStore';
+import { syncService } from './syncService';
 import { translateThaiToEnglishFast } from '../utils/thaiToEnglishTranslator';
 import type { MenuItem, ItemVariantOption, ShopSettings } from '../types';
 
@@ -179,12 +180,29 @@ export interface CostFirestoreSaveResult {
 
 export const OPEX_STORAGE_KEY = 'kind_pos_opex_settings_v4';
 export const COST_BUNDLE_CACHE_KEY = 'kind_pos_cost_bundle_cache_v1';
+export const COST_BUNDLE_UPDATED_EVENT = 'kind_pos_cost_bundle_updated';
+export const OPEX_UPDATED_EVENT = 'kind_pos_opex_updated';
+
+export function notifyOpExUpdated(): void {
+  try {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent(OPEX_UPDATED_EVENT));
+    }
+    syncService.broadcast('DATA_RELOAD');
+  } catch (err) {
+    console.warn('[notifyOpExUpdated] Failed:', err);
+  }
+}
 
 export function saveCachedCostBundle(payload: TonysKitchenPayload): void {
   try {
     if (typeof localStorage !== 'undefined' && payload && payload.payload) {
       localStorage.setItem(COST_BUNDLE_CACHE_KEY, JSON.stringify(payload));
     }
+    if (typeof window !== 'undefined' && payload && payload.payload) {
+      window.dispatchEvent(new CustomEvent(COST_BUNDLE_UPDATED_EVENT, { detail: payload }));
+    }
+    syncService.broadcast('DATA_RELOAD');
   } catch (err) {
     console.warn('[saveCachedCostBundle] Failed:', err);
   }
@@ -770,6 +788,7 @@ export async function applyCostDataToPOS(
       customFixedExpense: fixedOpEx.extraFixed,
     };
     localStorage.setItem(OPEX_STORAGE_KEY, JSON.stringify(updatedOpEx));
+    notifyOpExUpdated();
   } catch (err) {
     console.warn('[applyCostDataToPOS] Failed to save OpEx settings:', err);
   }
@@ -996,6 +1015,7 @@ export async function saveCostBundleToFirestore(
       {
         ...payload,
         updatedAt: new Date().toISOString(),
+        updatedBy: getDeviceId(),
         serverUpdatedAt: serverTimestamp(),
         syncedFrom: 'POS_CostProfitIntegration',
       },
@@ -1095,7 +1115,11 @@ export function subscribeCostManagementData(
       costDocRef,
       (snap) => {
         if (snap.exists()) {
-          const parsed = parseCostAndProfitPayload(snap.data());
+          const raw = snap.data() as Record<string, unknown>;
+          if (snap.metadata.hasPendingWrites && raw?.updatedBy === getDeviceId()) {
+            return;
+          }
+          const parsed = parseCostAndProfitPayload(raw);
           saveCachedCostBundle(parsed);
           onUpdate(parsed);
         }

@@ -34,6 +34,7 @@ import {
   buildVariantsFromCostMenu,
   syncSellingPriceUpdatesToCostBundle,
   fetchRemoteCostManagementStatus,
+  COST_BUNDLE_UPDATED_EVENT,
   type TonysKitchenMenu,
 } from '../../services/costSyncService';
 
@@ -143,6 +144,20 @@ export const EditMenuItemModal: React.FC<EditMenuItemModalProps> = ({
       setShowFoodCostVariantPicker(false);
     }
   }, [item, isOpen]);
+
+  // Keep costMenus synced in real time if remote Cost & Profit bundle updates while modal is open
+  useEffect(() => {
+    if (!isOpen) return;
+    const syncFromCache = () => {
+      setCostMenus(getCachedCostBundle()?.payload?.menus || []);
+    };
+    window.addEventListener(COST_BUNDLE_UPDATED_EVENT, syncFromCache);
+    window.addEventListener('storage', syncFromCache);
+    return () => {
+      window.removeEventListener(COST_BUNDLE_UPDATED_EVENT, syncFromCache);
+      window.removeEventListener('storage', syncFromCache);
+    };
+  }, [isOpen]);
 
   if (!isOpen || !editingItem) return null;
 
