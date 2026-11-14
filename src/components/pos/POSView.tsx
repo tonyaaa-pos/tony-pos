@@ -859,64 +859,15 @@ export const POSView: React.FC = () => {
                 </span>
               )}
             </div>
-            <div className="text-xs text-slate-400 mt-0.5">
-              {activeBill?.guestCount
-                ? t('cart_guests_count', { count: activeBill.guestCount })
-                : activeBill?.deliveryInfo
-                ? t('cart_delivery_to', {
-                    name: activeBill.deliveryInfo.customerName,
-                    phone: activeBill.deliveryInfo.phone,
-                  })
-                : t('order_type_dine_in')}
-            </div>
-
-            <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-              {activeBill?.orderType === 'delivery' ? (
-                <button
-                  type="button"
-                  onClick={handleOpenDeliveryModal}
-                  className="px-2 py-0.5 rounded-lg bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 font-bold text-[10px] flex items-center gap-1 cursor-pointer hover:bg-emerald-200 transition"
-                  title="คลิกเพื่อแก้ไขข้อมูลเดลิเวอรี / GP"
-                >
-                  <Bike className="w-3 h-3" />
-                  <span>
-                    {activeBill.deliveryPlatform ? activeBill.deliveryPlatform.toUpperCase() : 'DELIVERY'}
-                    {activeBill.deliveryInfo?.platformOrderId ? ` #${activeBill.deliveryInfo.platformOrderId}` : ''}
-                    {' '}(GP {activeBill.deliveryGpRate ?? 30}%)
-                  </span>
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={handleOpenDeliveryModal}
-                  className="px-2 py-0.5 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-500 hover:text-amber-600 hover:border-amber-400 text-[10px] font-medium flex items-center gap-1 cursor-pointer transition"
-                  title="เปลี่ยนบิลนี้เป็นออเดอร์เดลิเวอรี (Grab / LINE MAN)"
-                >
-                  <Bike className="w-3 h-3" />
-                  <span>🛵 สั่งเดลิเวอรี (Grab/LINE MAN)</span>
-                </button>
-              )}
-            </div>
+            {activeBill?.deliveryInfo && (
+              <div className="text-xs text-slate-400 mt-0.5">
+                {t('cart_delivery_to', {
+                  name: activeBill.deliveryInfo.customerName,
+                  phone: activeBill.deliveryInfo.phone,
+                })}
+              </div>
+            )}
           </div>
-
-          {/* Quick Table Switcher */}
-          <select
-            value={activeBill?.tableId || ''}
-            onChange={(e) => {
-              const tbl = tables.find((t) => t.id === e.target.value);
-              if (tbl?.currentBillId) {
-                setActiveBillId(tbl.currentBillId);
-              }
-            }}
-            className="px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-300 focus:outline-none cursor-pointer"
-          >
-            <option value="">{t('switch_table')}</option>
-            {filteredTables.map((tItem) => (
-              <option key={tItem.id} value={tItem.id}>
-                {tItem.number} {tItem.currentBillId ? `(${t('table_has_order')})` : `(${t('table_empty')})`}
-              </option>
-            ))}
-          </select>
         </div>
 
         {/* Multi-Bill Tabs when table has split bills */}
