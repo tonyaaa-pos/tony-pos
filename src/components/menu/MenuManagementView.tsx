@@ -914,7 +914,6 @@ export const MenuManagementView: React.FC = () => {
         {filteredItems.map((item) => {
           const cat = categories.find((c) => c.id === item.categoryId);
           const categoryName = getName(cat) || '';
-          const variantCount = item.variants?.length || 1;
 
           return (
             <div
@@ -923,33 +922,23 @@ export const MenuManagementView: React.FC = () => {
                 item.isSoldOut ? 'opacity-70 border-rose-300' : ''
               }`}
             >
-              <div className="relative aspect-16/10 overflow-hidden bg-slate-100 dark:bg-slate-800">
-                <img
-                  src={item.image}
-                  alt={getName(item)}
-                  referrerPolicy="no-referrer"
-                  className="w-full h-full object-cover"
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).src =
-                      'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="200" height="150" fill="%23cbd5e1"><rect width="200" height="150"/><text x="100" y="80" font-family="sans-serif" font-size="16" fill="%23475569" text-anchor="middle">Food</text></svg>';
-                  }}
-                />
-                <div className="absolute top-2 left-2 flex items-center gap-1">
-                  <span className="px-2 py-0.5 rounded-md bg-slate-900/80 text-white text-[10px] font-semibold backdrop-blur-xs">
-                    {categoryName}
-                  </span>
-                  {item.isRecommended && (
-                    <span className="px-2 py-0.5 rounded-md bg-amber-500 text-slate-950 text-[10px] font-bold">
-                      {t('recommended_badge')}
+              <div className="px-3 pt-3 space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1 min-w-0 flex-wrap">
+                    <span className="px-2 py-0.5 rounded-md bg-slate-900/80 text-white text-[10px] font-semibold">
+                      {categoryName}
                     </span>
-                  )}
-                </div>
+                    {item.isRecommended && (
+                      <span className="px-2 py-0.5 rounded-md bg-amber-500 text-slate-950 text-[10px] font-bold">
+                        {t('recommended_badge')}
+                      </span>
+                    )}
+                  </div>
 
-                <div className="absolute top-2 right-2">
                   <button
                     type="button"
                     onClick={() => toggleSoldOut(item.id)}
-                    className={`px-2.5 py-1 rounded-full text-[10px] font-bold shadow-xs transition cursor-pointer flex items-center gap-1 ${
+                    className={`px-2.5 py-1 rounded-full text-[10px] font-bold shadow-xs transition cursor-pointer flex items-center gap-1 shrink-0 ${
                       item.isSoldOut
                         ? 'bg-rose-600 text-white'
                         : 'bg-emerald-600 text-white hover:bg-emerald-700'
@@ -963,71 +952,27 @@ export const MenuManagementView: React.FC = () => {
                     <span>{item.isSoldOut ? t('option_sold_out') : 'พร้อมขาย'}</span>
                   </button>
                 </div>
+
+                <div className="w-1/2 mx-auto aspect-16/10 rounded-xl overflow-hidden bg-slate-100 dark:bg-slate-800">
+                  <img
+                    src={item.image}
+                    alt={getName(item)}
+                    referrerPolicy="no-referrer"
+                    className="w-full h-full object-cover"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).src =
+                        'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="200" height="150" fill="%23cbd5e1"><rect width="200" height="150"/><text x="100" y="80" font-family="sans-serif" font-size="16" fill="%23475569" text-anchor="middle">Food</text></svg>';
+                    }}
+                  />
+                </div>
               </div>
 
               {/* Item Info */}
-              <div className="p-4 flex-1 flex flex-col justify-between space-y-3">
+              <div className="p-4 pt-3 flex-1 flex flex-col justify-between space-y-3">
                 <div>
-                  <h4 className="font-bold text-sm text-slate-900 dark:text-white truncate">
+                  <h4 className="font-bold text-[21px] leading-normal text-slate-900 dark:text-white text-center truncate">
                     {getName(item)}
                   </h4>
-                </div>
-
-                {/* Variants preview & prices */}
-                <div className="pt-2 border-t border-slate-100 dark:border-slate-800 text-xs space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-slate-400">
-                      {variantCount} {t('food_detail_options_title')}:
-                    </span>
-                    <span className="font-mono font-bold text-amber-600 dark:text-amber-400">
-                      {item.variants && item.variants.length > 0 ? (
-                        item.variants.length === 1 ? (
-                          formatBaht(item.variants[0].price)
-                        ) : (
-                          `฿${Math.min(...item.variants.map((v) => v.price))} - ฿${Math.max(
-                            ...item.variants.map((v) => v.price)
-                          )}`
-                        )
-                      ) : (
-                        formatBaht(item.price)
-                      )}
-                    </span>
-                  </div>
-
-                  {/* Financial Breakdown per dish (Cost, Profit, Margin) */}
-                  {(() => {
-                    const primaryPrice = item.variants?.[0]?.price ?? item.price ?? 0;
-                    const primaryCost = item.variants?.[0]?.cost ?? item.cost ?? 0;
-                    const profit = Math.max(0, primaryPrice - primaryCost);
-                    const marginPct = primaryPrice > 0 ? (profit / primaryPrice) * 100 : 0;
-
-                    return (
-                      <div className="grid grid-cols-3 gap-1 p-1.5 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-100 dark:border-slate-800 text-[10px]">
-                        <div>
-                          <span className="text-slate-400 block text-[9px]">ต้นทุน/จาน</span>
-                          <span className="font-mono font-bold text-rose-500">
-                            {primaryCost > 0 ? formatBaht(primaryCost) : '฿0'}
-                          </span>
-                        </div>
-                        <div>
-                          <span className="text-slate-400 block text-[9px]">กำไร/จาน</span>
-                          <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
-                            +{formatBaht(profit)}
-                          </span>
-                        </div>
-                        <div>
-                          <span className="text-slate-400 block text-[9px]">% Margin</span>
-                          <span
-                            className={`font-mono font-bold ${
-                              marginPct >= 65 ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600'
-                            }`}
-                          >
-                            {marginPct.toFixed(0)}%
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  })()}
                 </div>
 
                 {/* Actions */}
@@ -1299,14 +1244,14 @@ export const MenuManagementView: React.FC = () => {
                   <div className="flex-1">ชื่อตัวเลือกย่อย (ไทย / อังกฤษ)</div>
                   <div className="w-24 text-center">ราคาขาย (฿)</div>
                   <div className="w-24 text-center">ต้นทุน (฿)</div>
-                  <div className="w-24 text-center">หมด/พร้อมขาย</div>
-                  <div className="w-8"></div>
+                  <div className="w-28 text-center">กำไร/จาน</div>
                 </div>
 
                 {(editingItem.variants || []).map((variant, idx) => {
                   const varPrice = Number(variant.price) || 0;
                   const varCost = Number(variant.cost) || 0;
-                  const varProfit = Math.max(0, varPrice - varCost);
+                  const varRawProfit = varPrice - varCost;
+                  const varProfit = Math.max(0, varRawProfit);
                   const varMarginPct = varPrice > 0 ? (varProfit / varPrice) * 100 : 0;
                   const varFoodCostPct = varPrice > 0 ? (varCost / varPrice) * 100 : 0;
                   const isCostLocked = Boolean(variant.costVariantId);
@@ -1407,26 +1352,18 @@ export const MenuManagementView: React.FC = () => {
                             )}
                           </div>
 
-                          <label className="flex items-center gap-1 cursor-pointer text-[11px] text-slate-600 dark:text-slate-400">
-                            <input
-                              type="checkbox"
-                              checked={variant.isSoldOut || false}
-                              onChange={(e) =>
-                                handleUpdateVariant(idx, { isSoldOut: e.target.checked })
-                              }
-                              className="w-3.5 h-3.5 rounded text-rose-500"
-                            />
-                            <span>{t('menu_form_option_sold_out')}</span>
-                          </label>
-
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteVariant(idx)}
-                            className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition cursor-pointer"
-                            title={t('delete')}
+                          <div
+                            className={`w-28 px-2 py-1.5 rounded-lg border text-xs font-mono font-bold text-center ${
+                              varRawProfit >= 0
+                                ? 'border-emerald-200 dark:border-emerald-800/60 bg-emerald-50/70 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400'
+                                : 'border-rose-200 dark:border-rose-800/60 bg-rose-50/70 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400'
+                            }`}
+                            title="กำไร/จาน = ราคาขาย - ต้นทุน"
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                            {varRawProfit >= 0
+                              ? `+${formatBaht(varRawProfit)}`
+                              : `-${formatBaht(Math.abs(varRawProfit))}`}
+                          </div>
                         </div>
                       </div>
 
