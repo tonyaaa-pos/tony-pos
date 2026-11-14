@@ -149,7 +149,38 @@ export const EditMenuItemModal: React.FC<EditMenuItemModalProps> = ({
   useEffect(() => {
     if (!isOpen) return;
     const syncFromCache = () => {
-      setCostMenus(getCachedCostBundle()?.payload?.menus || []);
+      const bundle = getCachedCostBundle();
+      const latestMenus = bundle?.payload?.menus || [];
+      setCostMenus(latestMenus);
+      setEditingItem((prev) => {
+        if (!prev || !prev.variants || latestMenus.length === 0) return prev;
+        const linkedMenu = prev.costMenuId
+          ? latestMenus.find((m) => m.id === prev.costMenuId)
+          : undefined;
+        if (!linkedMenu || !linkedMenu.variants) return prev;
+        const isExternal = bundle.syncedFrom !== 'POS_CostProfitIntegration';
+        let changed = false;
+        const nextVars = prev.variants.map((v) => {
+          if (!v.costVariantId) return v;
+          const cv = findMatchingCostVariant(
+            v.name,
+            linkedMenu.variants || [],
+            v.costVariantId,
+            v.id,
+            prev.name
+          );
+          if (!cv) return v;
+          const nextCost = getVariantRecipeCost(cv);
+          const remoteSell = cv.sellingPrice ?? cv.price ?? 0;
+          const nextPrice = isExternal && remoteSell > 0 ? remoteSell : v.price;
+          if (nextCost !== v.cost || nextPrice !== v.price) {
+            changed = true;
+            return { ...v, cost: nextCost, price: nextPrice };
+          }
+          return v;
+        });
+        return changed ? { ...prev, variants: nextVars } : prev;
+      });
     };
     window.addEventListener(COST_BUNDLE_UPDATED_EVENT, syncFromCache);
     window.addEventListener('storage', syncFromCache);

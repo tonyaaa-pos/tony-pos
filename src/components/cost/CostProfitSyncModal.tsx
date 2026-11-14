@@ -34,6 +34,7 @@ import {
   saveCostBundleToFirestore,
   subscribeCostManagementData,
   calculateFixedMonthlyOpEx,
+  getActiveCostDocPath,
   type TonysKitchenPayload,
   type CostSyncSummary,
 } from '../../services/costSyncService';
@@ -558,7 +559,7 @@ export const CostProfitSyncModal: React.FC<CostProfitSyncModalProps> = ({
                     </h4>
                     <p className="text-xs text-slate-500 dark:text-slate-400">
                       {cloudUser
-                        ? `เส้นทางข้อมูล: users/${cloudUser.uid}/costManagement/tonys_kitchen`
+                        ? `เส้นทางข้อมูล: ${getActiveCostDocPath()}`
                         : 'เข้าสู่ระบบด้วย Google เพื่อดึงและซิงค์ข้อมูลต้นทุนบน Cloud Firestore ของคุณ'}
                     </p>
                   </div>

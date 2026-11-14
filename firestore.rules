@@ -1,9 +1,27 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedOwnerEmail() {
+      return isSignedIn()
+        && request.auth.token.email == 'aa119922bb@gmail.com'
+        && request.auth.token.email_verified == true;
+    }
+
+    // Shared Cost Management real-time sync collection for linked Cost App UID
+    match /users/WBDSoJjNMKOjsCs5n33dMGhdWzu1/costManagement/{docId} {
+      allow read, write: if isSignedIn() && (
+        request.auth.uid == 'WBDSoJjNMKOjsCs5n33dMGhdWzu1' ||
+        isVerifiedOwnerEmail()
+      );
+    }
+
     // Only authenticated users can read and write their own data under users/{uid}/**
     match /users/{uid}/{document=**} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
+      allow read, write: if isSignedIn() && request.auth.uid == uid;
     }
 
     // Deny everything else

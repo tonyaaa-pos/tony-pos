@@ -85,6 +85,8 @@ import {
   getVariantRecipeCost,
   getVariantSellingPrice,
   calculateFixedMonthlyOpEx,
+  extractCostTimestampMs,
+  getCachedCostBundle,
   OPEX_STORAGE_KEY,
   notifyOpExUpdated,
   type TonysKitchenPayload,
@@ -1165,16 +1167,182 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Phase 2: Cloud real-time subscriptions for remaining data
   const lastCostPayloadSigRef = useRef<string>('');
+  const latestCostPayloadRef = useRef<TonysKitchenPayload | null>(null);
+  const prevCostPayloadRef = useRef<TonysKitchenPayload | null>(getCachedCostBundle());
   useEffect(() => {
     if (!cloudUser || !isFirebaseConfigured()) return;
 
     const unsubs: (() => void)[] = [];
 
+    const reconcileMenuItemsWithCostPayload = (
+      sourceItems: MenuItem[],
+      remotePayload: TonysKitchenPayload,
+      prevPayload: TonysKitchenPayload | null
+    ): { nextItems: MenuItem[]; changedItems: MenuItem[] } => {
+      const costMenus = remotePayload.payload?.menus || [];
+      if (costMenus.length === 0) return { nextItems: sourceItems, changedItems: [] };
+
+      const prevMenus = prevPayload?.payload?.menus || [];
+      const remoteTime = extractCostTimestampMs(remotePayload);
+      const isFromExternalCostApp = remotePayload.syncedFrom !== 'POS_CostProfitIntegration';
+      const changedItems: MenuItem[] = [];
+
+      const nextItems = sourceItems.map((posItem) => {
+        const matchedCostMenu = findMatchingCostMenu(
+          posItem.name,
+          costMenus,
+          posItem.costMenuId,
+          posItem.id
+        );
+        if (!matchedCostMenu) return posItem;
+
+        const prevCostMenu = prevMenus.find((pm) => pm.id === matchedCostMenu.id);
+        let itemChanged =
+          posItem.costMenuId !== matchedCostMenu.id ||
+          posItem.costMenuName !== matchedCostMenu.name;
+        let newBaseCost = posItem.cost;
+
+        if (posItem.variants && posItem.variants.length > 0 && matchedCostMenu.variants) {
+          const updatedVariants = posItem.variants.map((posVar) => {
+            const matchedCv = findMatchingCostVariant(
+              posVar.name,
+              matchedCostMenu.variants || [],
+              posVar.costVariantId,
+              posVar.id,
+              posItem.name
+            );
+            if (!matchedCv) return posVar;
+
+            const recipeCost = getVariantRecipeCost(matchedCv);
+            const hasExplicitCost =
+              matchedCv.recipeCost !== undefined ||
+              matchedCv.foodCostPerUnit !== undefined ||
+              matchedCv.calculatedCost !== undefined ||
+              matchedCv.cost !== undefined;
+            const varCost = hasExplicitCost ? recipeCost : posVar.cost;
+
+            const remoteSellPrice = getVariantSellingPrice(matchedCv);
+            const prevMatchedCv = prevCostMenu
+              ? findMatchingCostVariant(
+                  posVar.name,
+                  prevCostMenu.variants || [],
+                  matchedCv.id,
+                  posVar.id,
+                  posItem.name
+                )
+              : undefined;
+            const prevRemotePrice = prevMatchedCv ? getVariantSellingPrice(prevMatchedCv) : undefined;
+            const remotePriceChangedInCostApp =
+              isFromExternalCostApp &&
+              prevRemotePrice !== undefined &&
+              remoteSellPrice !== prevRemotePrice;
+
+            const localTime = posVar.priceUpdatedAt ? new Date(posVar.priceUpdatedAt).getTime() : 0;
+            const resolvedPrice =
+              remoteSellPrice > 0 &&
+              (posVar.price <= 0 || remotePriceChangedInCostApp || remoteTime >= localTime)
+                ? remoteSellPrice
+                : posVar.price;
+
+            const costCvName = matchedCv.name || matchedCv.variantName || posVar.name;
+            if (
+              varCost !== posVar.cost ||
+              resolvedPrice !== posVar.price ||
+              posVar.costVariantId !== matchedCv.id ||
+              posVar.costMenuId !== matchedCostMenu.id ||
+              posVar.costVariantName !== costCvName
+            ) {
+              itemChanged = true;
+            }
+            return {
+              ...posVar,
+              price: resolvedPrice,
+              cost: varCost,
+              costMenuId: matchedCostMenu.id,
+              costVariantId: matchedCv.id,
+              costVariantName: costCvName,
+              priceUpdatedAt:
+                resolvedPrice !== posVar.price
+                  ? new Date(remoteTime || Date.now()).toISOString()
+                  : posVar.priceUpdatedAt,
+            };
+          });
+
+          if (itemChanged) {
+            const validCosts = updatedVariants.map((v) => v.cost).filter((c) => c > 0);
+            if (validCosts.length > 0) {
+              newBaseCost = Math.round((validCosts.reduce((a, b) => a + b, 0) / validCosts.length) * 100) / 100;
+            }
+            const firstPrice = updatedVariants[0]?.price;
+            const updatedItem: MenuItem = {
+              ...posItem,
+              price: typeof firstPrice === 'number' && firstPrice > 0 ? firstPrice : posItem.price,
+              cost: newBaseCost,
+              costMenuId: matchedCostMenu.id,
+              costMenuName: matchedCostMenu.name,
+              variants: updatedVariants,
+            };
+            changedItems.push(updatedItem);
+            return updatedItem;
+          }
+        } else {
+          const singleVar = matchedCostMenu.variants?.[0];
+          const singleCost =
+            matchedCostMenu.recipeCost ??
+            (singleVar ? getVariantRecipeCost(singleVar) : undefined) ??
+            posItem.cost;
+          const singleRemotePrice =
+            matchedCostMenu.sellingPrice ??
+            (singleVar ? getVariantSellingPrice(singleVar) : 0);
+          const resolvedSinglePrice =
+            singleRemotePrice > 0 && (posItem.price <= 0 || isFromExternalCostApp)
+              ? singleRemotePrice
+              : posItem.price;
+          if (
+            singleCost !== posItem.cost ||
+            resolvedSinglePrice !== posItem.price ||
+            posItem.costMenuId !== matchedCostMenu.id ||
+            posItem.costMenuName !== matchedCostMenu.name
+          ) {
+            const updatedItem: MenuItem = {
+              ...posItem,
+              price: resolvedSinglePrice,
+              cost: singleCost,
+              costMenuId: matchedCostMenu.id,
+              costMenuName: matchedCostMenu.name,
+            };
+            changedItems.push(updatedItem);
+            return updatedItem;
+          }
+        }
+        return posItem;
+      });
+
+      return { nextItems, changedItems };
+    };
+
     // 1. Menu items
     unsubs.push(
       subscribeCollection<MenuItem>('menuItems', (remoteItems, removedIds) => {
         if ((!remoteItems || remoteItems.length === 0) && removedIds.length === 0) return;
-        commitMenuItems(mergeEntitiesByLatest(menuItemsRef.current, remoteItems, removedIds));
+        const merged = mergeEntitiesByLatest(menuItemsRef.current, remoteItems, removedIds);
+        if (latestCostPayloadRef.current) {
+          const { nextItems, changedItems } = reconcileMenuItemsWithCostPayload(
+            merged,
+            latestCostPayloadRef.current,
+            prevCostPayloadRef.current
+          );
+          commitMenuItems(nextItems);
+          if (changedItems.length > 0) {
+            changedItems.forEach((item) => {
+              saveMenuItemRemote(item).catch((err) =>
+                console.warn('[MenuItems Cost Reconcile saveMenuItemRemote error]:', err)
+              );
+            });
+          }
+          return;
+        }
+        commitMenuItems(merged);
       })
     );
 
@@ -1315,10 +1483,11 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           expenses: remotePayload?.payload?.expenses || [],
           employees: remotePayload?.payload?.employees || [],
         });
+        latestCostPayloadRef.current = remotePayload;
         if (sig === lastCostPayloadSigRef.current) return;
         lastCostPayloadSigRef.current = sig;
 
-        const costMenus = remotePayload.payload?.menus || [];
+        const prevPayload = prevCostPayloadRef.current;
         const costSettings = remotePayload.payload?.settings || {};
         const fixedOpEx = calculateFixedMonthlyOpEx(remotePayload);
 
@@ -1343,98 +1512,15 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
 
         // Sync linked POS MenuItems' locked costs and newer selling prices immediately
-        const remoteTime = remotePayload.exportedAt ? new Date(remotePayload.exportedAt).getTime() : 0;
-        const changedItems: MenuItem[] = [];
-        const nextMenuItems = menuItemsRef.current.map((posItem) => {
-          const matchedCostMenu = findMatchingCostMenu(
-            posItem.name,
-            costMenus,
-            posItem.costMenuId,
-            posItem.id
-          );
-          if (!matchedCostMenu) return posItem;
-
-          let itemChanged = posItem.costMenuId !== matchedCostMenu.id;
-          let newBaseCost = posItem.cost;
-
-          if (posItem.variants && posItem.variants.length > 0 && matchedCostMenu.variants) {
-            const updatedVariants = posItem.variants.map((posVar) => {
-              const matchedCv = findMatchingCostVariant(
-                posVar.name,
-                matchedCostMenu.variants || [],
-                posVar.costVariantId,
-                posVar.id,
-                posItem.name
-              );
-              if (!matchedCv) return posVar;
-
-              const varCost = getVariantRecipeCost(matchedCv) || posVar.cost;
-              const remoteSellPrice = getVariantSellingPrice(matchedCv);
-              const localTime = posVar.priceUpdatedAt ? new Date(posVar.priceUpdatedAt).getTime() : 0;
-              const resolvedPrice =
-                remoteSellPrice > 0 && (posVar.price <= 0 || remoteTime > localTime)
-                  ? remoteSellPrice
-                  : posVar.price;
-
-              if (
-                varCost !== posVar.cost ||
-                resolvedPrice !== posVar.price ||
-                posVar.costVariantId !== matchedCv.id ||
-                posVar.costMenuId !== matchedCostMenu.id
-              ) {
-                itemChanged = true;
-              }
-              return {
-                ...posVar,
-                price: resolvedPrice,
-                cost: varCost,
-                costMenuId: matchedCostMenu.id,
-                costVariantId: matchedCv.id,
-                costVariantName: matchedCv.name || matchedCv.variantName || posVar.name,
-                priceUpdatedAt:
-                  resolvedPrice !== posVar.price && remotePayload.exportedAt
-                    ? remotePayload.exportedAt
-                    : posVar.priceUpdatedAt,
-              };
-            });
-
-            if (itemChanged) {
-              const validCosts = updatedVariants.map((v) => v.cost).filter((c) => c > 0);
-              if (validCosts.length > 0) {
-                newBaseCost = Math.round((validCosts.reduce((a, b) => a + b, 0) / validCosts.length) * 100) / 100;
-              }
-              const updatedItem: MenuItem = {
-                ...posItem,
-                cost: newBaseCost,
-                costMenuId: matchedCostMenu.id,
-                costMenuName: matchedCostMenu.name,
-                variants: updatedVariants,
-              };
-              changedItems.push(updatedItem);
-              return updatedItem;
-            }
-          } else {
-            const singleVar = matchedCostMenu.variants?.[0];
-            const singleCost =
-              matchedCostMenu.recipeCost ??
-              (singleVar ? getVariantRecipeCost(singleVar) : undefined) ??
-              posItem.cost;
-            if (singleCost !== posItem.cost || posItem.costMenuId !== matchedCostMenu.id) {
-              const updatedItem: MenuItem = {
-                ...posItem,
-                cost: singleCost,
-                costMenuId: matchedCostMenu.id,
-                costMenuName: matchedCostMenu.name,
-              };
-              changedItems.push(updatedItem);
-              return updatedItem;
-            }
-          }
-          return posItem;
-        });
+        const { nextItems, changedItems } = reconcileMenuItemsWithCostPayload(
+          menuItemsRef.current,
+          remotePayload,
+          prevPayload
+        );
+        prevCostPayloadRef.current = remotePayload;
 
         if (changedItems.length > 0) {
-          commitMenuItems(nextMenuItems);
+          commitMenuItems(nextItems);
           changedItems.forEach((item) => {
             saveMenuItemRemote(item).catch((err) =>
               console.warn('[Auto Cost Sync saveMenuItemRemote error]:', err)
