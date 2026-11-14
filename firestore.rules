@@ -5,27 +5,6 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    function isVerifiedOwnerEmail() {
-      return isSignedIn()
-        && request.auth.token.email == 'aa119922bb@gmail.com'
-        && request.auth.token.email_verified == true;
-    }
-
-    // Shared Cost Management & Food Cost System real-time sync for linked Cost App UID (root doc & all subcollections)
-    match /users/WBDSoJjNMKOjsCs5n33dMGhdWzu1 {
-      allow read, write: if isSignedIn() && (
-        request.auth.uid == 'WBDSoJjNMKOjsCs5n33dMGhdWzu1' ||
-        isVerifiedOwnerEmail()
-      );
-    }
-
-    match /users/WBDSoJjNMKOjsCs5n33dMGhdWzu1/{document=**} {
-      allow read, write: if isSignedIn() && (
-        request.auth.uid == 'WBDSoJjNMKOjsCs5n33dMGhdWzu1' ||
-        isVerifiedOwnerEmail()
-      );
-    }
-
     // Only authenticated users can read and write their own data under users/{uid}/**
     match /users/{uid}/{document=**} {
       allow read, write: if isSignedIn() && request.auth.uid == uid;

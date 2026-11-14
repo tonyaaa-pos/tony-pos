@@ -1,12 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Calculator, Check, Plus, RefreshCw, AlertCircle, Link2 } from 'lucide-react';
+import { Calculator, Check, Plus, AlertCircle, Link2 } from 'lucide-react';
 import { Modal } from '../common/Modal';
 import {
   getCachedCostBundle,
   getCachedCostBundleMeta,
-  getLinkedCostAppUid,
-  fetchRemoteCostManagementStatus,
-  subscribeCostManagementData,
   getVariantRecipeCost,
   getVariantSellingPrice,
   getEffectiveCostMenuVariants,
@@ -44,8 +41,6 @@ export const FoodCostVariantPickerModal: React.FC<FoodCostVariantPickerModalProp
 }) => {
   const [costBundle, setCostBundle] = useState<TonysKitchenPayload>(() => getCachedCostBundle());
   const [costMeta, setCostMeta] = useState<CostBundleMeta>(() => getCachedCostBundleMeta());
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [refreshMessage, setRefreshMessage] = useState<string | null>(null);
 
   const costMenus: TonysKitchenMenu[] = costBundle?.payload?.menus || [];
   const targetFoodCostPct = costBundle?.payload?.settings?.targetFoodCostPercent ?? 35;
@@ -57,7 +52,6 @@ export const FoodCostVariantPickerModal: React.FC<FoodCostVariantPickerModalProp
     if (!isOpen) return;
     setCostBundle(getCachedCostBundle());
     setCostMeta(getCachedCostBundleMeta());
-    setRefreshMessage(null);
 
     const handleBundleUpdate = () => {
       setCostBundle(getCachedCostBundle());
@@ -66,65 +60,11 @@ export const FoodCostVariantPickerModal: React.FC<FoodCostVariantPickerModalProp
     window.addEventListener(COST_BUNDLE_UPDATED_EVENT, handleBundleUpdate);
     window.addEventListener('storage', handleBundleUpdate);
 
-    let active = true;
-    const unsub = subscribeCostManagementData((remoteData) => {
-      if (!active) return;
-      setCostBundle(remoteData);
-      setCostMeta(getCachedCostBundleMeta());
-    });
-
-    (async () => {
-      try {
-        const res = await fetchRemoteCostManagementStatus();
-        if (!active) return;
-        if (res.status === 'found' && res.data) {
-          setCostBundle(res.data);
-          setCostMeta(getCachedCostBundleMeta());
-        } else if (res.status === 'not_signed_in') {
-          setRefreshMessage('ยังไม่ได้เข้าสู่ระบบ Google Cloud — กำลังแสดงข้อมูลตัวอย่างในเครื่อง');
-        } else if (res.status === 'permission_denied') {
-          setRefreshMessage(res.error || 'บัญชีปัจจุบันไม่มีสิทธิ์เข้าถึง Food Cost System');
-        } else if (res.status === 'not_found') {
-          setRefreshMessage(`ยังไม่พบข้อมูล Food Cost บน Cloud (${res.docPath})`);
-        }
-      } catch (err: unknown) {
-        if (active) {
-          setRefreshMessage(err instanceof Error ? err.message : 'ไม่สามารถดึงข้อมูลจาก Cloud ได้');
-        }
-      }
-    })();
-
     return () => {
-      active = false;
-      if (unsub) unsub();
       window.removeEventListener(COST_BUNDLE_UPDATED_EVENT, handleBundleUpdate);
       window.removeEventListener('storage', handleBundleUpdate);
     };
   }, [isOpen]);
-
-  const handleRefreshCloud = async () => {
-    setIsRefreshing(true);
-    setRefreshMessage(null);
-    try {
-      const res = await fetchRemoteCostManagementStatus();
-      setCostMeta(getCachedCostBundleMeta());
-      if (res.status === 'found' && res.data) {
-        setCostBundle(res.data);
-        setRefreshMessage(`ซิงค์จาก Cloud (${res.docPath}) เรียบร้อยแล้ว (${res.data.payload?.menus?.length || 0} เมนู)`);
-      } else if (res.status === 'not_signed_in') {
-        setRefreshMessage('ยังไม่ได้เข้าสู่ระบบ Google จึงไม่สามารถดึงข้อมูลจริงจาก UID ' + getLinkedCostAppUid() + ' ได้');
-      } else if (res.status === 'permission_denied') {
-        setRefreshMessage(res.error || 'บัญชีปัจจุบันไม่มีสิทธิ์เข้าถึงข้อมูลต้นทุน');
-      } else {
-        setRefreshMessage(`ไม่พบข้อมูลใน Cloud Firestore (${res.docPath}) — กรุณาตรวจสอบว่าแอป Food Cost บันทึกข้อมูลแล้ว`);
-      }
-      soundService.playTap();
-    } catch (err: unknown) {
-      setRefreshMessage(err instanceof Error ? err.message : 'ไม่สามารถดึงข้อมูลจาก Cloud ได้');
-    } finally {
-      setIsRefreshing(false);
-    }
-  };
 
   const handleSelectCostVariant = (menu: TonysKitchenMenu, costVar: TonysKitchenVariant) => {
     const varName = (costVar.name || costVar.variantName || menu.name || '').trim();
@@ -211,39 +151,22 @@ export const FoodCostVariantPickerModal: React.FC<FoodCostVariantPickerModalProp
                 <span>เชื่อมข้อมูลต้นทุนอัตโนมัติ (Food Cost System)</span>
                 <span
                   className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                    costMeta.source === 'cloud'
+                    costMeta.source === 'import'
                       ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
                       : 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
                   }`}
                 >
-                  {costMeta.source === 'cloud' ? 'Cloud Live' : 'ข้อมูลตัวอย่าง'}
+                  {costMeta.source === 'import' ? 'นำเข้าแล้ว' : 'ข้อมูลตัวอย่าง'}
                 </span>
               </div>
               <div className="text-[11px] text-slate-600 dark:text-slate-300 truncate">
                 {activeCostMenu
                   ? `แสดงเฉพาะตัวเลือกของเมนู: ${activeCostMenu.name}`
-                  : `UID: ${costMeta.uid || getLinkedCostAppUid()} • กรุณาเลือกรายการเมนูอาหาร`}
+                  : 'กรุณาเลือกรายการเมนูอาหาร (ข้อมูลในเครื่อง)'}
               </div>
             </div>
           </div>
-
-          <button
-            type="button"
-            onClick={handleRefreshCloud}
-            disabled={isRefreshing}
-            className="px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[11px] font-bold text-slate-700 dark:text-slate-200 hover:border-amber-400 transition flex items-center gap-1 shrink-0 cursor-pointer"
-            title="อัปเดตข้อมูลล่าสุดจาก Cloud Firestore"
-          >
-            <RefreshCw className={`w-3 h-3 ${isRefreshing ? 'animate-spin text-amber-500' : ''}`} />
-            <span>ซิงค์ล่าสุด</span>
-          </button>
         </div>
-
-        {refreshMessage && (
-          <div className="text-[11px] px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
-            {refreshMessage}
-          </div>
-        )}
 
         {/* Menu Filter Dropdown (synced with parent form) */}
         <div>

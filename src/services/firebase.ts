@@ -49,7 +49,6 @@ export interface FirestoreErrorInfo {
 
 let app: FirebaseApp | null = null;
 let db: Firestore | null = null;
-let secondaryDefaultDb: Firestore | null = null;
 let auth: Auth | null = null;
 
 if (typeof window !== 'undefined' && isFirebaseConfigured()) {
@@ -93,16 +92,6 @@ if (typeof window !== 'undefined' && isFirebaseConfigured()) {
   }
 }
 
-export function getSecondaryDefaultDb(): Firestore | null {
-  if (!app || firebaseConfig.firestoreDatabaseId === '(default)') return null;
-  if (secondaryDefaultDb) return secondaryDefaultDb;
-  try {
-    secondaryDefaultDb = getFirestore(app);
-    return secondaryDefaultDb;
-  } catch {
-    return null;
-  }
-}
 
 const QUOTA_PAUSE_KEY = 'kind_pos_firestore_write_paused_until_v1';
 const MIN_QUOTA_PAUSE_MS = 30 * 60 * 1000;

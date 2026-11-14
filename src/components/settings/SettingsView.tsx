@@ -2238,7 +2238,7 @@ export const SettingsView: React.FC = () => {
             </div>
 
             <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-              รองรับทั้งการนำเข้าไฟล์ JSON จากแอป Cost & Profit หรือซิงค์ข้อมูลผ่าน <strong>Cloud Firestore</strong> (<code>users/{'{uid}'}/costManagement/tonys_kitchen</code>) อัตโนมัติ ทำให้ยอดขายใน POS ทุกบิลคำนวณกำไรแท้จริงได้แม่นยำ 100%
+              รองรับการนำเข้าไฟล์ JSON หรือวางข้อมูลจากแอป Cost &amp; Profit และบันทึกข้อมูลต้นทุนไว้ในเครื่องโดยอัตโนมัติ ทำให้ยอดขายใน POS ทุกบิลคำนวณกำไรแท้จริงได้แม่นยำ 100%
             </p>
           </div>
 

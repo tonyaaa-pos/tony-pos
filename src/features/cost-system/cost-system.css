@@ -1,0 +1,311 @@
+/* Scoped Light Theme Utilities & Contrast Palette strictly for Cost System Module (.cost-app-scope) */
+.cost-app-scope {
+  --color-bg-app: #FAF8F5;
+  --color-surface-card: #FFFFFF;
+  --color-surface-cream: #FFFDF9;
+  --color-surface-subtle: #F7F3EB;
+  --color-border-card: #EAE4D9;
+  --color-text-main: #1C1917;
+  --color-text-muted: #57534E;
+  --color-primary-orange: #F27D26;
+  --color-accent-gold: #B45309;
+  --color-accent-yellow: #D97706;
+  background-color: #FAF8F5;
+  color: #1C1917;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.cost-app-scope .glass-panel {
+  background-color: #FFFFFF;
+  border: 1px solid #EAE4D9;
+  box-shadow: 0 1px 3px 0 rgba(180, 83, 9, 0.04);
+}
+
+.cost-app-scope .glass-panel-subtle {
+  background-color: #FFFDF9;
+  border: 1px solid #EAE4D9;
+}
+
+.cost-app-scope .glass-card-interactive {
+  background-color: #FFFFFF;
+  border: 1px solid #EAE4D9;
+  box-shadow: 0 1px 3px 0 rgba(180, 83, 9, 0.04);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.cost-app-scope .glass-card-interactive:hover {
+  background-color: #FFFDF9;
+  border-color: #F27D26;
+  box-shadow: 0 4px 12px 0 rgba(242, 125, 38, 0.12);
+}
+
+.cost-app-scope .glass-input {
+  background-color: #FFFFFF;
+  border: 1px solid #D6CEBE;
+  color: #1C1917;
+  transition: all 0.15s ease-in-out;
+}
+
+.cost-app-scope .glass-input:focus {
+  border-color: #F27D26;
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(242, 125, 38, 0.25);
+}
+
+/* Convert legacy dark-theme surface utilities inside .cost-app-scope to warm cream & white cards */
+.cost-app-scope .bg-\[\#151518\],
+.cost-app-scope .bg-\[\#0F0F11\],
+.cost-app-scope .bg-\[\#0f0f11\],
+.cost-app-scope .bg-\[\#0D0D0F\],
+.cost-app-scope .bg-\[\#0d0d0f\],
+.cost-app-scope .bg-\[\#0a0a0c\],
+.cost-app-scope .bg-\[\#141414\],
+.cost-app-scope .bg-\[\#0f0f0f\],
+.cost-app-scope .bg-\[\#111111\],
+.cost-app-scope .bg-\[\#121212\],
+.cost-app-scope .bg-\[\#1a1a1a\],
+.cost-app-scope .bg-\[\#1a1a1a\]\/95,
+.cost-app-scope .bg-\[\#1a1a1a\]\/90,
+.cost-app-scope .bg-\[\#1a1a1a\]\/80,
+.cost-app-scope .bg-\[\#1a1a1a\]\/75,
+.cost-app-scope .bg-\[\#151518\]\/95,
+.cost-app-scope .bg-\[\#151518\]\/90,
+.cost-app-scope .bg-\[\#0F0F11\]\/95,
+.cost-app-scope .bg-\[\#0F0F11\]\/90,
+.cost-app-scope .bg-\[\#1e1e1e\],
+.cost-app-scope .bg-\[\#1c1c1e\],
+.cost-app-scope .bg-\[\#1C1917\],
+.cost-app-scope .bg-\[\#222\],
+.cost-app-scope .bg-zinc-900,
+.cost-app-scope .bg-neutral-900,
+.cost-app-scope .bg-slate-900:not(.fixed),
+.cost-app-scope .bg-gray-900,
+.cost-app-scope .bg-stone-900 {
+  background-color: #FFFFFF !important;
+  border-color: #EAE4D9 !important;
+  box-shadow: 0 1px 3px 0 rgba(180, 83, 9, 0.04);
+}
+
+.cost-app-scope .bg-black\/25,
+.cost-app-scope .bg-black\/30,
+.cost-app-scope .bg-black\/40,
+.cost-app-scope .bg-black\/50,
+.cost-app-scope .bg-black\/60 {
+  background-color: #FFFFFF !important;
+  border-color: #EAE4D9 !important;
+  box-shadow: 0 1px 3px 0 rgba(180, 83, 9, 0.03);
+}
+
+.cost-app-scope .bg-black\/20,
+.cost-app-scope .bg-black\/10,
+.cost-app-scope .bg-white\/5 {
+  background-color: #FFFDF9 !important;
+  border-color: #EAE4D9 !important;
+}
+
+.cost-app-scope .bg-white\/10 {
+  background-color: #F7F3EB !important;
+  border-color: #EAE4D9 !important;
+}
+
+.cost-app-scope .bg-white\/15,
+.cost-app-scope .bg-white\/20 {
+  background-color: #EFE9DF !important;
+  border-color: #E2DBD0 !important;
+}
+
+.cost-app-scope div.bg-black:not(.fixed),
+.cost-app-scope section.bg-black,
+.cost-app-scope article.bg-black {
+  background-color: #FFFDF9 !important;
+  border-color: #EAE4D9 !important;
+}
+
+/* Modal overlays & dialogs inside cost-app-scope */
+.cost-app-scope .fixed.inset-0.bg-black\/60,
+.cost-app-scope .fixed.inset-0.bg-black\/70,
+.cost-app-scope .fixed.inset-0.bg-black\/75,
+.cost-app-scope .fixed.inset-0.bg-black\/80,
+.cost-app-scope div.fixed.inset-0[class*="bg-black/"],
+.cost-app-scope div.fixed.inset-0[class*="bg-slate-900/"] {
+  background-color: rgba(28, 25, 23, 0.55) !important;
+}
+
+.cost-app-scope div.fixed.inset-0 > div:not(.fixed) {
+  background-color: #FFFDF9 !important;
+  border-color: #EAE4D9 !important;
+  color: #1C1917 !important;
+}
+
+/* Borders */
+.cost-app-scope .border-white\/5,
+.cost-app-scope .border-white\/10,
+.cost-app-scope .border-white\/15 {
+  border-color: #EAE4D9 !important;
+}
+
+.cost-app-scope .border-white\/20,
+.cost-app-scope .border-white\/30 {
+  border-color: #DDD6C8 !important;
+}
+
+/* Text Hierarchy */
+.cost-app-scope .text-white {
+  color: #1C1917 !important;
+}
+
+.cost-app-scope .text-white\/90,
+.cost-app-scope .text-white\/80 {
+  color: #292524 !important;
+}
+
+.cost-app-scope .text-white\/70,
+.cost-app-scope .text-white\/60 {
+  color: #57534E !important;
+}
+
+.cost-app-scope .text-white\/50,
+.cost-app-scope .text-white\/45,
+.cost-app-scope .text-white\/40 {
+  color: #78716C !important;
+}
+
+.cost-app-scope .text-white\/35,
+.cost-app-scope .text-white\/30,
+.cost-app-scope .text-white\/25,
+.cost-app-scope .text-white\/20 {
+  color: #A8A29E !important;
+}
+
+.cost-app-scope .text-\[\#FFC107\] {
+  color: #b45309 !important;
+  font-weight: 700 !important;
+}
+
+.cost-app-scope .text-\[\#00B1FF\] {
+  color: #0284c7 !important;
+}
+
+.cost-app-scope .text-\[\#F27D26\] {
+  color: #ea580c !important;
+}
+
+.cost-app-scope .text-emerald-400,
+.cost-app-scope .text-green-400 {
+  color: #059669 !important;
+}
+
+.cost-app-scope .text-rose-400,
+.cost-app-scope .text-red-400 {
+  color: #e11d48 !important;
+}
+
+.cost-app-scope .text-emerald-300,
+.cost-app-scope .text-emerald-200 {
+  color: #064e3b !important;
+}
+
+.cost-app-scope .text-green-300,
+.cost-app-scope .text-green-200 {
+  color: #052e16 !important;
+}
+
+.cost-app-scope .text-teal-300,
+.cost-app-scope .text-teal-200 {
+  color: #134e4a !important;
+}
+
+.cost-app-scope .text-red-300,
+.cost-app-scope .text-red-200,
+.cost-app-scope .text-rose-300,
+.cost-app-scope .text-rose-200 {
+  color: #881337 !important;
+}
+
+.cost-app-scope .text-amber-300,
+.cost-app-scope .text-amber-200,
+.cost-app-scope .text-yellow-300,
+.cost-app-scope .text-yellow-200 {
+  color: #78350f !important;
+}
+
+.cost-app-scope .text-blue-300,
+.cost-app-scope .text-blue-200,
+.cost-app-scope .text-sky-300,
+.cost-app-scope .text-sky-200 {
+  color: #1e3a8a !important;
+}
+
+.cost-app-scope .text-purple-200,
+.cost-app-scope .text-purple-300 {
+  color: #581c87 !important;
+}
+
+/* Orange solid buttons keep dark crisp text unless child has white bg */
+.cost-app-scope .bg-\[\#F27D26\],
+.cost-app-scope .bg-\[\#F27D26\] *:not(.bg-white):not(.bg-white *),
+.cost-app-scope .bg-\[\#F27D26\] .text-black {
+  color: #000000 !important;
+}
+
+.cost-app-scope .bg-\[\#F27D26\] .bg-white,
+.cost-app-scope .bg-\[\#F27D26\] .bg-white * {
+  color: #1C1917 !important;
+}
+
+/* Solid status badges keep white text */
+.cost-app-scope .bg-rose-500, .cost-app-scope .bg-rose-600,
+.cost-app-scope .bg-red-500, .cost-app-scope .bg-red-600,
+.cost-app-scope .bg-emerald-500, .cost-app-scope .bg-emerald-600,
+.cost-app-scope .bg-green-500, .cost-app-scope .bg-green-600,
+.cost-app-scope .bg-blue-500, .cost-app-scope .bg-blue-600,
+.cost-app-scope .bg-rose-500 *, .cost-app-scope .bg-rose-600 *,
+.cost-app-scope .bg-red-500 *, .cost-app-scope .bg-red-600 *,
+.cost-app-scope .bg-emerald-500 *, .cost-app-scope .bg-emerald-600 *,
+.cost-app-scope .bg-green-500 *, .cost-app-scope .bg-green-600 *,
+.cost-app-scope .bg-blue-500 *, .cost-app-scope .bg-blue-600 * {
+  color: #ffffff !important;
+}
+
+/* Inputs & Dropdowns inside Cost System */
+.cost-app-scope input:not([type="checkbox"]):not([type="radio"]),
+.cost-app-scope select,
+.cost-app-scope textarea {
+  background-color: #FFFFFF !important;
+  color: #1C1917 !important;
+  border-color: #D6CEBE !important;
+}
+
+.cost-app-scope input:focus,
+.cost-app-scope select:focus,
+.cost-app-scope textarea:focus {
+  border-color: #F27D26 !important;
+  box-shadow: 0 0 0 2px rgba(242, 125, 38, 0.2) !important;
+}
+
+.cost-app-scope option {
+  background-color: #FFFFFF !important;
+  color: #1C1917 !important;
+}
+
+/* Tables */
+.cost-app-scope table th {
+  padding-top: 9px !important;
+  padding-bottom: 9px !important;
+  font-size: 12.5px !important;
+  color: #57534E !important;
+  background-color: #F7F3EB !important;
+  border-bottom: 1px solid #EAE4D9 !important;
+}
+
+.cost-app-scope table td {
+  padding-top: 9px !important;
+  padding-bottom: 9px !important;
+  font-size: 13.5px !important;
+  border-bottom: 1px solid #F7F3EB !important;
+}
+
+.cost-app-scope table tr:hover {
+  background-color: #FFF7ED !important;
+}
