@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { usePOS } from '../../context/POSContext';
 import { Bill } from '../../types';
 import {
@@ -11,6 +11,8 @@ import {
   AlertTriangle,
   Download,
   CreditCard,
+  Calendar,
+  X,
 } from 'lucide-react';
 import { formatBaht, formatThaiDateTime } from '../../utils/formatters';
 import { Modal } from '../common/Modal';
@@ -23,8 +25,20 @@ import { PaymentModal } from '../pos/PaymentModal';
 export const BillsView: React.FC = () => {
   const { bills, settings, voidBill, confirmOrder, setActiveNav, loadArchivedBills, cloudConnected } = usePOS();
 
+  const toLocalDateStr = (d: Date) => {
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  };
+
   const [searchQuery, setSearchQuery] = useState('');
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const dateInputRef = useRef<HTMLInputElement>(null);
   const [statusFilter, setStatusFilter] = useState<'all' | 'open' | 'paid' | 'voided'>('all');
+  const [dateFilter, setDateFilter] = useState<'all' | 'today' | 'yesterday' | 'this_week' | 'date'>('all');
+  const [selectedDate, setSelectedDate] = useState<string>(() => toLocalDateStr(new Date()));
   const [selectedBill, setSelectedBill] = useState<Bill | null>(null);
   const [showPrintModal, setShowPrintModal] = useState<Bill | null>(null);
   const [isLoadingArchive, setIsLoadingArchive] = useState(false);
@@ -79,7 +93,39 @@ export const BillsView: React.FC = () => {
       (bill.tableName && bill.tableName.toLowerCase().includes(q)) ||
       (bill.deliveryInfo?.customerName && bill.deliveryInfo.customerName.toLowerCase().includes(q));
 
-    return matchStatus && matchSearch;
+    let matchDate = true;
+    if (dateFilter !== 'all') {
+      const billDate = new Date(bill.createdAt);
+      if (Number.isNaN(billDate.getTime())) {
+        matchDate = false;
+      } else {
+        const now = new Date();
+        if (dateFilter === 'today') {
+          const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+          const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+          matchDate = billDate >= start && billDate <= end;
+        } else if (dateFilter === 'yesterday') {
+          const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 0, 0, 0, 0);
+          const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 23, 59, 59, 999);
+          matchDate = billDate >= start && billDate <= end;
+        } else if (dateFilter === 'this_week') {
+          const dayOfWeek = now.getDay();
+          const diffToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+          const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - diffToMonday, 0, 0, 0, 0);
+          const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 6, 23, 59, 59, 999);
+          matchDate = billDate >= start && billDate <= end;
+        } else if (dateFilter === 'date' && selectedDate) {
+          const [y, m, d] = selectedDate.split('-').map(Number);
+          if (y && m && d) {
+            const start = new Date(y, m - 1, d, 0, 0, 0, 0);
+            const end = new Date(y, m - 1, d, 23, 59, 59, 999);
+            matchDate = billDate >= start && billDate <= end;
+          }
+        }
+      }
+    }
+
+    return matchStatus && matchSearch && matchDate;
   });
 
   // Export CSV
@@ -167,21 +213,126 @@ export const BillsView: React.FC = () => {
       )}
 
       {/* Filter and Search Bar */}
-      <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-        {/* Search */}
-        <div className="relative flex-1">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="ค้นหาตามเลขที่บิล, โต๊ะ หรือชื่อลูกค้า..."
-            className="w-full pl-10 pr-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs focus:ring-2 focus:ring-amber-500"
-          />
+      <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2 flex-1 min-w-0">
+          {/* Collapsible Search: Magnifying Glass Icon Only -> Expands Input on Click */}
+          {!isSearchOpen ? (
+            <button
+              type="button"
+              onClick={() => {
+                setIsSearchOpen(true);
+                setTimeout(() => searchInputRef.current?.focus(), 0);
+              }}
+              className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:border-amber-400 hover:text-amber-600 dark:hover:text-amber-400 transition cursor-pointer shrink-0 flex items-center justify-center"
+              title="ค้นหาบิล"
+              aria-label="ค้นหาบิล"
+            >
+              <Search className="w-4 h-4" />
+            </button>
+          ) : (
+            <div className="relative flex-1 min-w-[220px] max-w-md">
+              <Search className="w-4 h-4 text-amber-500 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                ref={searchInputRef}
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') {
+                    setSearchQuery('');
+                    setIsSearchOpen(false);
+                  }
+                }}
+                placeholder="ค้นหาตามเลขที่บิล, โต๊ะ หรือชื่อลูกค้า..."
+                className="w-full pl-10 pr-9 py-2 rounded-xl border border-amber-400 dark:border-amber-600 bg-slate-50 dark:bg-slate-800 text-xs focus:outline-none focus:ring-2 focus:ring-amber-500"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchQuery('');
+                  setIsSearchOpen(false);
+                }}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 absolute right-2 top-1/2 -translate-y-1/2 cursor-pointer"
+                title="ปิดช่องค้นหา"
+                aria-label="ปิดช่องค้นหา"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
+          {/* Date Quick Filter Buttons */}
+          <div className="flex items-center gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl text-xs font-semibold flex-wrap">
+            {[
+              { id: 'all', label: 'ทั้งหมด' },
+              { id: 'today', label: 'วันนี้' },
+              { id: 'yesterday', label: 'เมื่อวาน' },
+              { id: 'this_week', label: 'อาทิตย์นี้' },
+            ].map((dTab) => (
+              <button
+                key={dTab.id}
+                type="button"
+                onClick={() => {
+                  const mode = dTab.id as 'all' | 'today' | 'yesterday' | 'this_week';
+                  setDateFilter(mode);
+                  if (mode === 'today') {
+                    setSelectedDate(toLocalDateStr(new Date()));
+                  } else if (mode === 'yesterday') {
+                    const y = new Date();
+                    y.setDate(y.getDate() - 1);
+                    setSelectedDate(toLocalDateStr(y));
+                  }
+                }}
+                className={`px-3 py-1.5 rounded-lg transition cursor-pointer whitespace-nowrap ${
+                  dateFilter === dTab.id
+                    ? 'bg-amber-500 text-slate-950 font-bold shadow-2xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                {dTab.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Calendar Date Picker */}
+          <div
+            onClick={() => {
+              try {
+                (dateInputRef.current as HTMLInputElement & { showPicker?: () => void })?.showPicker?.();
+              } catch {
+                dateInputRef.current?.focus();
+              }
+            }}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-semibold transition cursor-pointer ${
+              dateFilter === 'date'
+                ? 'border-amber-500 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-200 ring-1 ring-amber-400/40'
+                : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:border-amber-400'
+            }`}
+            title="เลือกวันที่จากปฏิทินเพื่อดูบิล"
+          >
+            <Calendar className="w-4 h-4 text-amber-500 shrink-0" />
+            <input
+              ref={dateInputRef}
+              type="date"
+              value={selectedDate}
+              onChange={(e) => {
+                const val = e.target.value;
+                if (val) {
+                  setSelectedDate(val);
+                  setDateFilter('date');
+                } else {
+                  setDateFilter('all');
+                }
+              }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-transparent text-xs font-mono font-semibold text-slate-800 dark:text-slate-100 focus:outline-none cursor-pointer"
+              aria-label="เลือกวันที่จากปฏิทิน"
+            />
+          </div>
         </div>
 
         {/* Status Tabs */}
-        <div className="flex items-center gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl text-xs font-semibold">
+        <div className="flex items-center gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl text-xs font-semibold shrink-0 self-start lg:self-auto">
           {[
             { id: 'all', label: 'ทั้งหมด' },
             { id: 'open', label: 'เปิดอยู่' },
@@ -192,7 +343,7 @@ export const BillsView: React.FC = () => {
               key={tab.id}
               type="button"
               onClick={() => setStatusFilter(tab.id as typeof statusFilter)}
-              className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${
+              className={`px-3 py-1.5 rounded-lg transition cursor-pointer whitespace-nowrap ${
                 statusFilter === tab.id
                   ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-2xs'
                   : 'text-slate-600 dark:text-slate-400'
