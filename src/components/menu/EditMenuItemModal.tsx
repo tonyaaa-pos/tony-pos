@@ -19,6 +19,7 @@ import {
   Link2,
   PlusCircle,
   Lock,
+  RefreshCw,
 } from 'lucide-react';
 import { formatBaht } from '../../utils/formatters';
 import { soundService } from '../../utils/audio';
@@ -26,16 +27,23 @@ import { Modal } from '../common/Modal';
 import { compressImageFile } from '../../utils/imageCompressor';
 import { BilingualNameInput } from '../common/BilingualNameInput';
 import { FoodCostVariantPickerModal } from './FoodCostVariantPickerModal';
+import { translateThaiToEnglishFast } from '../../utils/thaiToEnglishTranslator';
+import { getFriendlyAuthErrorMessage } from '../../services/firebase';
 import {
   getCachedCostBundle,
+  getCachedCostBundleMeta,
+  getLinkedCostAppUid,
+  getEffectiveCostMenuVariants,
   findMatchingCostMenu,
   findMatchingCostVariant,
   getVariantRecipeCost,
   buildVariantsFromCostMenu,
   syncSellingPriceUpdatesToCostBundle,
   fetchRemoteCostManagementStatus,
+  subscribeCostManagementData,
   COST_BUNDLE_UPDATED_EVENT,
   type TonysKitchenMenu,
+  type CostBundleMeta,
 } from '../../services/costSyncService';
 
 interface EditMenuItemModalProps {
@@ -51,7 +59,7 @@ export const EditMenuItemModal: React.FC<EditMenuItemModalProps> = ({
   item,
   onSave,
 }) => {
-  const { categories, updateMenuItem, optionPresets, addOptionPreset } = usePOS();
+  const { categories, updateMenuItem, optionPresets, addOptionPreset, cloudUser, loginCloudWithGoogle } = usePOS();
   const { t, getName } = useLanguage();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -71,6 +79,13 @@ export const EditMenuItemModal: React.FC<EditMenuItemModalProps> = ({
   const [costMenus, setCostMenus] = useState<TonysKitchenMenu[]>(
     () => getCachedCostBundle()?.payload?.menus || []
   );
+  const [costMeta, setCostMeta] = useState<CostBundleMeta>(() => getCachedCostBundleMeta());
+  const [isSyncingCostMenus, setIsSyncingCostMenus] = useState(false);
+  const [isSigningInCostGoogle, setIsSigningInCostGoogle] = useState(false);
+  const [costSyncNotice, setCostSyncNotice] = useState<{
+    type: 'cloud' | 'not_signed_in' | 'not_found' | 'error';
+    text: string;
+  } | null>(null);
 
   // Sync state when item changes or modal opens
   useEffect(() => {
@@ -92,15 +107,17 @@ export const EditMenuItemModal: React.FC<EditMenuItemModalProps> = ({
 
       const latestCostMenus = getCachedCostBundle()?.payload?.menus || [];
       setCostMenus(latestCostMenus);
+      setCostMeta(getCachedCostBundleMeta());
+      setCostSyncNotice(null);
       const autoCostMenu = item.costMenuId
         ? latestCostMenus.find((m) => m.id === item.costMenuId)
         : findMatchingCostMenu(item.name, latestCostMenus, undefined, item.id);
 
       const syncedVariants = variants.map((v) => {
-        if (autoCostMenu && v.costVariantId) {
+        if (autoCostMenu && (v.costVariantId || v.costMenuId === autoCostMenu.id)) {
           const matchedCv = findMatchingCostVariant(
             v.name,
-            autoCostMenu.variants || [],
+            getEffectiveCostMenuVariants(autoCostMenu),
             v.costVariantId,
             v.id,
             item.name
@@ -126,18 +143,6 @@ export const EditMenuItemModal: React.FC<EditMenuItemModalProps> = ({
         optionGroups: item.optionGroups ? JSON.parse(JSON.stringify(item.optionGroups)) : [],
       });
       setStorageError(null);
-
-      let active = true;
-      fetchRemoteCostManagementStatus()
-        .then((res) => {
-          if (active && res.status === 'found' && res.data?.payload?.menus) {
-            setCostMenus(res.data.payload.menus);
-          }
-        })
-        .catch(() => {});
-      return () => {
-        active = false;
-      };
     } else if (!isOpen) {
       setEditingItem(null);
       setStorageError(null);
@@ -145,50 +150,152 @@ export const EditMenuItemModal: React.FC<EditMenuItemModalProps> = ({
     }
   }, [item, isOpen]);
 
+  const reconcileEditingItemWithMenus = (latestMenus: TonysKitchenMenu[], isExternal = true) => {
+    if (latestMenus.length === 0) return;
+    setEditingItem((prev) => {
+      if (!prev || !prev.variants) return prev;
+      const linkedMenu = prev.costMenuId
+        ? latestMenus.find((m) => m.id === prev.costMenuId)
+        : undefined;
+      if (!linkedMenu) return prev;
+      const effVars = getEffectiveCostMenuVariants(linkedMenu);
+      let changed = false;
+      const nextVars = prev.variants.map((v) => {
+        if (!v.costVariantId && v.costMenuId !== linkedMenu.id) return v;
+        const cv = findMatchingCostVariant(
+          v.name,
+          effVars,
+          v.costVariantId,
+          v.id,
+          prev.name
+        );
+        if (!cv) return v;
+        const nextCost = getVariantRecipeCost(cv);
+        const remoteSell = cv.sellingPrice ?? cv.price ?? 0;
+        const nextPrice = isExternal && remoteSell > 0 ? remoteSell : v.price;
+        if (nextCost !== v.cost || nextPrice !== v.price || v.costMenuId !== linkedMenu.id) {
+          changed = true;
+          return {
+            ...v,
+            cost: nextCost,
+            price: nextPrice,
+            costMenuId: linkedMenu.id,
+            costVariantId: cv.id,
+            costVariantName: cv.name || cv.variantName || v.name,
+          };
+        }
+        return v;
+      });
+      if (!changed) return prev;
+      return {
+        ...prev,
+        costMenuName: linkedMenu.name || prev.costMenuName,
+        price: nextVars[0]?.price ?? prev.price,
+        cost: nextVars[0]?.cost ?? prev.cost,
+        variants: nextVars,
+      };
+    });
+  };
+
+  const refreshCachedCostMenus = async () => {
+    setCostMenus(getCachedCostBundle()?.payload?.menus || []);
+    setCostMeta(getCachedCostBundleMeta());
+    setIsSyncingCostMenus(true);
+    try {
+      const res = await fetchRemoteCostManagementStatus();
+      setCostMeta(getCachedCostBundleMeta());
+      if (res.status === 'found' && res.data?.payload?.menus) {
+        const fetchedMenus = res.data.payload.menus;
+        setCostMenus(fetchedMenus);
+        reconcileEditingItemWithMenus(
+          fetchedMenus,
+          res.data.syncedFrom !== 'POS_CostProfitIntegration'
+        );
+        setCostSyncNotice({
+          type: 'cloud',
+          text: `ซิงค์ข้อมูลจริงจาก Cloud (${res.docPath}) แล้ว • ${fetchedMenus.length} เมนู`,
+        });
+      } else if (res.status === 'not_signed_in') {
+        setCostSyncNotice({
+          type: 'not_signed_in',
+          text: `ยังไม่ได้เข้าสู่ระบบ Google Cloud — กำลังแสดงรายการตัวอย่าง (กรุณาล็อกอินเพื่อดึงเมนูจาก UID ${getLinkedCostAppUid()})`,
+        });
+      } else if (res.status === 'permission_denied') {
+        setCostSyncNotice({
+          type: 'error',
+          text: res.error || 'ไม่มีสิทธิ์เข้าถึงข้อมูล Food Cost System บน Cloud',
+        });
+      } else if (res.status === 'not_found') {
+        setCostSyncNotice({
+          type: 'not_found',
+          text: `เชื่อมต่อบัญชี Google แล้ว แต่ยังไม่พบข้อมูลใน Cloud (${res.docPath})`,
+        });
+      }
+    } catch (err: unknown) {
+      setCostSyncNotice({
+        type: 'error',
+        text: err instanceof Error ? err.message : 'ไม่สามารถดึงข้อมูลจาก Food Cost System ได้',
+      });
+    } finally {
+      setIsSyncingCostMenus(false);
+    }
+  };
+
+  const handleSignInCostGoogle = async () => {
+    setIsSigningInCostGoogle(true);
+    setCostSyncNotice(null);
+    try {
+      await loginCloudWithGoogle();
+      soundService.playSuccessTap();
+      await refreshCachedCostMenus();
+    } catch (err: unknown) {
+      setCostSyncNotice({
+        type: 'error',
+        text: getFriendlyAuthErrorMessage(err),
+      });
+    } finally {
+      setIsSigningInCostGoogle(false);
+    }
+  };
+
   // Keep costMenus synced in real time if remote Cost & Profit bundle updates while modal is open
   useEffect(() => {
     if (!isOpen) return;
+    void refreshCachedCostMenus();
+
     const syncFromCache = () => {
       const bundle = getCachedCostBundle();
       const latestMenus = bundle?.payload?.menus || [];
       setCostMenus(latestMenus);
-      setEditingItem((prev) => {
-        if (!prev || !prev.variants || latestMenus.length === 0) return prev;
-        const linkedMenu = prev.costMenuId
-          ? latestMenus.find((m) => m.id === prev.costMenuId)
-          : undefined;
-        if (!linkedMenu || !linkedMenu.variants) return prev;
-        const isExternal = bundle.syncedFrom !== 'POS_CostProfitIntegration';
-        let changed = false;
-        const nextVars = prev.variants.map((v) => {
-          if (!v.costVariantId) return v;
-          const cv = findMatchingCostVariant(
-            v.name,
-            linkedMenu.variants || [],
-            v.costVariantId,
-            v.id,
-            prev.name
-          );
-          if (!cv) return v;
-          const nextCost = getVariantRecipeCost(cv);
-          const remoteSell = cv.sellingPrice ?? cv.price ?? 0;
-          const nextPrice = isExternal && remoteSell > 0 ? remoteSell : v.price;
-          if (nextCost !== v.cost || nextPrice !== v.price) {
-            changed = true;
-            return { ...v, cost: nextCost, price: nextPrice };
-          }
-          return v;
-        });
-        return changed ? { ...prev, variants: nextVars } : prev;
-      });
+      setCostMeta(getCachedCostBundleMeta());
+      reconcileEditingItemWithMenus(
+        latestMenus,
+        bundle?.syncedFrom !== 'POS_CostProfitIntegration'
+      );
     };
     window.addEventListener(COST_BUNDLE_UPDATED_EVENT, syncFromCache);
     window.addEventListener('storage', syncFromCache);
+
+    const unsub = cloudUser
+      ? subscribeCostManagementData((remotePayload) => {
+          const latestMenus = remotePayload?.payload?.menus || [];
+          if (latestMenus.length > 0) {
+            setCostMenus(latestMenus);
+            setCostMeta(getCachedCostBundleMeta());
+            reconcileEditingItemWithMenus(
+              latestMenus,
+              remotePayload.syncedFrom !== 'POS_CostProfitIntegration'
+            );
+          }
+        })
+      : null;
+
     return () => {
+      if (unsub) unsub();
       window.removeEventListener(COST_BUNDLE_UPDATED_EVENT, syncFromCache);
       window.removeEventListener('storage', syncFromCache);
     };
-  }, [isOpen]);
+  }, [isOpen, cloudUser]);
 
   if (!isOpen || !editingItem) return null;
 
@@ -676,11 +783,48 @@ export const EditMenuItemModal: React.FC<EditMenuItemModalProps> = ({
         </div>
 
         {/* Food Cost System (หลักสากล) Menu Link Dropdown */}
-        <div className="p-3 rounded-2xl bg-amber-500/5 dark:bg-slate-800/70 border border-amber-200/80 dark:border-slate-700 space-y-1.5">
-          <label className="flex items-center gap-1.5 text-xs font-bold text-slate-800 dark:text-slate-200">
-            <Calculator className="w-3.5 h-3.5 text-amber-500" />
-            <span>รายการเมนูอาหารที่เชื่อมโยง (Food Cost System)</span>
-          </label>
+        <div className="p-3 rounded-2xl bg-amber-500/5 dark:bg-slate-800/70 border border-amber-200/80 dark:border-slate-700 space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <label className="flex items-center gap-1.5 text-xs font-bold text-slate-800 dark:text-slate-200">
+              <Calculator className="w-3.5 h-3.5 text-amber-500" />
+              <span>รายการเมนูอาหารที่เชื่อมโยง (Food Cost System)</span>
+              <span
+                className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                  costMeta.source === 'cloud'
+                    ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
+                    : 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
+                }`}
+              >
+                {costMeta.source === 'cloud'
+                  ? `Cloud (${costMenus.length} เมนู)`
+                  : 'ตัวอย่างในเครื่อง'}
+              </span>
+            </label>
+
+            <div className="flex items-center gap-1.5">
+              {!cloudUser && (
+                <button
+                  type="button"
+                  onClick={() => void handleSignInCostGoogle()}
+                  disabled={isSigningInCostGoogle}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-600 text-slate-950 text-[11px] font-bold transition cursor-pointer disabled:opacity-60"
+                >
+                  <span>{isSigningInCostGoogle ? 'กำลังเข้าสู่ระบบ...' : 'เข้าสู่ระบบ Google'}</span>
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => void refreshCachedCostMenus()}
+                disabled={isSyncingCostMenus}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-amber-400 text-[11px] font-bold text-slate-700 dark:text-slate-200 transition cursor-pointer disabled:opacity-60"
+                title={`ซิงค์ข้อมูลจาก UID ${getLinkedCostAppUid()}`}
+              >
+                <RefreshCw className={`w-3 h-3 ${isSyncingCostMenus ? 'animate-spin text-amber-500' : ''}`} />
+                <span>ซิงค์ล่าสุด</span>
+              </button>
+            </div>
+          </div>
+
           <select
             value={editingItem.costMenuId || ''}
             onChange={(e) => {
@@ -700,11 +844,19 @@ export const EditMenuItemModal: React.FC<EditMenuItemModalProps> = ({
                     })),
                   };
                 }
+                const nextVariants = buildVariantsFromCostMenu(chosen, prev.variants || []);
+                const translatedEn = translateThaiToEnglishFast(chosen.name);
+                const autoNameEn =
+                  translatedEn && !/[\u0E00-\u0E7F]/.test(translatedEn) ? translatedEn : '';
                 return {
                   ...prev,
+                  name: prev.name?.trim() ? prev.name : chosen.name,
+                  nameEn: prev.nameEn?.trim() ? prev.nameEn : autoNameEn,
                   costMenuId: chosen.id,
                   costMenuName: chosen.name,
-                  variants: buildVariantsFromCostMenu(chosen, prev.variants || []),
+                  price: nextVariants[0]?.price ?? prev.price,
+                  cost: nextVariants[0]?.cost ?? prev.cost,
+                  variants: nextVariants,
                 };
               });
               soundService.playTap();
@@ -712,12 +864,46 @@ export const EditMenuItemModal: React.FC<EditMenuItemModalProps> = ({
             className="w-full px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-bold text-slate-900 dark:text-white focus:ring-2 focus:ring-amber-500"
           >
             <option value="">-- เลือกรายการเมนูอาหาร (เพื่อดึงตัวเลือกและต้นทุนจากแอปคำนวณต้นทุน) --</option>
-            {costMenus.map((cm) => (
-              <option key={cm.id} value={cm.id}>
-                {cm.name} ({cm.variants?.length || 0} ตัวเลือก)
-              </option>
-            ))}
+            {costMenus.map((cm) => {
+              const varCount = cm.variants?.length || 0;
+              return (
+                <option key={cm.id} value={cm.id}>
+                  {cm.name} ({varCount > 0 ? `${varCount} ตัวเลือก` : 'เมนูเดี่ยว'})
+                </option>
+              );
+            })}
           </select>
+
+          {editingItem.costMenuId && (
+            <div className="flex flex-wrap items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-[11px] text-emerald-700 dark:text-emerald-300">
+              <div className="flex items-center gap-1.5 font-bold">
+                <Link2 className="w-3.5 h-3.5 shrink-0" />
+                <span>
+                  เชื่อมโยงกับ: {editingItem.costMenuName || costMenus.find((m) => m.id === editingItem.costMenuId)?.name || editingItem.costMenuId} (
+                  {(editingItem.variants || []).filter((v) => v.costMenuId || v.costVariantId).length} ตัวเลือกผูกสูตร)
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowFoodCostVariantPicker(true)}
+                className="font-bold underline hover:text-emerald-900 dark:hover:text-emerald-100 cursor-pointer"
+              >
+                จัดการตัวเลือกที่เชื่อมโยง
+              </button>
+            </div>
+          )}
+
+          {costSyncNotice && costSyncNotice.type !== 'cloud' && (
+            <div
+              className={`px-2.5 py-1.5 rounded-xl text-[11px] font-medium ${
+                costSyncNotice.type === 'error'
+                  ? 'bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-300'
+                  : 'bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300'
+              }`}
+            >
+              {costSyncNotice.text}
+            </div>
+          )}
         </div>
 
         {/* Options / Variants List Section (Prices belong here) */}

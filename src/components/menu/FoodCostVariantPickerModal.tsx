@@ -3,13 +3,18 @@ import { Calculator, Check, Plus, RefreshCw, AlertCircle, Link2 } from 'lucide-r
 import { Modal } from '../common/Modal';
 import {
   getCachedCostBundle,
+  getCachedCostBundleMeta,
+  getLinkedCostAppUid,
   fetchRemoteCostManagementStatus,
+  subscribeCostManagementData,
   getVariantRecipeCost,
   getVariantSellingPrice,
+  getEffectiveCostMenuVariants,
   COST_BUNDLE_UPDATED_EVENT,
   type TonysKitchenMenu,
   type TonysKitchenVariant,
   type TonysKitchenPayload,
+  type CostBundleMeta,
 } from '../../services/costSyncService';
 import { ItemVariantOption } from '../../types';
 import { formatBaht } from '../../utils/formatters';
@@ -38,6 +43,7 @@ export const FoodCostVariantPickerModal: React.FC<FoodCostVariantPickerModalProp
   onAddCustomVariant,
 }) => {
   const [costBundle, setCostBundle] = useState<TonysKitchenPayload>(() => getCachedCostBundle());
+  const [costMeta, setCostMeta] = useState<CostBundleMeta>(() => getCachedCostBundleMeta());
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshMessage, setRefreshMessage] = useState<string | null>(null);
 
@@ -50,29 +56,47 @@ export const FoodCostVariantPickerModal: React.FC<FoodCostVariantPickerModalProp
   useEffect(() => {
     if (!isOpen) return;
     setCostBundle(getCachedCostBundle());
+    setCostMeta(getCachedCostBundleMeta());
     setRefreshMessage(null);
 
     const handleBundleUpdate = () => {
       setCostBundle(getCachedCostBundle());
+      setCostMeta(getCachedCostBundleMeta());
     };
     window.addEventListener(COST_BUNDLE_UPDATED_EVENT, handleBundleUpdate);
     window.addEventListener('storage', handleBundleUpdate);
 
-    // Refresh silently from Firestore if user is signed in
     let active = true;
+    const unsub = subscribeCostManagementData((remoteData) => {
+      if (!active) return;
+      setCostBundle(remoteData);
+      setCostMeta(getCachedCostBundleMeta());
+    });
+
     (async () => {
       try {
         const res = await fetchRemoteCostManagementStatus();
-        if (active && res.status === 'found' && res.data) {
+        if (!active) return;
+        if (res.status === 'found' && res.data) {
           setCostBundle(res.data);
+          setCostMeta(getCachedCostBundleMeta());
+        } else if (res.status === 'not_signed_in') {
+          setRefreshMessage('ยังไม่ได้เข้าสู่ระบบ Google Cloud — กำลังแสดงข้อมูลตัวอย่างในเครื่อง');
+        } else if (res.status === 'permission_denied') {
+          setRefreshMessage(res.error || 'บัญชีปัจจุบันไม่มีสิทธิ์เข้าถึง Food Cost System');
+        } else if (res.status === 'not_found') {
+          setRefreshMessage(`ยังไม่พบข้อมูล Food Cost บน Cloud (${res.docPath})`);
         }
-      } catch {
-        // Keep cached data silently
+      } catch (err: unknown) {
+        if (active) {
+          setRefreshMessage(err instanceof Error ? err.message : 'ไม่สามารถดึงข้อมูลจาก Cloud ได้');
+        }
       }
     })();
 
     return () => {
       active = false;
+      if (unsub) unsub();
       window.removeEventListener(COST_BUNDLE_UPDATED_EVENT, handleBundleUpdate);
       window.removeEventListener('storage', handleBundleUpdate);
     };
@@ -83,13 +107,16 @@ export const FoodCostVariantPickerModal: React.FC<FoodCostVariantPickerModalProp
     setRefreshMessage(null);
     try {
       const res = await fetchRemoteCostManagementStatus();
+      setCostMeta(getCachedCostBundleMeta());
       if (res.status === 'found' && res.data) {
         setCostBundle(res.data);
-        setRefreshMessage('ดึงข้อมูลต้นทุนล่าสุดจาก Cloud Firestore เรียบร้อยแล้ว');
+        setRefreshMessage(`ซิงค์จาก Cloud (${res.docPath}) เรียบร้อยแล้ว (${res.data.payload?.menus?.length || 0} เมนู)`);
       } else if (res.status === 'not_signed_in') {
-        setRefreshMessage('ใช้ข้อมูลต้นทุนในเครื่อง (เข้าสู่ระบบ Google เพื่อดึงข้อมูลล่าสุดจาก Cloud)');
+        setRefreshMessage('ยังไม่ได้เข้าสู่ระบบ Google จึงไม่สามารถดึงข้อมูลจริงจาก UID ' + getLinkedCostAppUid() + ' ได้');
+      } else if (res.status === 'permission_denied') {
+        setRefreshMessage(res.error || 'บัญชีปัจจุบันไม่มีสิทธิ์เข้าถึงข้อมูลต้นทุน');
       } else {
-        setRefreshMessage('ใช้ข้อมูลต้นทุนล่าสุดที่บันทึกไว้ในระบบแล้ว');
+        setRefreshMessage(`ไม่พบข้อมูลใน Cloud Firestore (${res.docPath}) — กรุณาตรวจสอบว่าแอป Food Cost บันทึกข้อมูลแล้ว`);
       }
       soundService.playTap();
     } catch (err: unknown) {
@@ -138,7 +165,9 @@ export const FoodCostVariantPickerModal: React.FC<FoodCostVariantPickerModalProp
 
   if (!isOpen) return null;
 
-  const variantsForSelectedMenu = activeCostMenu?.variants || [];
+  const variantsForSelectedMenu = activeCostMenu
+    ? getEffectiveCostMenuVariants(activeCostMenu)
+    : [];
 
   return (
     <Modal
@@ -178,13 +207,22 @@ export const FoodCostVariantPickerModal: React.FC<FoodCostVariantPickerModalProp
               <Calculator className="w-4 h-4" />
             </div>
             <div className="min-w-0">
-              <div className="text-xs font-black text-slate-900 dark:text-white truncate">
-                เชื่อมข้อมูลต้นทุนอัตโนมัติ (Food Cost System)
+              <div className="text-xs font-black text-slate-900 dark:text-white truncate flex items-center gap-2">
+                <span>เชื่อมข้อมูลต้นทุนอัตโนมัติ (Food Cost System)</span>
+                <span
+                  className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                    costMeta.source === 'cloud'
+                      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
+                      : 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
+                  }`}
+                >
+                  {costMeta.source === 'cloud' ? 'Cloud Live' : 'ข้อมูลตัวอย่าง'}
+                </span>
               </div>
               <div className="text-[11px] text-slate-600 dark:text-slate-300 truncate">
                 {activeCostMenu
                   ? `แสดงเฉพาะตัวเลือกของเมนู: ${activeCostMenu.name}`
-                  : 'กรุณาเลือกรายการเมนูอาหารเพื่อกรองเฉพาะตัวเลือกของเมนูนั้น'}
+                  : `UID: ${costMeta.uid || getLinkedCostAppUid()} • กรุณาเลือกรายการเมนูอาหาร`}
               </div>
             </div>
           </div>
@@ -224,11 +262,14 @@ export const FoodCostVariantPickerModal: React.FC<FoodCostVariantPickerModalProp
             className="w-full px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-white focus:ring-2 focus:ring-amber-500"
           >
             <option value="">-- เลือกรายการเมนูอาหาร (จากแอปคำนวณต้นทุน) --</option>
-            {costMenus.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.name} ({m.variants?.length || 0} ตัวเลือก)
-              </option>
-            ))}
+            {costMenus.map((m) => {
+              const varCount = m.variants?.length || 0;
+              return (
+                <option key={m.id} value={m.id}>
+                  {m.name} ({varCount > 0 ? `${varCount} ตัวเลือก` : 'เมนูเดี่ยว'})
+                </option>
+              );
+            })}
           </select>
           {activeCostMenu && variantsForSelectedMenu.length > 0 && onPickAllVariants && (
             <div className="mt-2 flex justify-end">

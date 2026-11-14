@@ -44,6 +44,9 @@ import {
   getCloudUser,
   db,
   isFirebaseConfigured,
+  isFirestoreWritePaused,
+  isQuotaExceededError,
+  markFirestoreWriteQuotaExceeded,
 } from '../services/firebase';
 import {
   saveShopBundle,
@@ -84,6 +87,7 @@ import {
   findMatchingCostVariant,
   getVariantRecipeCost,
   getVariantSellingPrice,
+  getEffectiveCostMenuVariants,
   calculateFixedMonthlyOpEx,
   extractCostTimestampMs,
   getCachedCostBundle,
@@ -1036,6 +1040,23 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Online / Offline tracking & Auto-Resync when back online
   const PENDING_OFFLINE_SYNC_KEY = 'kind_pos_pending_offline_sync_v1';
+  const offlineResyncInFlightRef = useRef(false);
+
+  useEffect(() => {
+    const quotaNotice = 'ใช้งานโควตาเขียนข้อมูล Cloud ประจำวันเกินกำหนดชั่วคราว (ระบบบันทึกและทำงานในเครื่องได้ตามปกติ โควตาจะรีเซ็ตในวันถัดไป)';
+    if (isFirestoreWritePaused()) {
+      setCloudSyncStatus('pending');
+      setCloudErrorMessage(quotaNotice);
+    }
+    const handleQuotaPaused = () => {
+      setCloudSyncStatus('pending');
+      setCloudErrorMessage(quotaNotice);
+    };
+    window.addEventListener('kind-firestore-quota-paused', handleQuotaPaused);
+    return () => {
+      window.removeEventListener('kind-firestore-quota-paused', handleQuotaPaused);
+    };
+  }, []);
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -1077,34 +1098,46 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     users,
   ]);
 
-  // Auto-sync queued offline changes to Cloud Firestore when internet is restored
+  // Auto-sync queued offline changes to Cloud Firestore when internet is restored (single-flight; never restarts on entity churn)
   useEffect(() => {
     if (!isOnline || !cloudUser || !isFirebaseConfigured() || !db) return;
+    if (isFirestoreWritePaused() || offlineResyncInFlightRef.current) return;
 
-    const hasPending = localStorage.getItem(PENDING_OFFLINE_SYNC_KEY) === 'true';
+    let hasPending = false;
+    try {
+      hasPending = localStorage.getItem(PENDING_OFFLINE_SYNC_KEY) === 'true';
+    } catch {}
     if (!hasPending) return;
 
     let cancelled = false;
+    offlineResyncInFlightRef.current = true;
     setCloudSyncStatus('saving');
     setCloudErrorMessage(null);
 
     uploadFullLocalDataToCloud({
-      menuItems,
-      categories,
-      tables,
-      zones,
-      optionPresets,
-      members,
-      bills,
-      users,
-      shift: currentShift,
-      notifications,
-      settings,
-      qrImages,
+      menuItems: menuItemsRef.current,
+      categories: categoriesRef.current,
+      tables: tablesRef.current,
+      zones: zonesRef.current,
+      optionPresets: optionPresetsRef.current,
+      members: membersRef.current,
+      bills: billsRef.current,
+      users: usersRef.current,
+      shift: shiftRef.current,
+      notifications: notificationsRef.current,
+      settings: settingsRef.current,
+      qrImages: qrImagesRef.current,
     })
       .then(() => {
         if (cancelled) return;
-        localStorage.removeItem(PENDING_OFFLINE_SYNC_KEY);
+        if (isFirestoreWritePaused()) {
+          setCloudSyncStatus('pending');
+          setCloudErrorMessage('ใช้งานโควตาเขียนข้อมูล Cloud ประจำวันเกินกำหนดชั่วคราว (ข้อมูลบันทึกในเครื่องไว้แล้ว)');
+          return;
+        }
+        try {
+          localStorage.removeItem(PENDING_OFFLINE_SYNC_KEY);
+        } catch {}
         setCloudSyncStatus('saved');
         setTimeout(() => {
           if (!cancelled) setCloudSyncStatus('idle');
@@ -1112,29 +1145,21 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       })
       .catch((err) => {
         if (cancelled) return;
+        if (isQuotaExceededError(err)) {
+          markFirestoreWriteQuotaExceeded();
+          setCloudErrorMessage('ใช้งานโควตาเขียนข้อมูล Cloud ประจำวันเกินกำหนดชั่วคราว (ข้อมูลบันทึกในเครื่องไว้แล้ว)');
+        }
         console.warn('[Auto-Resync Offline Data Error]:', err);
         setCloudSyncStatus('pending');
+      })
+      .finally(() => {
+        offlineResyncInFlightRef.current = false;
       });
 
     return () => {
       cancelled = true;
     };
-  }, [
-    isOnline,
-    cloudUser,
-    menuItems,
-    categories,
-    tables,
-    zones,
-    optionPresets,
-    members,
-    bills,
-    users,
-    currentShift,
-    notifications,
-    settings,
-    qrImages,
-  ]);
+  }, [isOnline, cloudUser]);
 
   // Firebase Auth state listener
   useEffect(() => {
@@ -1202,11 +1227,12 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           posItem.costMenuName !== matchedCostMenu.name;
         let newBaseCost = posItem.cost;
 
-        if (posItem.variants && posItem.variants.length > 0 && matchedCostMenu.variants) {
+        const effectiveCostVariants = getEffectiveCostMenuVariants(matchedCostMenu);
+        if (posItem.variants && posItem.variants.length > 0 && effectiveCostVariants.length > 0) {
           const updatedVariants = posItem.variants.map((posVar) => {
             const matchedCv = findMatchingCostVariant(
               posVar.name,
-              matchedCostMenu.variants || [],
+              effectiveCostVariants,
               posVar.costVariantId,
               posVar.id,
               posItem.name
@@ -1218,14 +1244,15 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               matchedCv.recipeCost !== undefined ||
               matchedCv.foodCostPerUnit !== undefined ||
               matchedCv.calculatedCost !== undefined ||
-              matchedCv.cost !== undefined;
+              matchedCv.cost !== undefined ||
+              recipeCost > 0;
             const varCost = hasExplicitCost ? recipeCost : posVar.cost;
 
             const remoteSellPrice = getVariantSellingPrice(matchedCv);
             const prevMatchedCv = prevCostMenu
               ? findMatchingCostVariant(
                   posVar.name,
-                  prevCostMenu.variants || [],
+                  getEffectiveCostMenuVariants(prevCostMenu),
                   matchedCv.id,
                   posVar.id,
                   posItem.name
@@ -1327,19 +1354,12 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if ((!remoteItems || remoteItems.length === 0) && removedIds.length === 0) return;
         const merged = mergeEntitiesByLatest(menuItemsRef.current, remoteItems, removedIds);
         if (latestCostPayloadRef.current) {
-          const { nextItems, changedItems } = reconcileMenuItemsWithCostPayload(
+          const { nextItems } = reconcileMenuItemsWithCostPayload(
             merged,
             latestCostPayloadRef.current,
             prevCostPayloadRef.current
           );
           commitMenuItems(nextItems);
-          if (changedItems.length > 0) {
-            changedItems.forEach((item) => {
-              saveMenuItemRemote(item).catch((err) =>
-                console.warn('[MenuItems Cost Reconcile saveMenuItemRemote error]:', err)
-              );
-            });
-          }
           return;
         }
         commitMenuItems(merged);
@@ -1521,11 +1541,6 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
         if (changedItems.length > 0) {
           commitMenuItems(nextItems);
-          changedItems.forEach((item) => {
-            saveMenuItemRemote(item).catch((err) =>
-              console.warn('[Auto Cost Sync saveMenuItemRemote error]:', err)
-            );
-          });
         }
       } catch (err) {
         console.warn('[Auto Cost Sync Error]:', err);
@@ -1609,6 +1624,12 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return 'saved';
       }
 
+      if (isFirestoreWritePaused()) {
+        setCloudErrorMessage('ใช้งานโควตาเขียนข้อมูล Cloud ประจำวันเกินกำหนดชั่วคราว (ข้อมูลบันทึกในเครื่องไว้แล้ว)');
+        setCloudSyncStatus('pending');
+        return 'pending';
+      }
+
       // (ค) เรียก saveShopBundle แล้วรอผลสูงสุด 8 วินาที
       setCloudSyncStatus('saving');
       setCloudErrorMessage(null);
@@ -1630,12 +1651,18 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
         const raceResult = await Promise.race([savePromise, timeoutPromise]);
 
+        if (isFirestoreWritePaused()) {
+          setCloudErrorMessage('ใช้งานโควตาเขียนข้อมูล Cloud ประจำวันเกินกำหนดชั่วคราว (ข้อมูลบันทึกในเครื่องไว้แล้ว)');
+          setCloudSyncStatus('pending');
+          return 'pending';
+        }
+
         if (raceResult === 'done') {
           setCloudSyncStatus('saved');
           setTimeout(() => setCloudSyncStatus('idle'), 3000);
           return 'saved';
         } else {
-          // Exceeded 8s or offline -> pending in persistent local cache
+          // Exceeded 8s or offline -> pending in local cache
           setCloudSyncStatus('pending');
 
           // Follow up with waitForPendingWrites
@@ -1652,6 +1679,12 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
       } catch (err: any) {
         console.error('[saveShopData error]:', err);
+        if (isQuotaExceededError(err)) {
+          markFirestoreWriteQuotaExceeded();
+          setCloudErrorMessage('ใช้งานโควตาเขียนข้อมูล Cloud ประจำวันเกินกำหนดชั่วคราว (ข้อมูลบันทึกในเครื่องไว้แล้ว)');
+          setCloudSyncStatus('pending');
+          return 'pending';
+        }
         const errMsg = err?.message || 'เกิดข้อผิดพลาดในการบันทึกข้อมูลขึ้น Cloud';
         setCloudErrorMessage(errMsg);
         setCloudSyncStatus('error');
@@ -1752,20 +1785,25 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         commitQrImages(remote.qrImages, true);
       } else if (choice === 'use_local') {
         if (db) {
-          await uploadFullLocalDataToCloud({
-            menuItems: menuItemsRef.current,
-            categories: categoriesRef.current,
-            tables: tablesRef.current,
-            zones: zonesRef.current,
-            optionPresets: optionPresetsRef.current,
-            members: membersRef.current,
-            bills: billsRef.current,
-            users: usersRef.current,
-            shift: shiftRef.current,
-            notifications: notificationsRef.current,
-            settings: settingsRef.current,
-            qrImages: qrImagesRef.current,
-          });
+          if (isFirestoreWritePaused()) {
+            setCloudSyncStatus('pending');
+            setCloudErrorMessage('ใช้งานโควตาเขียนข้อมูล Cloud ประจำวันเกินกำหนดชั่วคราว (ข้อมูลบันทึกในเครื่องไว้แล้ว โควตาจะรีเซ็ตในวันถัดไป)');
+          } else {
+            await uploadFullLocalDataToCloud({
+              menuItems: menuItemsRef.current,
+              categories: categoriesRef.current,
+              tables: tablesRef.current,
+              zones: zonesRef.current,
+              optionPresets: optionPresetsRef.current,
+              members: membersRef.current,
+              bills: billsRef.current,
+              users: usersRef.current,
+              shift: shiftRef.current,
+              notifications: notificationsRef.current,
+              settings: settingsRef.current,
+              qrImages: qrImagesRef.current,
+            });
+          }
         }
       }
       setInitialSyncPrompt(null);

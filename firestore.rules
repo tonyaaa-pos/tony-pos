@@ -11,8 +11,15 @@ service cloud.firestore {
         && request.auth.token.email_verified == true;
     }
 
-    // Shared Cost Management real-time sync collection for linked Cost App UID
-    match /users/WBDSoJjNMKOjsCs5n33dMGhdWzu1/costManagement/{docId} {
+    // Shared Cost Management & Food Cost System real-time sync for linked Cost App UID (root doc & all subcollections)
+    match /users/WBDSoJjNMKOjsCs5n33dMGhdWzu1 {
+      allow read, write: if isSignedIn() && (
+        request.auth.uid == 'WBDSoJjNMKOjsCs5n33dMGhdWzu1' ||
+        isVerifiedOwnerEmail()
+      );
+    }
+
+    match /users/WBDSoJjNMKOjsCs5n33dMGhdWzu1/{document=**} {
       allow read, write: if isSignedIn() && (
         request.auth.uid == 'WBDSoJjNMKOjsCs5n33dMGhdWzu1' ||
         isVerifiedOwnerEmail()

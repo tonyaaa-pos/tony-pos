@@ -192,6 +192,8 @@ export const CostProfitSyncModal: React.FC<CostProfitSyncModalProps> = ({
             type: 'needs_auth',
             message: 'กรุณาเข้าสู่ระบบด้วย Google ก่อนบันทึกข้อมูลขึ้น Cloud Firestore',
           });
+        } else if (res.reason === 'quota_exceeded') {
+          setErrorMsg('ใช้งานโควตาการเขียนข้อมูลรายวันของ Firestore เกินกำหนดชั่วคราว (ข้อมูลยังถูกบันทึกและใช้งานในเครื่องได้ตามปกติ โควตาจะรีเซ็ตในวันถัดไป)');
         } else {
           setErrorMsg('ระบบ Firebase Firestore ยังไม่ได้ตั้งค่าในโปรเจกต์');
         }
@@ -225,6 +227,10 @@ export const CostProfitSyncModal: React.FC<CostProfitSyncModalProps> = ({
           type: 'needs_auth',
           message: 'ยังไม่ได้เข้าสู่ระบบด้วย Google จึงไม่สามารถอ่านข้อมูลส่วนตัวจาก Firestore ได้ (กฎความปลอดภัยอนุญาตเฉพาะเจ้าของบัญชี)',
         });
+        return;
+      }
+      if (result.status === 'permission_denied' || result.status === 'error') {
+        setErrorMsg(result.error || 'ไม่สามารถเข้าถึงข้อมูลใน Cloud Firestore ได้');
         return;
       }
       if (result.status === 'not_found' || !result.data) {

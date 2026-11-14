@@ -15,7 +15,28 @@ import {
   waitForPendingWrites,
   type Unsubscribe,
 } from 'firebase/firestore';
-import { db, isFirebaseConfigured, getCloudUser } from './firebase';
+import {
+  db,
+  isFirebaseConfigured,
+  getCloudUser,
+  isQuotaExceededError,
+  isFirestoreWritePaused,
+  markFirestoreWriteQuotaExceeded,
+} from './firebase';
+
+async function safeWrite(op: () => Promise<void>): Promise<void> {
+  if (isFirestoreWritePaused()) return;
+  try {
+    await op();
+  } catch (err) {
+    if (isQuotaExceededError(err)) {
+      markFirestoreWriteQuotaExceeded();
+      console.warn('[Firestore Quota] Write paused temporarily due to daily free quota limit.');
+      return;
+    }
+    throw err;
+  }
+}
 import type {
   ShopSettings,
   PaymentQrImage,
@@ -221,13 +242,14 @@ export async function saveShopBundle(
   bundle: ShopBundle,
   onWarning?: (msg: string) => void
 ): Promise<void> {
-  if (!db || !getCloudUser()) return;
+  if (!db || !getCloudUser() || isFirestoreWritePaused()) return;
+  const firestoreDb = db;
 
   const deviceId = getDeviceId();
-  const batch = writeBatch(db);
+  const batch = writeBatch(firestoreDb);
 
   // Settings
-  const settingsRef = doc(db, 'users', (getCloudUser()?.uid || '_'), 'settings', 'shop');
+  const settingsRef = doc(firestoreDb, 'users', (getCloudUser()?.uid || '_'), 'settings', 'shop');
   const nowMs = bundle.settings.updatedAtMs || Date.now();
   batch.set(
     settingsRef,
@@ -249,7 +271,7 @@ export async function saveShopBundle(
       const checkedLogo = await ensureImageUnderLimit(logoData, 'โลโก้ร้าน', onWarning);
       logoData = checkedLogo ?? '';
     }
-    const logoRef = doc(db, 'users', (getCloudUser()?.uid || '_'), 'media', 'logo');
+    const logoRef = doc(firestoreDb, 'users', (getCloudUser()?.uid || '_'), 'media', 'logo');
     batch.set(
       logoRef,
       {
@@ -262,7 +284,7 @@ export async function saveShopBundle(
   }
 
   // QR Images diff
-  const qrColRef = collection(db, 'users', (getCloudUser()?.uid || '_'), 'qrImages');
+  const qrColRef = collection(firestoreDb, 'users', (getCloudUser()?.uid || '_'), 'qrImages');
   try {
     const existingQrsSnap = await getDocs(qrColRef);
     const localQrIds = new Set(bundle.qrImages.map((q) => q.id));
@@ -282,7 +304,7 @@ export async function saveShopBundle(
       if (checkedImg === null) continue;
       imgData = checkedImg;
     }
-    const qrDocRef = doc(db, 'users', (getCloudUser()?.uid || '_'), 'qrImages', qr.id);
+    const qrDocRef = doc(firestoreDb, 'users', (getCloudUser()?.uid || '_'), 'qrImages', qr.id);
     batch.set(
       qrDocRef,
       {
@@ -297,7 +319,7 @@ export async function saveShopBundle(
     );
   }
 
-  await batch.commit();
+  await safeWrite(() => batch.commit());
 }
 
 export async function fetchRemoteShopBundle(): Promise<RemoteShopData | null> {
@@ -402,7 +424,7 @@ export function subscribeShop(
 // ==========================================
 
 export async function saveMenuItemRemote(item: MenuItem): Promise<void> {
-  if (!db || !getCloudUser()) return;
+  if (!db || !getCloudUser() || isFirestoreWritePaused()) return;
   let image = item.image || '';
   if (image && image.startsWith('data:')) {
     const checked = await ensureImageUnderLimit(image, item.name);
@@ -411,47 +433,88 @@ export async function saveMenuItemRemote(item: MenuItem): Promise<void> {
 
   const nowMs = item.updatedAtMs || Date.now();
   const ref = doc(db, 'users', (getCloudUser()?.uid || '_'), 'menuItems', item.id);
-  await setDoc(
-    ref,
-    sanitizeForFirestore({
-      ...item,
-      image,
-      updatedAtMs: nowMs,
-      clientUpdatedAt: nowMs,
-      updatedAt: serverTimestamp(),
-      updatedBy: getDeviceId(),
-    }),
-    { merge: true }
+  await safeWrite(() =>
+    setDoc(
+      ref,
+      sanitizeForFirestore({
+        ...item,
+        image,
+        updatedAtMs: nowMs,
+        clientUpdatedAt: nowMs,
+        updatedAt: serverTimestamp(),
+        updatedBy: getDeviceId(),
+      }),
+      { merge: true }
+    )
   );
 }
 
+export async function saveMenuItemsBatchRemote(items: MenuItem[]): Promise<void> {
+  if (!db || !getCloudUser() || items.length === 0 || isFirestoreWritePaused()) return;
+  const firestoreDb = db;
+  const uid = getCloudUser()?.uid || '_';
+  const deviceId = getDeviceId();
+
+  const prepared: Array<{ ref: ReturnType<typeof doc>; data: Record<string, unknown> }> = [];
+  for (const item of items) {
+    if (isFirestoreWritePaused()) return;
+    let image = item.image || '';
+    if (image && image.startsWith('data:')) {
+      const checked = await ensureImageUnderLimit(image, item.name);
+      image = checked || '';
+    }
+    const nowMs = item.updatedAtMs || Date.now();
+    prepared.push({
+      ref: doc(firestoreDb, 'users', uid, 'menuItems', item.id),
+      data: sanitizeForFirestore({
+        ...item,
+        image,
+        updatedAtMs: nowMs,
+        clientUpdatedAt: nowMs,
+        updatedAt: serverTimestamp(),
+        updatedBy: deviceId,
+      }) as unknown as Record<string, unknown>,
+    });
+  }
+
+  for (let i = 0; i < prepared.length; i += 400) {
+    if (isFirestoreWritePaused()) return;
+    const chunk = prepared.slice(i, i + 400);
+    const batch = writeBatch(firestoreDb);
+    chunk.forEach((op) => batch.set(op.ref, op.data, { merge: true }));
+    await safeWrite(() => batch.commit());
+  }
+}
+
 export async function deleteMenuItemRemote(id: string): Promise<void> {
-  if (!db || !getCloudUser()) return;
+  if (!db || !getCloudUser() || isFirestoreWritePaused()) return;
   const ref = doc(db, 'users', (getCloudUser()?.uid || '_'), 'menuItems', id);
-  await deleteDoc(ref);
+  await safeWrite(() => deleteDoc(ref));
 }
 
 export async function saveCategoryRemote(category: MenuCategory): Promise<void> {
-  if (!db || !getCloudUser()) return;
+  if (!db || !getCloudUser() || isFirestoreWritePaused()) return;
   const nowMs = category.updatedAtMs || Date.now();
   const ref = doc(db, 'users', (getCloudUser()?.uid || '_'), 'categories', category.id);
-  await setDoc(
-    ref,
-    sanitizeForFirestore({
-      ...category,
-      updatedAtMs: nowMs,
-      clientUpdatedAt: nowMs,
-      updatedAt: serverTimestamp(),
-      updatedBy: getDeviceId(),
-    }),
-    { merge: true }
+  await safeWrite(() =>
+    setDoc(
+      ref,
+      sanitizeForFirestore({
+        ...category,
+        updatedAtMs: nowMs,
+        clientUpdatedAt: nowMs,
+        updatedAt: serverTimestamp(),
+        updatedBy: getDeviceId(),
+      }),
+      { merge: true }
+    )
   );
 }
 
 export async function deleteCategoryRemote(id: string): Promise<void> {
-  if (!db || !getCloudUser()) return;
+  if (!db || !getCloudUser() || isFirestoreWritePaused()) return;
   const ref = doc(db, 'users', (getCloudUser()?.uid || '_'), 'categories', id);
-  await deleteDoc(ref);
+  await safeWrite(() => deleteDoc(ref));
 }
 
 // ==========================================
@@ -459,56 +522,60 @@ export async function deleteCategoryRemote(id: string): Promise<void> {
 // ==========================================
 
 export async function saveTableRemote(table: Table): Promise<void> {
-  if (!db || !getCloudUser()) return;
+  if (!db || !getCloudUser() || isFirestoreWritePaused()) return;
   const ref = doc(db, 'users', (getCloudUser()?.uid || '_'), 'tables', table.id);
   const nowMs = table.updatedAtMs || Date.now();
   const isAvailable = table.status === 'available';
   const isReserved = table.status === 'reserved';
 
-  await setDoc(
-    ref,
-    sanitizeForFirestore({
-      ...table,
-      currentBillId: isAvailable || isReserved ? null : (table.currentBillId ?? null),
-      seatedAt: isAvailable || isReserved ? null : (table.seatedAt ?? null),
-      guestCount: isAvailable || isReserved ? null : (table.guestCount ?? null),
-      reservation: isAvailable ? null : (table.reservation ?? null),
-      updatedAtMs: nowMs,
-      clientUpdatedAt: nowMs,
-      updatedAt: serverTimestamp(),
-      updatedBy: getDeviceId(),
-    }),
-    { merge: true }
+  await safeWrite(() =>
+    setDoc(
+      ref,
+      sanitizeForFirestore({
+        ...table,
+        currentBillId: isAvailable || isReserved ? null : (table.currentBillId ?? null),
+        seatedAt: isAvailable || isReserved ? null : (table.seatedAt ?? null),
+        guestCount: isAvailable || isReserved ? null : (table.guestCount ?? null),
+        reservation: isAvailable ? null : (table.reservation ?? null),
+        updatedAtMs: nowMs,
+        clientUpdatedAt: nowMs,
+        updatedAt: serverTimestamp(),
+        updatedBy: getDeviceId(),
+      }),
+      { merge: true }
+    )
   );
 }
 
 export async function deleteTableRemote(id: string): Promise<void> {
-  if (!db || !getCloudUser()) return;
+  if (!db || !getCloudUser() || isFirestoreWritePaused()) return;
   const ref = doc(db, 'users', (getCloudUser()?.uid || '_'), 'tables', id);
-  await deleteDoc(ref);
+  await safeWrite(() => deleteDoc(ref));
 }
 
 export async function saveZoneRemote(zone: TableZoneConfig): Promise<void> {
-  if (!db || !getCloudUser()) return;
+  if (!db || !getCloudUser() || isFirestoreWritePaused()) return;
   const nowMs = zone.updatedAtMs || Date.now();
   const ref = doc(db, 'users', (getCloudUser()?.uid || '_'), 'zones', zone.id);
-  await setDoc(
-    ref,
-    sanitizeForFirestore({
-      ...zone,
-      updatedAtMs: nowMs,
-      clientUpdatedAt: nowMs,
-      updatedAt: serverTimestamp(),
-      updatedBy: getDeviceId(),
-    }),
-    { merge: true }
+  await safeWrite(() =>
+    setDoc(
+      ref,
+      sanitizeForFirestore({
+        ...zone,
+        updatedAtMs: nowMs,
+        clientUpdatedAt: nowMs,
+        updatedAt: serverTimestamp(),
+        updatedBy: getDeviceId(),
+      }),
+      { merge: true }
+    )
   );
 }
 
 export async function deleteZoneRemote(id: string): Promise<void> {
-  if (!db || !getCloudUser()) return;
+  if (!db || !getCloudUser() || isFirestoreWritePaused()) return;
   const ref = doc(db, 'users', (getCloudUser()?.uid || '_'), 'zones', id);
-  await deleteDoc(ref);
+  await safeWrite(() => deleteDoc(ref));
 }
 
 // ==========================================
@@ -516,42 +583,46 @@ export async function deleteZoneRemote(id: string): Promise<void> {
 // ==========================================
 
 export async function saveOptionPresetRemote(preset: OptionGroup): Promise<void> {
-  if (!db || !getCloudUser()) return;
+  if (!db || !getCloudUser() || isFirestoreWritePaused()) return;
   const nowMs = preset.updatedAtMs || Date.now();
   const ref = doc(db, 'users', (getCloudUser()?.uid || '_'), 'optionPresets', preset.id);
-  await setDoc(
-    ref,
-    sanitizeForFirestore({
-      ...preset,
-      updatedAtMs: nowMs,
-      clientUpdatedAt: nowMs,
-      updatedAt: serverTimestamp(),
-      updatedBy: getDeviceId(),
-    }),
-    { merge: true }
+  await safeWrite(() =>
+    setDoc(
+      ref,
+      sanitizeForFirestore({
+        ...preset,
+        updatedAtMs: nowMs,
+        clientUpdatedAt: nowMs,
+        updatedAt: serverTimestamp(),
+        updatedBy: getDeviceId(),
+      }),
+      { merge: true }
+    )
   );
 }
 
 export async function deleteOptionPresetRemote(id: string): Promise<void> {
-  if (!db || !getCloudUser()) return;
+  if (!db || !getCloudUser() || isFirestoreWritePaused()) return;
   const ref = doc(db, 'users', (getCloudUser()?.uid || '_'), 'optionPresets', id);
-  await deleteDoc(ref);
+  await safeWrite(() => deleteDoc(ref));
 }
 
 export async function saveMemberRemote(member: Member): Promise<void> {
-  if (!db || !getCloudUser()) return;
+  if (!db || !getCloudUser() || isFirestoreWritePaused()) return;
   const nowMs = member.updatedAtMs || Date.now();
   const ref = doc(db, 'users', (getCloudUser()?.uid || '_'), 'members', member.id);
-  await setDoc(
-    ref,
-    sanitizeForFirestore({
-      ...member,
-      updatedAtMs: nowMs,
-      clientUpdatedAt: nowMs,
-      updatedAt: serverTimestamp(),
-      updatedBy: getDeviceId(),
-    }),
-    { merge: true }
+  await safeWrite(() =>
+    setDoc(
+      ref,
+      sanitizeForFirestore({
+        ...member,
+        updatedAtMs: nowMs,
+        clientUpdatedAt: nowMs,
+        updatedAt: serverTimestamp(),
+        updatedBy: getDeviceId(),
+      }),
+      { merge: true }
+    )
   );
 }
 
@@ -560,20 +631,22 @@ export async function saveMemberRemote(member: Member): Promise<void> {
 // ==========================================
 
 export async function saveBillRemote(bill: Bill): Promise<void> {
-  if (!db || !getCloudUser()) return;
+  if (!db || !getCloudUser() || isFirestoreWritePaused()) return;
   const nowMs = bill.updatedAtMs || Date.now();
   const ref = doc(db, 'users', (getCloudUser()?.uid || '_'), 'bills', bill.id);
-  await setDoc(
-    ref,
-    sanitizeForFirestore({
-      ...bill,
-      note: bill.note ?? null,
-      updatedAtMs: nowMs,
-      clientUpdatedAt: nowMs,
-      updatedAt: serverTimestamp(),
-      updatedBy: getDeviceId(),
-    }),
-    { merge: true }
+  await safeWrite(() =>
+    setDoc(
+      ref,
+      sanitizeForFirestore({
+        ...bill,
+        note: bill.note ?? null,
+        updatedAtMs: nowMs,
+        clientUpdatedAt: nowMs,
+        updatedAt: serverTimestamp(),
+        updatedBy: getDeviceId(),
+      }),
+      { merge: true }
+    )
   );
 }
 
@@ -588,15 +661,16 @@ export async function atomicPayBillAndReleaseTable(params: {
   voidEmptyBills?: Bill[];
   memberUpdate?: { id: string; points: number; totalSpent: number };
 }): Promise<void> {
-  if (!db || !getCloudUser()) return;
+  if (!db || !getCloudUser() || isFirestoreWritePaused()) return;
+  const firestoreDb = db;
 
   const uid = getCloudUser()?.uid || '_';
-  const batch = writeBatch(db);
+  const batch = writeBatch(firestoreDb);
   const deviceId = getDeviceId();
   const nowMs = params.bill.updatedAtMs || Date.now();
 
   // 1. Update Bill to paid
-  const billRef = doc(db, 'users', uid, 'bills', params.bill.id);
+  const billRef = doc(firestoreDb, 'users', uid, 'bills', params.bill.id);
   batch.set(
     billRef,
     sanitizeForFirestore({
@@ -613,7 +687,7 @@ export async function atomicPayBillAndReleaseTable(params: {
   // 1b. Void any orphan empty open bills left on the released table
   if (params.voidEmptyBills && params.voidEmptyBills.length > 0) {
     for (const emptyBill of params.voidEmptyBills) {
-      const emptyBillRef = doc(db, 'users', uid, 'bills', emptyBill.id);
+      const emptyBillRef = doc(firestoreDb, 'users', uid, 'bills', emptyBill.id);
       batch.set(
         emptyBillRef,
         sanitizeForFirestore({
@@ -631,7 +705,7 @@ export async function atomicPayBillAndReleaseTable(params: {
 
   // 2. Update Table status using merge set (never batch.update so newly created/demo docs never fail NOT_FOUND)
   if (params.tableId) {
-    const tableRef = doc(db, 'users', uid, 'tables', params.tableId);
+    const tableRef = doc(firestoreDb, 'users', uid, 'tables', params.tableId);
     if (params.isTableReleased) {
       batch.set(
         tableRef,
@@ -668,7 +742,7 @@ export async function atomicPayBillAndReleaseTable(params: {
 
   // 3. Update Member points & total spent if applicable
   if (params.memberUpdate) {
-    const memberRef = doc(db, 'users', uid, 'members', params.memberUpdate.id);
+    const memberRef = doc(firestoreDb, 'users', uid, 'members', params.memberUpdate.id);
     batch.set(
       memberRef,
       {
@@ -684,7 +758,7 @@ export async function atomicPayBillAndReleaseTable(params: {
     );
   }
 
-  await batch.commit();
+  await safeWrite(() => batch.commit());
 }
 
 /**
@@ -697,14 +771,15 @@ export async function atomicVoidBillAndReleaseTable(params: {
   nextTableBillId?: string;
   voidEmptyBills?: Bill[];
 }): Promise<void> {
-  if (!db || !getCloudUser()) return;
+  if (!db || !getCloudUser() || isFirestoreWritePaused()) return;
+  const firestoreDb = db;
 
   const uid = getCloudUser()?.uid || '_';
-  const batch = writeBatch(db);
+  const batch = writeBatch(firestoreDb);
   const deviceId = getDeviceId();
   const nowMs = params.bill.updatedAtMs || Date.now();
 
-  const billRef = doc(db, 'users', uid, 'bills', params.bill.id);
+  const billRef = doc(firestoreDb, 'users', uid, 'bills', params.bill.id);
   batch.set(
     billRef,
     sanitizeForFirestore({
@@ -720,7 +795,7 @@ export async function atomicVoidBillAndReleaseTable(params: {
 
   if (params.voidEmptyBills && params.voidEmptyBills.length > 0) {
     for (const emptyBill of params.voidEmptyBills) {
-      const emptyBillRef = doc(db, 'users', uid, 'bills', emptyBill.id);
+      const emptyBillRef = doc(firestoreDb, 'users', uid, 'bills', emptyBill.id);
       batch.set(
         emptyBillRef,
         sanitizeForFirestore({
@@ -737,7 +812,7 @@ export async function atomicVoidBillAndReleaseTable(params: {
   }
 
   if (params.tableId) {
-    const tableRef = doc(db, 'users', uid, 'tables', params.tableId);
+    const tableRef = doc(firestoreDb, 'users', uid, 'tables', params.tableId);
     if (params.isTableReleased) {
       batch.set(
         tableRef,
@@ -772,7 +847,7 @@ export async function atomicVoidBillAndReleaseTable(params: {
     }
   }
 
-  await batch.commit();
+  await safeWrite(() => batch.commit());
 }
 
 /**
@@ -807,86 +882,98 @@ export async function fetchArchivedBills(beforeIsoDate: string): Promise<Bill[]>
 // ==========================================
 
 export async function saveShiftRemote(shift: Shift | null): Promise<void> {
-  if (!db || !getCloudUser()) return;
+  if (!db || !getCloudUser() || isFirestoreWritePaused()) return;
   const activeShiftRef = doc(db, 'users', (getCloudUser()?.uid || '_'), 'shifts', 'active');
   const deviceId = getDeviceId();
   const nowMs = shift?.updatedAtMs || Date.now();
+  const firestoreDb = db;
 
   if (shift) {
-    await setDoc(
-      activeShiftRef,
-      sanitizeForFirestore({
-        shift,
+    await safeWrite(() =>
+      setDoc(
+        activeShiftRef,
+        sanitizeForFirestore({
+          shift,
+          updatedAtMs: nowMs,
+          clientUpdatedAt: nowMs,
+          updatedAt: serverTimestamp(),
+          updatedBy: deviceId,
+        })
+      )
+    );
+
+    if (isFirestoreWritePaused()) return;
+    // Also record into shift history collection
+    const shiftHistoryRef = doc(firestoreDb, 'users', (getCloudUser()?.uid || '_'), 'shiftRecords', shift.id);
+    await safeWrite(() =>
+      setDoc(
+        shiftHistoryRef,
+        sanitizeForFirestore({
+          ...shift,
+          updatedAtMs: nowMs,
+          clientUpdatedAt: nowMs,
+          updatedAt: serverTimestamp(),
+          updatedBy: deviceId,
+        }),
+        { merge: true }
+      )
+    );
+  } else {
+    await safeWrite(() =>
+      setDoc(activeShiftRef, {
+        shift: null,
         updatedAtMs: nowMs,
         clientUpdatedAt: nowMs,
         updatedAt: serverTimestamp(),
         updatedBy: deviceId,
       })
     );
-
-    // Also record into shift history collection
-    const shiftHistoryRef = doc(db, 'users', (getCloudUser()?.uid || '_'), 'shiftRecords', shift.id);
-    await setDoc(
-      shiftHistoryRef,
-      sanitizeForFirestore({
-        ...shift,
-        updatedAtMs: nowMs,
-        clientUpdatedAt: nowMs,
-        updatedAt: serverTimestamp(),
-        updatedBy: deviceId,
-      }),
-      { merge: true }
-    );
-  } else {
-    await setDoc(activeShiftRef, {
-      shift: null,
-      updatedAtMs: nowMs,
-      clientUpdatedAt: nowMs,
-      updatedAt: serverTimestamp(),
-      updatedBy: deviceId,
-    });
   }
 }
 
 export async function saveNotificationRemote(notif: AppNotification): Promise<void> {
-  if (!db || !getCloudUser()) return;
+  if (!db || !getCloudUser() || isFirestoreWritePaused()) return;
   const nowMs = Date.now();
   const ref = doc(db, 'users', (getCloudUser()?.uid || '_'), 'notifications', notif.id);
-  await setDoc(
-    ref,
-    sanitizeForFirestore({
-      ...notif,
-      clientUpdatedAt: nowMs,
-      updatedAt: serverTimestamp(),
-      updatedBy: getDeviceId(),
-    }),
-    { merge: true }
+  await safeWrite(() =>
+    setDoc(
+      ref,
+      sanitizeForFirestore({
+        ...notif,
+        clientUpdatedAt: nowMs,
+        updatedAt: serverTimestamp(),
+        updatedBy: getDeviceId(),
+      }),
+      { merge: true }
+    )
   );
 }
 
 export async function markNotificationReadRemote(id: string): Promise<void> {
-  if (!db || !getCloudUser()) return;
+  if (!db || !getCloudUser() || isFirestoreWritePaused()) return;
   const ref = doc(db, 'users', (getCloudUser()?.uid || '_'), 'notifications', id);
-  await setDoc(
-    ref,
-    {
-      read: true,
-      updatedAt: serverTimestamp(),
-      updatedBy: getDeviceId(),
-    },
-    { merge: true }
+  await safeWrite(() =>
+    setDoc(
+      ref,
+      {
+        read: true,
+        updatedAt: serverTimestamp(),
+        updatedBy: getDeviceId(),
+      },
+      { merge: true }
+    )
   );
 }
 
 export async function clearNotificationsRemote(ids: string[]): Promise<void> {
   const firestore = db;
-  if (!firestore || !getCloudUser() || ids.length === 0) return;
+  if (!firestore || !getCloudUser() || ids.length === 0 || isFirestoreWritePaused()) return;
   const batch = writeBatch(firestore);
   ids.slice(0, 400).forEach((id) => {
     const ref = doc(firestore, 'users', (getCloudUser()?.uid || '_'), 'notifications', id);
     batch.delete(ref);
   });
-  await batch.commit();
+  await safeWrite(() => batch.commit());
 }
 
 // ==========================================
@@ -894,7 +981,7 @@ export async function clearNotificationsRemote(ids: string[]): Promise<void> {
 // ==========================================
 
 export async function saveUserRemote(user: User): Promise<void> {
-  if (!db || !getCloudUser()) return;
+  if (!db || !getCloudUser() || isFirestoreWritePaused()) return;
 
   let salt = user.salt;
   let pinHash = user.pinHash;
@@ -907,27 +994,29 @@ export async function saveUserRemote(user: User): Promise<void> {
 
   const ref = doc(db, 'users', (getCloudUser()?.uid || '_'), 'users', user.id);
   // Plain text `pin` is explicitly OMITTED from Cloud payload!
-  await setDoc(
-    ref,
-    {
-      id: user.id,
-      name: user.name,
-      nameEn: user.nameEn || '',
-      role: user.role,
-      pinHash,
-      salt,
-      avatar: user.avatar || '',
-      updatedAt: serverTimestamp(),
-      updatedBy: getDeviceId(),
-    },
-    { merge: true }
+  await safeWrite(() =>
+    setDoc(
+      ref,
+      {
+        id: user.id,
+        name: user.name,
+        nameEn: user.nameEn || '',
+        role: user.role,
+        pinHash,
+        salt,
+        avatar: user.avatar || '',
+        updatedAt: serverTimestamp(),
+        updatedBy: getDeviceId(),
+      },
+      { merge: true }
+    )
   );
 }
 
 export async function deleteUserRemote(id: string): Promise<void> {
-  if (!db || !getCloudUser()) return;
+  if (!db || !getCloudUser() || isFirestoreWritePaused()) return;
   const ref = doc(db, 'users', (getCloudUser()?.uid || '_'), 'users', id);
-  await deleteDoc(ref);
+  await safeWrite(() => deleteDoc(ref));
 }
 
 // ==========================================
@@ -1066,7 +1155,10 @@ export async function uploadFullLocalDataToCloud(params: {
   settings: ShopSettings;
   qrImages: PaymentQrImage[];
 }): Promise<void> {
-  if (!db || !getCloudUser()) return;
+  if (!db || !getCloudUser() || isFirestoreWritePaused()) return;
+  const firestoreDb = db;
+  const uid = getCloudUser()?.uid || '_';
+  const deviceId = getDeviceId();
 
   // 1. Settings & Media
   await saveShopBundle({
@@ -1074,54 +1166,139 @@ export async function uploadFullLocalDataToCloud(params: {
     qrImages: params.qrImages,
     logo: params.settings.logoUrl,
   });
+  if (isFirestoreWritePaused()) return;
 
-  // 2. Categories
+  // Collect all entity writes into 400-doc writeBatches instead of 100+ sequential setDoc calls
+  const ops: Array<{ ref: ReturnType<typeof doc>; data: Record<string, unknown> }> = [];
+  const nowMs = Date.now();
+
   for (const cat of params.categories) {
-    await saveCategoryRemote(cat);
+    ops.push({
+      ref: doc(firestoreDb, 'users', uid, 'categories', cat.id),
+      data: sanitizeForFirestore({
+        ...cat,
+        updatedAtMs: cat.updatedAtMs || nowMs,
+        clientUpdatedAt: nowMs,
+        updatedAt: serverTimestamp(),
+        updatedBy: deviceId,
+      }) as unknown as Record<string, unknown>,
+    });
   }
 
-  // 3. Menu items
   for (const item of params.menuItems) {
-    await saveMenuItemRemote(item);
+    let image = item.image || '';
+    if (image && image.startsWith('data:')) {
+      const checked = await ensureImageUnderLimit(image, item.name);
+      image = checked || '';
+    }
+    ops.push({
+      ref: doc(firestoreDb, 'users', uid, 'menuItems', item.id),
+      data: sanitizeForFirestore({
+        ...item,
+        image,
+        updatedAtMs: item.updatedAtMs || nowMs,
+        clientUpdatedAt: nowMs,
+        updatedAt: serverTimestamp(),
+        updatedBy: deviceId,
+      }) as unknown as Record<string, unknown>,
+    });
   }
 
-  // 4. Tables
   for (const table of params.tables) {
-    await saveTableRemote(table);
+    const isAvailable = table.status === 'available';
+    const isReserved = table.status === 'reserved';
+    ops.push({
+      ref: doc(firestoreDb, 'users', uid, 'tables', table.id),
+      data: sanitizeForFirestore({
+        ...table,
+        currentBillId: isAvailable || isReserved ? null : (table.currentBillId ?? null),
+        seatedAt: isAvailable || isReserved ? null : (table.seatedAt ?? null),
+        guestCount: isAvailable || isReserved ? null : (table.guestCount ?? null),
+        reservation: isAvailable ? null : (table.reservation ?? null),
+        updatedAtMs: table.updatedAtMs || nowMs,
+        clientUpdatedAt: nowMs,
+        updatedAt: serverTimestamp(),
+        updatedBy: deviceId,
+      }) as unknown as Record<string, unknown>,
+    });
   }
 
-  // 5. Zones
   for (const zone of params.zones) {
-    await saveZoneRemote(zone);
+    ops.push({
+      ref: doc(firestoreDb, 'users', uid, 'zones', zone.id),
+      data: sanitizeForFirestore({
+        ...zone,
+        updatedAtMs: zone.updatedAtMs || nowMs,
+        clientUpdatedAt: nowMs,
+        updatedAt: serverTimestamp(),
+        updatedBy: deviceId,
+      }) as unknown as Record<string, unknown>,
+    });
   }
 
-  // 6. Option Presets
   for (const preset of params.optionPresets) {
-    await saveOptionPresetRemote(preset);
+    ops.push({
+      ref: doc(firestoreDb, 'users', uid, 'optionPresets', preset.id),
+      data: sanitizeForFirestore({
+        ...preset,
+        updatedAtMs: preset.updatedAtMs || nowMs,
+        clientUpdatedAt: nowMs,
+        updatedAt: serverTimestamp(),
+        updatedBy: deviceId,
+      }) as unknown as Record<string, unknown>,
+    });
   }
 
-  // 7. Members
   for (const member of params.members) {
-    await saveMemberRemote(member);
+    ops.push({
+      ref: doc(firestoreDb, 'users', uid, 'members', member.id),
+      data: sanitizeForFirestore({
+        ...member,
+        updatedAtMs: member.updatedAtMs || nowMs,
+        clientUpdatedAt: nowMs,
+        updatedAt: serverTimestamp(),
+        updatedBy: deviceId,
+      }) as unknown as Record<string, unknown>,
+    });
   }
 
-  // 8. Recent/Open Bills
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
   const thirtyDaysAgoISO = thirtyDaysAgo.toISOString();
   for (const bill of params.bills) {
     if (bill.status === 'open' || bill.createdAt >= thirtyDaysAgoISO) {
-      await saveBillRemote(bill);
+      ops.push({
+        ref: doc(firestoreDb, 'users', uid, 'bills', bill.id),
+        data: sanitizeForFirestore({
+          ...bill,
+          note: bill.note ?? null,
+          updatedAtMs: bill.updatedAtMs || nowMs,
+          clientUpdatedAt: nowMs,
+          updatedAt: serverTimestamp(),
+          updatedBy: deviceId,
+        }) as unknown as Record<string, unknown>,
+      });
     }
   }
 
-  // 9. Users (Secure PIN hashing with salt, plain PIN never sent)
+  for (let i = 0; i < ops.length; i += 400) {
+    if (isFirestoreWritePaused()) return;
+    const chunk = ops.slice(i, i + 400);
+    const batch = writeBatch(firestoreDb);
+    chunk.forEach((op) => batch.set(op.ref, op.data, { merge: true }));
+    await safeWrite(() => batch.commit());
+  }
+
+  if (isFirestoreWritePaused()) return;
+
   for (const user of params.users) {
+    if (isFirestoreWritePaused()) return;
     await saveUserRemote(user);
   }
 
-  // 10. Active Shift
-  await saveShiftRemote(params.shift);
+  if (!isFirestoreWritePaused()) {
+    await saveShiftRemote(params.shift);
+  }
 }
 
 export { waitForPendingWrites };

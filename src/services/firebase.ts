@@ -1,8 +1,7 @@
 import { initializeApp, getApps, getApp, type FirebaseApp } from 'firebase/app';
 import {
   initializeFirestore,
-  persistentLocalCache,
-  persistentMultipleTabManager,
+  memoryLocalCache,
   getFirestore,
   doc,
   getDocFromServer,
@@ -50,6 +49,7 @@ export interface FirestoreErrorInfo {
 
 let app: FirebaseApp | null = null;
 let db: Firestore | null = null;
+let secondaryDefaultDb: Firestore | null = null;
 let auth: Auth | null = null;
 
 if (typeof window !== 'undefined' && isFirebaseConfigured()) {
@@ -61,14 +61,12 @@ if (typeof window !== 'undefined' && isFirebaseConfigured()) {
         app,
         {
           ignoreUndefinedProperties: true,
-          localCache: persistentLocalCache({
-            tabManager: persistentMultipleTabManager(),
-          }),
+          localCache: memoryLocalCache(),
         },
         firebaseConfig.firestoreDatabaseId
       );
     } catch (dbInitErr) {
-      console.warn('[Firebase] initializeFirestore with persistentLocalCache fallback to getFirestore:', dbInitErr);
+      console.warn('[Firebase] initializeFirestore with memoryLocalCache fallback to getFirestore:', dbInitErr);
       db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
     }
 
@@ -92,6 +90,112 @@ if (typeof window !== 'undefined' && isFirebaseConfigured()) {
     }
   } catch (err) {
     console.warn('[Firebase] Setup skipped or failed:', err);
+  }
+}
+
+export function getSecondaryDefaultDb(): Firestore | null {
+  if (!app || firebaseConfig.firestoreDatabaseId === '(default)') return null;
+  if (secondaryDefaultDb) return secondaryDefaultDb;
+  try {
+    secondaryDefaultDb = getFirestore(app);
+    return secondaryDefaultDb;
+  } catch {
+    return null;
+  }
+}
+
+const QUOTA_PAUSE_KEY = 'kind_pos_firestore_write_paused_until_v1';
+const MIN_QUOTA_PAUSE_MS = 30 * 60 * 1000;
+const MAX_QUOTA_PAUSE_MS = 24 * 60 * 60 * 1000 + 5 * 60 * 1000;
+let writePausedUntilMs = 0;
+
+function getNextDailyQuotaResetMs(nowMs: number = Date.now()): number {
+  const now = new Date(nowMs);
+  // Firestore Spark/Free daily quotas reset around midnight Pacific Time (~08:00 UTC)
+  const todayResetUtc = Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate(),
+    8,
+    5,
+    0,
+    0
+  );
+  let target = todayResetUtc;
+  if (target - nowMs < MIN_QUOTA_PAUSE_MS) {
+    target += 24 * 60 * 60 * 1000;
+  }
+  return Math.min(target, nowMs + MAX_QUOTA_PAUSE_MS);
+}
+
+export function isQuotaExceededError(err: unknown): boolean {
+  if (!err) return false;
+  const obj = err as { code?: string; message?: string };
+  const code = String(obj.code || '').toLowerCase();
+  const msg = (err instanceof Error ? err.message : String(obj.message || err)).toLowerCase();
+  return (
+    code === 'resource-exhausted' ||
+    code.includes('resource-exhausted') ||
+    msg.includes('resource-exhausted') ||
+    msg.includes('quota limit exceeded') ||
+    msg.includes('quota exceeded')
+  );
+}
+
+export function getFirestoreWritePausedUntilMs(): number {
+  if (writePausedUntilMs > Date.now()) return writePausedUntilMs;
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const raw = localStorage.getItem(QUOTA_PAUSE_KEY);
+      if (raw) {
+        const until = Number(raw);
+        if (Number.isFinite(until) && until > Date.now()) {
+          writePausedUntilMs = until;
+          return until;
+        }
+        localStorage.removeItem(QUOTA_PAUSE_KEY);
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return 0;
+}
+
+export function isFirestoreWritePaused(): boolean {
+  return getFirestoreWritePausedUntilMs() > Date.now();
+}
+
+export function markFirestoreWriteQuotaExceeded(): void {
+  writePausedUntilMs = getNextDailyQuotaResetMs(Date.now());
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(QUOTA_PAUSE_KEY, String(writePausedUntilMs));
+    }
+  } catch {
+    // ignore
+  }
+  try {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('kind-firestore-quota-paused', {
+          detail: { untilMs: writePausedUntilMs },
+        })
+      );
+    }
+  } catch {
+    // ignore
+  }
+}
+
+export function clearFirestoreWriteQuotaPause(): void {
+  writePausedUntilMs = 0;
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(QUOTA_PAUSE_KEY);
+    }
+  } catch {
+    // ignore
   }
 }
 

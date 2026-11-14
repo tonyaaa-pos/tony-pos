@@ -1,13 +1,27 @@
-import { doc, collection, getDoc, getDocs, setDoc, onSnapshot, serverTimestamp, type Unsubscribe } from 'firebase/firestore';
+import {
+  doc,
+  collection,
+  getDoc,
+  getDocs,
+  setDoc,
+  onSnapshot,
+  serverTimestamp,
+  type Firestore,
+  type Unsubscribe,
+} from 'firebase/firestore';
 import {
   db,
+  getSecondaryDefaultDb,
   getCloudUser,
   isFirebaseConfigured,
   firebaseConfig,
   OperationType,
   handleFirestoreError,
+  isQuotaExceededError,
+  isFirestoreWritePaused,
+  markFirestoreWriteQuotaExceeded,
 } from './firebase';
-import { saveMenuItemRemote, getDeviceId } from './cloudStore';
+import { saveMenuItemsBatchRemote, getDeviceId } from './cloudStore';
 import { syncService } from './syncService';
 import { translateThaiToEnglishFast } from '../utils/thaiToEnglishTranslator';
 import type { MenuItem, ItemVariantOption, ShopSettings } from '../types';
@@ -166,30 +180,48 @@ export interface CostSyncSummary {
   }>;
   savedToCloud?: boolean;
   cloudPath?: string;
-  cloudReason?: 'not_configured' | 'not_signed_in';
+  cloudReason?: 'not_configured' | 'not_signed_in' | 'quota_exceeded';
 }
 
 export interface CostFirestoreFetchResult {
-  status: 'found' | 'not_found' | 'not_signed_in' | 'not_configured';
+  status: 'found' | 'not_found' | 'not_signed_in' | 'not_configured' | 'permission_denied' | 'error';
   data: TonysKitchenPayload | null;
   docPath?: string;
   uid?: string;
+  databaseId?: string;
+  error?: string;
+}
+
+export interface CostBundleMeta {
+  source: 'cloud' | 'import' | 'sample';
+  docPath?: string;
+  uid?: string;
+  databaseId?: string;
+  syncedAtMs?: number;
+  remoteUpdatedAtMs?: number;
+  error?: string | null;
 }
 
 export interface CostFirestoreSaveResult {
   savedToCloud: boolean;
   docPath?: string;
-  reason?: 'not_configured' | 'not_signed_in';
+  reason?: 'not_configured' | 'not_signed_in' | 'quota_exceeded';
 }
 
 export const OPEX_STORAGE_KEY = 'kind_pos_opex_settings_v4';
 export const COST_BUNDLE_CACHE_KEY = 'kind_pos_cost_bundle_cache_v1';
+export const COST_BUNDLE_META_CACHE_KEY = 'kind_pos_cost_bundle_meta_v1';
 export const COST_BUNDLE_UPDATED_EVENT = 'kind_pos_cost_bundle_updated';
 export const OPEX_UPDATED_EVENT = 'kind_pos_opex_updated';
 export const DEFAULT_COST_APP_UID = 'WBDSoJjNMKOjsCs5n33dMGhdWzu1';
 export const LINKED_COST_UID_STORAGE_KEY = 'kind_pos_linked_cost_uid_v1';
 
-let activeCostDocTarget: { uid: string; docId: string } | null = null;
+let activeCostDocTarget: {
+  uid: string;
+  docId: string;
+  collectionName?: string;
+  dbKind?: 'primary' | 'default';
+} | null = null;
 
 export function getLinkedCostAppUid(): string {
   try {
@@ -221,8 +253,9 @@ export function setLinkedCostAppUid(uid: string): void {
 
 export function getActiveCostDocPath(): string {
   const uid = activeCostDocTarget?.uid || getLinkedCostAppUid();
+  const colName = activeCostDocTarget?.collectionName || 'costManagement';
   const docId = activeCostDocTarget?.docId || 'tonys_kitchen';
-  return `users/${uid}/costManagement/${docId}`;
+  return `users/${uid}/${colName}/${docId}`;
 }
 
 function getCandidateCostUids(): string[] {
@@ -285,10 +318,38 @@ export function notifyOpExUpdated(): void {
   }
 }
 
-export function saveCachedCostBundle(payload: TonysKitchenPayload): void {
+export function getCachedCostBundleMeta(): CostBundleMeta {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const raw = localStorage.getItem(COST_BUNDLE_META_CACHE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as CostBundleMeta;
+        if (parsed && parsed.source) return parsed;
+      }
+    }
+  } catch {
+    // Ignore storage read errors
+  }
+  return { source: 'sample', uid: getLinkedCostAppUid() };
+}
+
+export function saveCachedCostBundle(
+  payload: TonysKitchenPayload,
+  meta?: Partial<CostBundleMeta>
+): void {
   try {
     if (typeof localStorage !== 'undefined' && payload && payload.payload) {
       localStorage.setItem(COST_BUNDLE_CACHE_KEY, JSON.stringify(payload));
+      if (meta) {
+        const prevMeta = getCachedCostBundleMeta();
+        const nextMeta: CostBundleMeta = {
+          ...prevMeta,
+          ...meta,
+          syncedAtMs: meta.syncedAtMs ?? Date.now(),
+          remoteUpdatedAtMs: meta.remoteUpdatedAtMs ?? extractCostTimestampMs(payload),
+        };
+        localStorage.setItem(COST_BUNDLE_META_CACHE_KEY, JSON.stringify(nextMeta));
+      }
     }
     if (typeof window !== 'undefined' && payload && payload.payload) {
       window.dispatchEvent(new CustomEvent(COST_BUNDLE_UPDATED_EVENT, { detail: payload }));
@@ -318,19 +379,28 @@ export function getCachedCostBundle(): TonysKitchenPayload {
 
 export function getVariantRecipeCost(variant?: TonysKitchenVariant | null): number {
   if (!variant) return 0;
+  const v = variant as unknown as Record<string, unknown>;
   const raw =
-    variant.recipeCost ??
-    variant.foodCostPerUnit ??
-    variant.calculatedCost ??
-    variant.cost ??
+    v.recipeCost ??
+    v.foodCostPerUnit ??
+    v.calculatedCost ??
+    v.cost ??
+    v.foodCost ??
+    v.totalCost ??
+    v.unitCost ??
+    v.ingredientCost ??
+    v.costPerDish ??
     0;
-  return Math.round(Number(raw) * 100) / 100;
+  const num = Number(raw);
+  return Number.isFinite(num) ? Math.round(num * 100) / 100 : 0;
 }
 
 export function getVariantSellingPrice(variant?: TonysKitchenVariant | null): number {
   if (!variant) return 0;
-  const raw = variant.sellingPrice ?? variant.price ?? 0;
-  return Math.round(Number(raw) * 100) / 100;
+  const v = variant as unknown as Record<string, unknown>;
+  const raw = v.sellingPrice ?? v.price ?? v.sellPrice ?? v.menuPrice ?? v.salePrice ?? 0;
+  const num = Number(raw);
+  return Number.isFinite(num) ? Math.round(num * 100) / 100 : 0;
 }
 
 /**
@@ -566,6 +636,118 @@ export const TONYS_KITCHEN_SAMPLE_DATA: TonysKitchenPayload = {
   },
 };
 
+function normalizeCostVariant(raw: unknown, idx: number, fallbackMenuName?: string): TonysKitchenVariant | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Record<string, unknown>;
+  const nameRaw =
+    obj.name ?? obj.variantName ?? obj.title ?? obj.label ?? obj.protein ?? obj.meatName ?? fallbackMenuName ?? '';
+  const name = String(nameRaw || '').trim();
+  if (!name) return null;
+
+  const id = String(obj.id ?? obj.variantId ?? `var_${idx}_${name}`).trim();
+  const sellingPriceRaw = obj.sellingPrice ?? obj.price ?? obj.sellPrice ?? obj.menuPrice ?? obj.salePrice;
+  const recipeCostRaw =
+    obj.recipeCost ??
+    obj.foodCostPerUnit ??
+    obj.calculatedCost ??
+    obj.cost ??
+    obj.foodCost ??
+    obj.totalCost ??
+    obj.unitCost ??
+    obj.ingredientCost ??
+    obj.costPerDish;
+
+  const sellingPrice = sellingPriceRaw !== undefined && sellingPriceRaw !== null && Number.isFinite(Number(sellingPriceRaw))
+    ? Math.round(Number(sellingPriceRaw) * 100) / 100
+    : undefined;
+  const recipeCost = recipeCostRaw !== undefined && recipeCostRaw !== null && Number.isFinite(Number(recipeCostRaw))
+    ? Math.round(Number(recipeCostRaw) * 100) / 100
+    : undefined;
+
+  return {
+    ...(obj as unknown as TonysKitchenVariant),
+    id,
+    name,
+    variantName: String(obj.variantName ?? name),
+    ...(sellingPrice !== undefined ? { sellingPrice, price: sellingPrice } : {}),
+    ...(recipeCost !== undefined ? { recipeCost } : {}),
+  };
+}
+
+function normalizeCostMenu(raw: unknown, idx: number): TonysKitchenMenu | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Record<string, unknown>;
+  const nameRaw = obj.name ?? obj.menuName ?? obj.title ?? obj.dishName ?? obj.thaiName ?? obj.label ?? '';
+  const name = String(nameRaw || '').trim();
+  if (!name) return null;
+
+  const id = String(obj.id ?? obj.menuId ?? obj.docId ?? `menu_${idx}_${name}`).trim();
+  const sellingPriceRaw = obj.sellingPrice ?? obj.price ?? obj.sellPrice ?? obj.menuPrice ?? obj.salePrice;
+  const recipeCostRaw =
+    obj.recipeCost ??
+    obj.foodCostPerUnit ??
+    obj.calculatedCost ??
+    obj.cost ??
+    obj.foodCost ??
+    obj.totalCost ??
+    obj.unitCost ??
+    obj.ingredientCost ??
+    obj.costPerDish;
+
+  const sellingPrice = sellingPriceRaw !== undefined && sellingPriceRaw !== null && Number.isFinite(Number(sellingPriceRaw))
+    ? Math.round(Number(sellingPriceRaw) * 100) / 100
+    : undefined;
+  const recipeCost = recipeCostRaw !== undefined && recipeCostRaw !== null && Number.isFinite(Number(recipeCostRaw))
+    ? Math.round(Number(recipeCostRaw) * 100) / 100
+    : undefined;
+
+  const rawVariantsCandidate =
+    (Array.isArray(obj.variants) && obj.variants) ||
+    (Array.isArray(obj.options) && obj.options) ||
+    (Array.isArray(obj.meats) && obj.meats) ||
+    (Array.isArray(obj.sizes) && obj.sizes) ||
+    (Array.isArray(obj.subMenus) && obj.subMenus) ||
+    (Array.isArray(obj.choices) && obj.choices) ||
+    (Array.isArray(obj.items) && obj.items) ||
+    [];
+
+  const normalizedVariants = rawVariantsCandidate
+    .map((v, vIdx) => normalizeCostVariant(v, vIdx, name))
+    .filter((v): v is TonysKitchenVariant => Boolean(v));
+
+  return {
+    ...(obj as unknown as TonysKitchenMenu),
+    id,
+    name,
+    categoryId: obj.categoryId ? String(obj.categoryId) : undefined,
+    categoryName: obj.categoryName ? String(obj.categoryName) : (obj.category ? String(obj.category) : undefined),
+    ...(sellingPrice !== undefined ? { sellingPrice } : {}),
+    ...(recipeCost !== undefined ? { recipeCost } : {}),
+    variants: normalizedVariants,
+  };
+}
+
+function normalizeInnerPayload(rawPayload: Record<string, unknown>): TonysKitchenPayload['payload'] {
+  const rawMenus =
+    (Array.isArray(rawPayload.menus) && rawPayload.menus) ||
+    (Array.isArray(rawPayload.menuItems) && rawPayload.menuItems) ||
+    (Array.isArray(rawPayload.recipes) && rawPayload.recipes) ||
+    (Array.isArray(rawPayload.dishes) && rawPayload.dishes) ||
+    (Array.isArray(rawPayload.foodMenus) && rawPayload.foodMenus) ||
+    undefined;
+
+  const normalizedMenus = rawMenus
+    ? rawMenus
+        .map((m, idx) => normalizeCostMenu(m, idx))
+        .filter((m): m is TonysKitchenMenu => Boolean(m))
+    : undefined;
+
+  return {
+    ...(rawPayload as TonysKitchenPayload['payload']),
+    ...(normalizedMenus ? { menus: normalizedMenus } : {}),
+  };
+}
+
 /**
  * Parses raw JSON string or object from Cost & Profit application
  */
@@ -580,10 +762,12 @@ export function parseCostAndProfitPayload(input: string | object): TonysKitchenP
 
   // Handle case where user passes inner payload or full export
   if (data.payload && typeof data.payload === 'object') {
+    const typed = data as TonysKitchenPayload;
     return {
-      ...(data as TonysKitchenPayload),
-      exportedAt: resolvedIso || (data as TonysKitchenPayload).exportedAt,
-      updatedAtMs: tsMs || (data as TonysKitchenPayload).updatedAtMs,
+      ...typed,
+      exportedAt: resolvedIso || typed.exportedAt,
+      updatedAtMs: tsMs || typed.updatedAtMs,
+      payload: normalizeInnerPayload(data.payload as Record<string, unknown>),
     };
   }
 
@@ -597,7 +781,7 @@ export function parseCostAndProfitPayload(input: string | object): TonysKitchenP
     updatedAtMs: tsMs || undefined,
     syncedFrom: typeof data.syncedFrom === 'string' ? data.syncedFrom : undefined,
     updatedBy: typeof data.updatedBy === 'string' ? data.updatedBy : undefined,
-    payload: data,
+    payload: normalizeInnerPayload(data as Record<string, unknown>),
   };
 }
 
@@ -720,6 +904,42 @@ export function findMatchingCostVariant(
 }
 
 /**
+ * Returns the variants defined inside a Food Cost menu, or synthesizes a linked standard variant
+ * from menu-level sellingPrice / recipeCost when the menu has no sub-variants.
+ */
+export function getEffectiveCostMenuVariants(costMenu: TonysKitchenMenu): TonysKitchenVariant[] {
+  if (costMenu.variants && costMenu.variants.length > 0) {
+    return costMenu.variants;
+  }
+  const hasMenuNumbers =
+    costMenu.recipeCost !== undefined ||
+    costMenu.sellingPrice !== undefined ||
+    Boolean(costMenu.name?.trim());
+  if (!hasMenuNumbers) return [];
+  const rawCost = Number(
+    costMenu.recipeCost ??
+      (costMenu as unknown as Record<string, unknown>).cost ??
+      (costMenu as unknown as Record<string, unknown>).foodCost ??
+      0
+  );
+  const rawPrice = Number(
+    costMenu.sellingPrice ??
+      (costMenu as unknown as Record<string, unknown>).price ??
+      0
+  );
+  return [
+    {
+      id: costMenu.id,
+      name: 'ปกติ',
+      variantName: 'ปกติ',
+      sellingPrice: Number.isFinite(rawPrice) ? Math.round(rawPrice * 100) / 100 : 0,
+      price: Number.isFinite(rawPrice) ? Math.round(rawPrice * 100) / 100 : 0,
+      recipeCost: Number.isFinite(rawCost) ? Math.round(rawCost * 100) / 100 : 0,
+    },
+  ];
+}
+
+/**
  * Builds POS variants strictly from the selected Food Cost menu (never mixing options from other menus).
  * Keeps latest edited selling price if matching the same linked cost menu, while always locking cost to recipe formula.
  */
@@ -727,7 +947,7 @@ export function buildVariantsFromCostMenu(
   costMenu: TonysKitchenMenu,
   existingVariants: ItemVariantOption[] = []
 ): ItemVariantOption[] {
-  const costVars = costMenu.variants || [];
+  const costVars = getEffectiveCostMenuVariants(costMenu);
   if (costVars.length === 0) return existingVariants;
 
   const built: ItemVariantOption[] = costVars.map((cv) => {
@@ -746,19 +966,24 @@ export function buildVariantsFromCostMenu(
           normalizeName(ev.name) === normalizeName(varName))
     );
 
+    const fallbackExistingPrice =
+      costVars.length === 1 && existingVariants[0]?.price > 0
+        ? existingVariants[0].price
+        : 80;
+
     const resolvedPrice =
       existingMatch && existingMatch.price > 0
         ? existingMatch.price
         : bundlePrice > 0
         ? bundlePrice
-        : 80;
+        : fallbackExistingPrice;
 
     return {
       id:
         existingMatch?.id ||
         `v_${cv.id}_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 5)}`,
       name: varName,
-      nameEn: existingMatch?.nameEn || nameEn,
+      nameEn: existingMatch?.nameEn || (varName === 'ปกติ' ? 'Standard' : nameEn),
       price: resolvedPrice,
       cost: recipeCost,
       isAvailable: existingMatch ? existingMatch.isAvailable : true,
@@ -817,7 +1042,25 @@ export async function syncSellingPriceUpdatesToCostBundle(
     const isTargetMenu =
       (costMenuId && cm.id === costMenuId) ||
       variants.some((v) => v.costMenuId === cm.id);
-    if (!isTargetMenu || !cm.variants) return cm;
+    if (!isTargetMenu) return cm;
+
+    // Single-variant / menu-level pricing when Food Cost menu has no variants array
+    if (!cm.variants || cm.variants.length === 0) {
+      const matchedPosVar = variants.find(
+        (pv) => pv.costVariantId === cm.id || pv.costMenuId === cm.id
+      ) || variants[0];
+      if (matchedPosVar && typeof matchedPosVar.price === 'number' && matchedPosVar.price >= 0) {
+        const curPrice = cm.sellingPrice ?? (cm as unknown as Record<string, unknown>).price ?? 0;
+        if (curPrice !== matchedPosVar.price) {
+          changed = true;
+          return {
+            ...cm,
+            sellingPrice: matchedPosVar.price,
+          };
+        }
+      }
+      return cm;
+    }
 
     const updatedVars = cm.variants.map((cv) => {
       const matchedPosVar = variants.find(
@@ -857,7 +1100,8 @@ export async function syncSellingPriceUpdatesToCostBundle(
     },
   };
 
-  saveCachedCostBundle(updatedPayload);
+  const prevMeta = getCachedCostBundleMeta();
+  saveCachedCostBundle(updatedPayload, prevMeta.source === 'cloud' ? { source: 'cloud' } : undefined);
 
   try {
     await saveCostBundleToFirestore(updatedPayload);
@@ -920,6 +1164,7 @@ export async function applyCostDataToPOS(
 
   // 5. Match and Update Menu Items & Variants
   const syncedDishes: CostSyncSummary['syncedDishes'] = [];
+  const itemsToRemoteSync: MenuItem[] = [];
   let updatedVariantsTotal = 0;
 
   currentMenuItems.forEach((posItem) => {
@@ -1013,9 +1258,7 @@ export async function applyCostDataToPOS(
           costMenuName: matchedCostMenu.name,
           variants: updatedVariants,
         });
-        saveMenuItemRemote(updatedItem).catch((err) =>
-          console.warn('[applyCostDataToPOS] Remote sync failed for:', posItem.id, err)
-        );
+        itemsToRemoteSync.push(updatedItem);
       }
 
       if (itemMatchedAnyVariant) {
@@ -1048,9 +1291,7 @@ export async function applyCostDataToPOS(
           costMenuId: matchedCostMenu.id,
           costMenuName: matchedCostMenu.name,
         });
-        saveMenuItemRemote(updatedItem).catch((err) =>
-          console.warn('[applyCostDataToPOS] Remote sync failed for:', posItem.id, err)
-        );
+        itemsToRemoteSync.push(updatedItem);
       }
 
       syncedDishes.push({
@@ -1070,6 +1311,12 @@ export async function applyCostDataToPOS(
       });
     }
   });
+
+  if (itemsToRemoteSync.length > 0 && !isFirestoreWritePaused()) {
+    saveMenuItemsBatchRemote(itemsToRemoteSync).catch((err) =>
+      console.warn('[applyCostDataToPOS] Batch remote sync failed:', err)
+    );
+  }
 
   // 6. Save Cost Management bundle to Cloud Firestore under users/{uid}/costManagement/tonys_kitchen
   const saveResult = await saveCostBundleToFirestore(payload);
@@ -1115,6 +1362,10 @@ function isValidCostDocData(raw: Record<string, unknown> | undefined | null): bo
   return Boolean(
     raw.payload ||
       raw.menus ||
+      raw.menuItems ||
+      raw.recipes ||
+      raw.dishes ||
+      raw.foodMenus ||
       raw.settings ||
       raw.expenses ||
       raw.employees ||
@@ -1179,6 +1430,107 @@ function selectBestCostPayloadFromDocs(
   };
 }
 
+const SPLIT_MENU_COLLECTIONS = [
+  'menus',
+  'recipes',
+  'dishes',
+  'foodCost',
+  'food_cost',
+  'cost_management',
+  'appData',
+  'sync',
+  'menuItems',
+] as const;
+
+function assemblePayloadFromSplitDocs(
+  menuDocs: Array<{ id: string; data: Record<string, unknown> }>,
+  settingsDoc?: Record<string, unknown> | null,
+  expensesDocs?: Array<{ id: string; data: Record<string, unknown> }>,
+  employeesDocs?: Array<{ id: string; data: Record<string, unknown> }>,
+  ingredientsDocs?: Array<{ id: string; data: Record<string, unknown> }>
+): { payload: TonysKitchenPayload; timestampMs: number } | null {
+  // First check if any doc inside menuDocs is itself a bundled payload (like appData/cost or foodCost/bundle)
+  const bundleCandidate = selectBestCostPayloadFromDocs(menuDocs);
+
+  const collectedMenus: TonysKitchenMenu[] = [];
+  let maxTs = bundleCandidate?.timestampMs || 0;
+
+  for (const d of menuDocs) {
+    const raw = d.data;
+    maxTs = Math.max(maxTs, extractCostTimestampMs(raw));
+    if (isValidCostDocData(raw)) {
+      const parsed = parseCostAndProfitPayload(raw);
+      if (parsed.payload?.menus && parsed.payload.menus.length > 0) {
+        parsed.payload.menus.forEach((m) => {
+          if (!collectedMenus.some((em) => em.id === m.id)) {
+            collectedMenus.push(m);
+          }
+        });
+        continue;
+      }
+    }
+    // Treat doc itself as an individual menu/recipe document
+    const singleMenu = normalizeCostMenu({ id: d.id, ...raw }, collectedMenus.length);
+    if (singleMenu && !collectedMenus.some((em) => em.id === singleMenu.id)) {
+      collectedMenus.push(singleMenu);
+    }
+  }
+
+  const finalMenus =
+    collectedMenus.length > 0
+      ? collectedMenus
+      : bundleCandidate?.payload?.payload?.menus || [];
+
+  const finalSettings =
+    (settingsDoc as TonysKitchenSetting | undefined) ||
+    bundleCandidate?.payload?.payload?.settings;
+
+  const finalExpenses =
+    expensesDocs && expensesDocs.length > 0
+      ? (expensesDocs.map((d) => ({ id: d.id, ...d.data })) as unknown as TonysKitchenExpense[])
+      : bundleCandidate?.payload?.payload?.expenses;
+
+  const finalEmployees =
+    employeesDocs && employeesDocs.length > 0
+      ? (employeesDocs.map((d) => ({ id: d.id, ...d.data })) as unknown as TonysKitchenEmployee[])
+      : bundleCandidate?.payload?.payload?.employees;
+
+  const finalIngredients =
+    ingredientsDocs && ingredientsDocs.length > 0
+      ? (ingredientsDocs.map((d) => ({ id: d.id, ...d.data })) as unknown as TonysKitchenIngredient[])
+      : bundleCandidate?.payload?.payload?.ingredients;
+
+  if (
+    finalMenus.length === 0 &&
+    !finalSettings &&
+    (!finalExpenses || finalExpenses.length === 0) &&
+    (!finalEmployees || finalEmployees.length === 0)
+  ) {
+    return null;
+  }
+
+  const resolvedIso = maxTs > 0 ? new Date(maxTs).toISOString() : new Date().toISOString();
+  return {
+    timestampMs: maxTs,
+    payload: {
+      schemaVersion: bundleCandidate?.payload?.schemaVersion || '1.1.0',
+      appId: bundleCandidate?.payload?.appId || 'FOOD_COST_SYSTEM',
+      appName: bundleCandidate?.payload?.appName || 'Food Cost System',
+      exportedAt: resolvedIso,
+      updatedAt: resolvedIso,
+      updatedAtMs: maxTs || Date.now(),
+      payload: {
+        ...(bundleCandidate?.payload?.payload || {}),
+        ...(finalSettings ? { settings: finalSettings } : {}),
+        ...(finalMenus.length > 0 ? { menus: finalMenus } : {}),
+        ...(finalExpenses ? { expenses: finalExpenses } : {}),
+        ...(finalEmployees ? { employees: finalEmployees } : {}),
+        ...(finalIngredients ? { ingredients: finalIngredients } : {}),
+      },
+    },
+  };
+}
+
 /**
  * Saves cost bundle to Cloud Firestore under the linked Cost App UID (default WBDSoJjNMKOjsCs5n33dMGhdWzu1)
  */
@@ -1192,12 +1544,22 @@ export async function saveCostBundleToFirestore(
   if (!user) {
     return { savedToCloud: false, reason: 'not_signed_in' };
   }
+  if (isFirestoreWritePaused()) {
+    return { savedToCloud: false, reason: 'quota_exceeded' };
+  }
 
   const nowMs = Date.now();
   const nowIso = new Date(nowMs).toISOString();
   const targetUid = activeCostDocTarget?.uid || getLinkedCostAppUid() || user.uid;
-  const targetDocId = activeCostDocTarget?.docId || 'tonys_kitchen';
+  const targetDocId =
+    activeCostDocTarget?.collectionName === 'costManagement' && activeCostDocTarget?.docId
+      ? activeCostDocTarget.docId
+      : 'tonys_kitchen';
   const docPath = `users/${targetUid}/costManagement/${targetDocId}`;
+  const targetDb: Firestore =
+    activeCostDocTarget?.dbKind === 'default' && getSecondaryDefaultDb()
+      ? (getSecondaryDefaultDb() as Firestore)
+      : db;
 
   const writePayload = {
     ...payload,
@@ -1210,16 +1572,34 @@ export async function saveCostBundleToFirestore(
   };
 
   try {
-    const costDocRef = doc(db, 'users', targetUid, 'costManagement', targetDocId);
+    const costDocRef = doc(targetDb, 'users', targetUid, 'costManagement', targetDocId);
     await setDoc(costDocRef, writePayload, { merge: true });
-    activeCostDocTarget = { uid: targetUid, docId: targetDocId };
-    saveCachedCostBundle({
-      ...payload,
-      exportedAt: writePayload.exportedAt,
-      updatedAt: nowIso,
-      updatedAtMs: nowMs,
-      syncedFrom: 'POS_CostProfitIntegration',
-    });
+    activeCostDocTarget = {
+      uid: targetUid,
+      docId: targetDocId,
+      collectionName: 'costManagement',
+      dbKind: activeCostDocTarget?.dbKind || 'primary',
+    };
+    saveCachedCostBundle(
+      {
+        ...payload,
+        exportedAt: writePayload.exportedAt,
+        updatedAt: nowIso,
+        updatedAtMs: nowMs,
+        syncedFrom: 'POS_CostProfitIntegration',
+      },
+      {
+        source: 'cloud',
+        docPath,
+        uid: targetUid,
+        databaseId:
+          activeCostDocTarget.dbKind === 'default'
+            ? '(default)'
+            : firebaseConfig.firestoreDatabaseId,
+        remoteUpdatedAtMs: nowMs,
+        error: null,
+      }
+    );
     return { savedToCloud: true, docPath };
   } catch (err) {
     // If writing to linked UID failed due to permissions and user has a different own UID, fallback to user.uid
@@ -1228,20 +1608,45 @@ export async function saveCostBundleToFirestore(
       try {
         const fallbackRef = doc(db, 'users', user.uid, 'costManagement', 'tonys_kitchen');
         await setDoc(fallbackRef, writePayload, { merge: true });
-        activeCostDocTarget = { uid: user.uid, docId: 'tonys_kitchen' };
-        saveCachedCostBundle({
-          ...payload,
-          exportedAt: writePayload.exportedAt,
-          updatedAt: nowIso,
-          updatedAtMs: nowMs,
-        });
+        activeCostDocTarget = {
+          uid: user.uid,
+          docId: 'tonys_kitchen',
+          collectionName: 'costManagement',
+          dbKind: 'primary',
+        };
+        saveCachedCostBundle(
+          {
+            ...payload,
+            exportedAt: writePayload.exportedAt,
+            updatedAt: nowIso,
+            updatedAtMs: nowMs,
+          },
+          {
+            source: 'cloud',
+            docPath: fallbackPath,
+            uid: user.uid,
+            databaseId: firebaseConfig.firestoreDatabaseId,
+            remoteUpdatedAtMs: nowMs,
+            error: null,
+          }
+        );
         return { savedToCloud: true, docPath: fallbackPath };
       } catch (fallbackErr) {
+        if (isQuotaExceededError(fallbackErr)) {
+          markFirestoreWriteQuotaExceeded();
+          console.warn('[saveCostBundleToFirestore] Daily Firestore write quota exceeded; pausing remote writes temporarily.');
+          return { savedToCloud: false, reason: 'quota_exceeded' };
+        }
         if (isPermissionDeniedError(fallbackErr)) {
           handleFirestoreError(fallbackErr, OperationType.WRITE, fallbackPath);
         }
         throw formatFirestoreException(fallbackErr);
       }
+    }
+    if (isQuotaExceededError(err)) {
+      markFirestoreWriteQuotaExceeded();
+      console.warn('[saveCostBundleToFirestore] Daily Firestore write quota exceeded; pausing remote writes temporarily.');
+      return { savedToCloud: false, reason: 'quota_exceeded' };
     }
     if (isPermissionDeniedError(err)) {
       handleFirestoreError(err, OperationType.WRITE, docPath);
@@ -1250,8 +1655,135 @@ export async function saveCostBundleToFirestore(
   }
 }
 
+async function probeDatabaseForUid(
+  firestoreDb: Firestore,
+  dbKind: 'primary' | 'default',
+  databaseId: string,
+  targetUid: string
+): Promise<{
+  result?: CostFirestoreFetchResult;
+  permissionError?: unknown;
+}> {
+  const colPath = `users/${targetUid}/costManagement`;
+  let lastPermErr: unknown = null;
+
+  // 1. Check users/{uid}/costManagement collection
+  try {
+    const colSnap = await getDocs(collection(firestoreDb, 'users', targetUid, 'costManagement'));
+    if (!colSnap.empty) {
+      const docs = colSnap.docs.map((d) => ({
+        id: d.id,
+        data: d.data() as Record<string, unknown>,
+      }));
+      const best = selectBestCostPayloadFromDocs(docs);
+      if (best && (best.payload.payload?.menus?.length || 0) > 0) {
+        return {
+          result: {
+            status: 'found',
+            data: best.payload,
+            docPath: `${colPath}/${best.docId}`,
+            uid: targetUid,
+            databaseId,
+          },
+        };
+      }
+    }
+
+    const directSnap = await getDoc(doc(firestoreDb, 'users', targetUid, 'costManagement', 'tonys_kitchen'));
+    if (directSnap.exists()) {
+      const parsed = parseCostAndProfitPayload(directSnap.data());
+      if ((parsed.payload?.menus?.length || 0) > 0) {
+        return {
+          result: {
+            status: 'found',
+            data: parsed,
+            docPath: `${colPath}/tonys_kitchen`,
+            uid: targetUid,
+            databaseId,
+          },
+        };
+      }
+    }
+  } catch (err) {
+    if (isPermissionDeniedError(err)) {
+      lastPermErr = err;
+    } else if (dbKind === 'primary') {
+      throw formatFirestoreException(err);
+    }
+  }
+
+  // 2. Check root user doc users/{uid} (some Food Cost apps save bundle/menus directly on user profile doc)
+  try {
+    const userDocSnap = await getDoc(doc(firestoreDb, 'users', targetUid));
+    if (userDocSnap.exists()) {
+      const userData = userDocSnap.data() as Record<string, unknown>;
+      if (isValidCostDocData(userData)) {
+        const parsed = parseCostAndProfitPayload(userData);
+        if ((parsed.payload?.menus?.length || 0) > 0) {
+          return {
+            result: {
+              status: 'found',
+              data: parsed,
+              docPath: `users/${targetUid}`,
+              uid: targetUid,
+              databaseId,
+            },
+          };
+        }
+      }
+    }
+  } catch (err) {
+    if (isPermissionDeniedError(err)) {
+      lastPermErr = lastPermErr || err;
+    }
+  }
+
+  // 3. Probe alternative Food Cost System collections (menus, recipes, dishes, foodCost, appData, etc.)
+  for (const subColName of SPLIT_MENU_COLLECTIONS) {
+    try {
+      const snap = await getDocs(collection(firestoreDb, 'users', targetUid, subColName));
+      if (snap.empty) continue;
+      const docs = snap.docs.map((d) => ({
+        id: d.id,
+        data: d.data() as Record<string, unknown>,
+      }));
+
+      // Also fetch optional settings/expenses/employees if present
+      let settingsDoc: Record<string, unknown> | null = null;
+      try {
+        const setSnap = await getDocs(collection(firestoreDb, 'users', targetUid, 'settings'));
+        if (!setSnap.empty) {
+          settingsDoc = setSnap.docs[0].data() as Record<string, unknown>;
+        }
+      } catch {
+        // Ignore optional settings failure
+      }
+
+      const assembled = assemblePayloadFromSplitDocs(docs, settingsDoc);
+      if (assembled && (assembled.payload.payload?.menus?.length || 0) > 0) {
+        return {
+          result: {
+            status: 'found',
+            data: assembled.payload,
+            docPath: `users/${targetUid}/${subColName}`,
+            uid: targetUid,
+            databaseId,
+          },
+        };
+      }
+    } catch (err) {
+      if (isPermissionDeniedError(err)) {
+        lastPermErr = lastPermErr || err;
+      }
+    }
+  }
+
+  return { permissionError: lastPermErr };
+}
+
 /**
- * Fetches cost management data from Firestore across linked Cost App UID (WBDSoJjNMKOjsCs5n33dMGhdWzu1) & signed-in UID
+ * Fetches cost management data from Firestore across linked Cost App UID (WBDSoJjNMKOjsCs5n33dMGhdWzu1) & signed-in UID,
+ * supporting both single-doc costManagement and split collections (menus, recipes, dishes, foodCost) across primary & default DB.
  */
 export async function fetchRemoteCostManagementStatus(): Promise<CostFirestoreFetchResult> {
   if (!isFirebaseConfigured() || !db) {
@@ -1263,63 +1795,68 @@ export async function fetchRemoteCostManagementStatus(): Promise<CostFirestoreFe
   }
 
   const candidateUids = getCandidateCostUids();
+  const dbTargets: Array<{ firestoreDb: Firestore; dbKind: 'primary' | 'default'; databaseId: string }> = [
+    { firestoreDb: db, dbKind: 'primary', databaseId: firebaseConfig.firestoreDatabaseId },
+  ];
+  const secondaryDb = getSecondaryDefaultDb();
+  if (secondaryDb) {
+    dbTargets.push({ firestoreDb: secondaryDb, dbKind: 'default', databaseId: '(default)' });
+  }
+
   let lastPermissionError: unknown = null;
 
   for (const targetUid of candidateUids) {
-    const colPath = `users/${targetUid}/costManagement`;
-    try {
-      // Inspect all docs in users/{targetUid}/costManagement so we find the freshest doc regardless of doc ID
-      const colSnap = await getDocs(collection(db, 'users', targetUid, 'costManagement'));
-      if (!colSnap.empty) {
-        const docs = colSnap.docs.map((d) => ({
-          id: d.id,
-          data: d.data() as Record<string, unknown>,
-        }));
-        const best = selectBestCostPayloadFromDocs(docs);
-        if (best) {
-          activeCostDocTarget = { uid: targetUid, docId: best.docId };
-          saveCachedCostBundle(best.payload);
-          return {
-            status: 'found',
-            data: best.payload,
-            docPath: `${colPath}/${best.docId}`,
+    for (const dbTarget of dbTargets) {
+      try {
+        const probe = await probeDatabaseForUid(
+          dbTarget.firestoreDb,
+          dbTarget.dbKind,
+          dbTarget.databaseId,
+          targetUid
+        );
+        if (probe.result && probe.result.status === 'found' && probe.result.data) {
+          const pathParts = (probe.result.docPath || '').split('/');
+          const colName = pathParts[2] || 'costManagement';
+          const docId = pathParts[3] || 'tonys_kitchen';
+          activeCostDocTarget = {
             uid: targetUid,
+            docId,
+            collectionName: colName,
+            dbKind: dbTarget.dbKind,
           };
+          saveCachedCostBundle(probe.result.data, {
+            source: 'cloud',
+            docPath: probe.result.docPath,
+            uid: targetUid,
+            databaseId: dbTarget.databaseId,
+            remoteUpdatedAtMs: extractCostTimestampMs(probe.result.data),
+            error: null,
+          });
+          return probe.result;
+        }
+        if (probe.permissionError) {
+          lastPermissionError = probe.permissionError;
+        }
+      } catch (err) {
+        if (dbTarget.dbKind === 'primary') {
+          throw err;
         }
       }
-
-      // Direct doc check fallback in case list permission differs from get
-      const directPath = `${colPath}/tonys_kitchen`;
-      const directSnap = await getDoc(doc(db, 'users', targetUid, 'costManagement', 'tonys_kitchen'));
-      if (directSnap.exists()) {
-        const parsed = parseCostAndProfitPayload(directSnap.data());
-        activeCostDocTarget = { uid: targetUid, docId: 'tonys_kitchen' };
-        saveCachedCostBundle(parsed);
-        return {
-          status: 'found',
-          data: parsed,
-          docPath: directPath,
-          uid: targetUid,
-        };
-      }
-    } catch (err) {
-      if (isPermissionDeniedError(err)) {
-        lastPermissionError = err;
-        continue;
-      }
-      throw formatFirestoreException(err);
     }
   }
 
-  if (lastPermissionError && candidateUids.length === 1) {
-    handleFirestoreError(
-      lastPermissionError,
-      OperationType.GET,
-      `users/${candidateUids[0]}/costManagement/tonys_kitchen`
-    );
+  const primaryUid = candidateUids[0] || user.uid;
+  if (lastPermissionError) {
+    const permMsg = `บัญชี (${user.email || user.uid}) ไม่มีสิทธิ์อ่านข้อมูลของ UID ${primaryUid} กรุณาเข้าสู่ระบบด้วยบัญชีเจ้าของ (${primaryUid} หรือ aa119922bb@gmail.com)`;
+    return {
+      status: 'permission_denied',
+      data: null,
+      docPath: `users/${primaryUid}/costManagement/tonys_kitchen`,
+      uid: primaryUid,
+      error: permMsg,
+    };
   }
 
-  const primaryUid = candidateUids[0] || user.uid;
   return {
     status: 'not_found',
     data: null,
@@ -1337,7 +1874,8 @@ export async function fetchRemoteCostManagementData(): Promise<TonysKitchenPaylo
 }
 
 /**
- * Subscribes to Real-time updates from Cost & Profit in Firestore (collection-level across linked UID WBDSoJjNMKOjsCs5n33dMGhdWzu1)
+ * Subscribes to Real-time updates from Cost & Profit in Firestore across linked UID WBDSoJjNMKOjsCs5n33dMGhdWzu1
+ * (watches costManagement as well as menus, recipes, dishes, foodCost & root user doc across primary & default DB)
  */
 export function subscribeCostManagementData(
   onUpdate: (payload: TonysKitchenPayload) => void,
@@ -1348,71 +1886,184 @@ export function subscribeCostManagementData(
   if (!user) return null;
 
   const candidateUids = getCandidateCostUids();
+  const dbTargets: Array<{ firestoreDb: Firestore; dbKind: 'primary' | 'default'; databaseId: string }> = [
+    { firestoreDb: db, dbKind: 'primary', databaseId: firebaseConfig.firestoreDatabaseId },
+  ];
+  const secondaryDb = getSecondaryDefaultDb();
+  if (secondaryDb) {
+    dbTargets.push({ firestoreDb: secondaryDb, dbKind: 'default', databaseId: '(default)' });
+  }
+
   const unsubs: Unsubscribe[] = [];
   let latestEmittedTs = 0;
+  let lastEmittedSig = '';
+
+  const emitPayload = (
+    payload: TonysKitchenPayload,
+    meta: {
+      uid: string;
+      docId: string;
+      collectionName: string;
+      dbKind: 'primary' | 'default';
+      databaseId: string;
+      docPath: string;
+      ts: number;
+      uidIdx: number;
+    }
+  ) => {
+    const menusCount = payload.payload?.menus?.length || 0;
+    if (menusCount === 0 && !payload.payload?.settings) return;
+    if (meta.uidIdx > 0 && meta.ts > 0 && meta.ts < latestEmittedTs) return;
+
+    const sig = JSON.stringify(payload.payload);
+    if (sig === lastEmittedSig) return;
+    lastEmittedSig = sig;
+    latestEmittedTs = Math.max(latestEmittedTs, meta.ts);
+
+    activeCostDocTarget = {
+      uid: meta.uid,
+      docId: meta.docId,
+      collectionName: meta.collectionName,
+      dbKind: meta.dbKind,
+    };
+    saveCachedCostBundle(payload, {
+      source: 'cloud',
+      docPath: meta.docPath,
+      uid: meta.uid,
+      databaseId: meta.databaseId,
+      remoteUpdatedAtMs: meta.ts || extractCostTimestampMs(payload),
+      error: null,
+    });
+    onUpdate(payload);
+  };
 
   candidateUids.forEach((targetUid, uidIdx) => {
-    const colPath = `users/${targetUid}/costManagement`;
-    try {
-      const colRef = collection(db!, 'users', targetUid, 'costManagement');
-      const unsub = onSnapshot(
-        colRef,
-        (colSnap) => {
-          if (colSnap.empty) return;
-
-          // Skip pure local pending echo from this exact device
-          const changes = colSnap.docChanges();
-          if (
-            colSnap.metadata.hasPendingWrites &&
-            changes.length > 0 &&
-            changes.every((ch) => {
-              const d = ch.doc.data() as Record<string, unknown>;
-              return d?.updatedBy === getDeviceId();
-            })
-          ) {
-            return;
-          }
-
-          const docs = colSnap.docs.map((d) => ({
-            id: d.id,
-            data: d.data() as Record<string, unknown>,
-          }));
-          const best = selectBestCostPayloadFromDocs(docs);
-          if (!best) return;
-
-          // If both linked UID and user.uid have docs, prefer the linked UID or newer timestamp
-          if (uidIdx > 0 && best.timestampMs > 0 && best.timestampMs < latestEmittedTs) {
-            return;
-          }
-
-          latestEmittedTs = Math.max(latestEmittedTs, best.timestampMs);
-          activeCostDocTarget = { uid: targetUid, docId: best.docId };
-          saveCachedCostBundle(best.payload);
-          onUpdate(best.payload);
-        },
-        (err) => {
-          // If cross-UID listener gets permission-denied for a secondary account while own UID listener works, don't crash the app
-          if (isPermissionDeniedError(err)) {
-            if (candidateUids.length > 1 && targetUid !== user.uid) {
-              console.warn(`[subscribeCostManagementData] No permission for linked UID ${targetUid}, falling back to signed-in UID.`);
+    dbTargets.forEach((dbTarget) => {
+      // 1. Primary bundled collection listener: users/{uid}/costManagement
+      const colPath = `users/${targetUid}/costManagement`;
+      try {
+        const colRef = collection(dbTarget.firestoreDb, 'users', targetUid, 'costManagement');
+        const unsub = onSnapshot(
+          colRef,
+          (colSnap) => {
+            if (colSnap.empty) return;
+            const changes = colSnap.docChanges();
+            if (
+              colSnap.metadata.hasPendingWrites &&
+              changes.length > 0 &&
+              changes.every((ch) => {
+                const d = ch.doc.data() as Record<string, unknown>;
+                return d?.updatedBy === getDeviceId();
+              })
+            ) {
               return;
             }
-            try {
-              handleFirestoreError(err, OperationType.GET, colPath);
-            } catch (wrappedErr) {
-              if (onError && wrappedErr instanceof Error) onError(wrappedErr);
+
+            const docs = colSnap.docs.map((d) => ({
+              id: d.id,
+              data: d.data() as Record<string, unknown>,
+            }));
+            const best = selectBestCostPayloadFromDocs(docs);
+            if (!best) return;
+
+            emitPayload(best.payload, {
+              uid: targetUid,
+              docId: best.docId,
+              collectionName: 'costManagement',
+              dbKind: dbTarget.dbKind,
+              databaseId: dbTarget.databaseId,
+              docPath: `${colPath}/${best.docId}`,
+              ts: best.timestampMs,
+              uidIdx,
+            });
+          },
+          (err) => {
+            if (isPermissionDeniedError(err)) {
+              if (dbTarget.dbKind === 'default' || (candidateUids.length > 1 && targetUid !== user.uid)) {
+                return;
+              }
+              if (onError) onError(formatFirestoreException(err));
+              return;
             }
-            return;
+            const formatted = formatFirestoreException(err);
+            console.warn('[subscribeCostManagementData] Error:', formatted);
+            if (onError && dbTarget.dbKind === 'primary') onError(formatted);
           }
-          const formatted = formatFirestoreException(err);
-          console.warn('[subscribeCostManagementData] Error:', formatted);
-          if (onError) onError(formatted);
+        );
+        unsubs.push(unsub);
+      } catch (err) {
+        console.warn('[subscribeCostManagementData] Setup Error:', err);
+      }
+
+      // 2. Real-time listeners for split Food Cost collections (menus, recipes, dishes, foodCost)
+      const splitColsToWatch = ['menus', 'recipes', 'dishes', 'foodCost', 'menuItems'] as const;
+      splitColsToWatch.forEach((subCol) => {
+        try {
+          const subRef = collection(dbTarget.firestoreDb, 'users', targetUid, subCol);
+          const unsub = onSnapshot(
+            subRef,
+            (snap) => {
+              if (snap.empty) return;
+              const docs = snap.docs.map((d) => ({
+                id: d.id,
+                data: d.data() as Record<string, unknown>,
+              }));
+              const assembled = assemblePayloadFromSplitDocs(docs);
+              if (!assembled || (assembled.payload.payload?.menus?.length || 0) === 0) return;
+
+              emitPayload(assembled.payload, {
+                uid: targetUid,
+                docId: docs[0]?.id || subCol,
+                collectionName: subCol,
+                dbKind: dbTarget.dbKind,
+                databaseId: dbTarget.databaseId,
+                docPath: `users/${targetUid}/${subCol}`,
+                ts: assembled.timestampMs,
+                uidIdx,
+              });
+            },
+            () => {
+              // Quietly skip permission/non-existent secondary split paths
+            }
+          );
+          unsubs.push(unsub);
+        } catch {
+          // Ignore setup errors on optional split collections
         }
-      );
-      unsubs.push(unsub);
-    } catch (err) {
-      console.warn('[subscribeCostManagementData] Setup Error:', err);
-    }
+      });
+
+      // 3. Watch root user doc users/{uid} in case menus/payload live directly on user doc
+      try {
+        const userRef = doc(dbTarget.firestoreDb, 'users', targetUid);
+        const unsub = onSnapshot(
+          userRef,
+          (snap) => {
+            if (!snap.exists()) return;
+            const raw = snap.data() as Record<string, unknown>;
+            if (!isValidCostDocData(raw)) return;
+            const parsed = parseCostAndProfitPayload(raw);
+            if ((parsed.payload?.menus?.length || 0) === 0) return;
+
+            emitPayload(parsed, {
+              uid: targetUid,
+              docId: targetUid,
+              collectionName: 'users',
+              dbKind: dbTarget.dbKind,
+              databaseId: dbTarget.databaseId,
+              docPath: `users/${targetUid}`,
+              ts: extractCostTimestampMs(raw),
+              uidIdx,
+            });
+          },
+          () => {
+            // Ignore permission/missing errors on optional root user doc
+          }
+        );
+        unsubs.push(unsub);
+      } catch {
+        // Ignore
+      }
+    });
   });
 
   if (unsubs.length === 0) return null;
